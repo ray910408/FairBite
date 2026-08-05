@@ -205,10 +205,20 @@ create policy candidates_select on public.room_candidates for select to authenti
 create policy draws_select on public.draws for select to authenticated using (is_room_member(room_id));
 -- 沒有任何 to authenticated 的 insert/delete 政策：寫入走 definer functions 與 Go service role
 
+-- RLS policy 之前先要有 table-level GRANT（Postgres 先查權限再查 policy；
+-- 此 image 的預設 ACL 不含 authenticated 的 DML）— 與上方 9 條 policy 一一對應，不多給
+grant select, update on public.profiles to authenticated;
+grant select, update on public.rooms to authenticated;
+grant select, update on public.room_members to authenticated;
+grant select on public.restaurants to authenticated;
+grant select on public.room_candidates to authenticated;
+grant select on public.draws to authenticated;
+
 -- rooms 敏感欄位只有系統連線可改（狀態機完整性 = 抽選可信度的地基）；
 -- 客戶端（authenticated）僅能調 exploration
+-- 注意：不可加 security definer — 那會讓 current_user 恆為 owner（postgres），守衛形同虛設
 create or replace function public.guard_room_columns()
-returns trigger language plpgsql security definer as $$
+returns trigger language plpgsql as $$
 begin
   if current_user in ('postgres', 'service_role', 'supabase_admin') then
     return new;
@@ -237,7 +247,29 @@ alter publication supabase_realtime add table public.rooms, public.room_members,
 ```sql
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(8);
+select plan(9);
+
+-- 回歸鎖：authenticated 的 grant 矩陣必須精確等於 9 列（多/少/換一條即紅）
+select results_eq(
+  $$
+    select table_name::text collate "default", privilege_type::text collate "default"
+    from information_schema.role_table_grants
+    where grantee = 'authenticated' and table_schema = 'public'
+      and privilege_type in ('SELECT','INSERT','UPDATE','DELETE')
+    order by 1, 2
+  $$,
+  $$
+    values
+      ('draws','SELECT'),
+      ('profiles','SELECT'), ('profiles','UPDATE'),
+      ('restaurants','SELECT'),
+      ('room_candidates','SELECT'),
+      ('room_members','SELECT'), ('room_members','UPDATE'),
+      ('rooms','SELECT'), ('rooms','UPDATE')
+    order by 1, 2
+  $$,
+  'authenticated 的 table grant 矩陣精確等於預期（擋 insert/delete bypass 回歸）'
+);
 
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000a1', 'a@test.dev'),
@@ -294,7 +326,7 @@ rollback;
 supabase start && supabase db reset && supabase test db
 ```
 
-Expected: `db reset` 無錯誤；pgTAP 8/8 ok。失敗就修 migration 直到全綠。
+Expected: `db reset` 無錯誤；pgTAP 9/9 ok。失敗就修 migration 直到全綠。
 
 - [ ] **Step 5: Commit**
 
