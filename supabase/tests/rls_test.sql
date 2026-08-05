@@ -1,6 +1,30 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(8);
+select plan(9);
+
+-- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於這 9 列。
+-- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
+-- 誰若把某表的 grant 改寬成含 insert/delete，這裡就會紅（不用等有人真的繞過 RPC 才發現）。
+select results_eq(
+  $$
+    select table_name::text collate "default", privilege_type::text collate "default"
+    from information_schema.role_table_grants
+    where grantee = 'authenticated' and table_schema = 'public'
+      and privilege_type in ('SELECT','INSERT','UPDATE','DELETE')
+    order by 1, 2
+  $$,
+  $$
+    values
+      ('draws','SELECT'),
+      ('profiles','SELECT'), ('profiles','UPDATE'),
+      ('restaurants','SELECT'),
+      ('room_candidates','SELECT'),
+      ('room_members','SELECT'), ('room_members','UPDATE'),
+      ('rooms','SELECT'), ('rooms','UPDATE')
+    order by 1, 2
+  $$,
+  'authenticated 的 table grant 矩陣精確等於預期（多/少/換一條即紅，擋 insert/delete bypass 回歸）'
+);
 
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000a1', 'a@test.dev'),
