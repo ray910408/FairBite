@@ -130,7 +130,7 @@ lobby ──房主觸發搜尋──▶ candidates ──房主啟動轉盤─�
 ## 7. 安全
 
 - 帳密儲存：Supabase Auth（email + password，bcrypt 由平台處理）— 滿足「帳號密碼安全儲存」需求
-- RLS：房間資料僅成員可讀；`room_members`、`votes` 只能寫自己的列；join 需正確邀請碼且房間在 `lobby`
+- RLS：房間資料僅成員可讀；`room_members`、`votes` 只能寫自己的列；`rooms` 僅房主可更新（含 `exploration` 檔位，於 `lobby` 階段調整）；join 需正確邀請碼且房間在 `lobby`
 - Go：JWKS 驗 Supabase JWT → 查 membership → 才執行房間操作；房主限定操作再驗 `host_id`
 - 金鑰隔離：Places API key 與 service role key 只存在 Go 環境變數，永不進前端 bundle
 - Go endpoints 加簡易 in-memory rate limit（token bucket）
