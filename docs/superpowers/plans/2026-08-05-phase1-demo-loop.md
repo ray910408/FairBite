@@ -85,10 +85,10 @@ create table public.rooms (
 create table public.room_members (
   room_id uuid references public.rooms(id) on delete cascade,
   user_id uuid references public.profiles(id) on delete cascade,
-  budget_max int not null default 300,
-  cuisines jsonb not null default '[]',
-  dietary jsonb not null default '[]',
-  max_distance_m int not null default 800,
+  budget_max int not null default 300 check (budget_max between 0 and 100000),
+  cuisines jsonb not null default '[]' check (jsonb_typeof(cuisines) = 'array'),
+  dietary jsonb not null default '[]' check (jsonb_typeof(dietary) = 'array'),
+  max_distance_m int not null default 800 check (max_distance_m between 100 and 20000),
   transport text not null default 'walking' check (transport in ('walking','driving','transit')),
   ready boolean not null default false,
   joined_at timestamptz not null default now(),
@@ -193,13 +193,38 @@ create policy rooms_update on public.rooms for update to authenticated
   using (host_id = auth.uid()) with check (host_id = auth.uid());
 
 create policy members_select on public.room_members for select to authenticated using (is_room_member(room_id));
+-- 條件只能在 lobby 階段修改：候選出爐後凍結（繞過 UI 直打 API 也會被擋）
 create policy members_update on public.room_members for update to authenticated
-  using (user_id = auth.uid()) with check (user_id = auth.uid());
+  using (user_id = auth.uid()
+    and exists (select 1 from rooms r where r.id = room_id and r.status = 'lobby'))
+  with check (user_id = auth.uid()
+    and exists (select 1 from rooms r where r.id = room_id and r.status = 'lobby'));
 
 create policy restaurants_select on public.restaurants for select to authenticated using (true);
 create policy candidates_select on public.room_candidates for select to authenticated using (is_room_member(room_id));
 create policy draws_select on public.draws for select to authenticated using (is_room_member(room_id));
 -- 沒有任何 to authenticated 的 insert/delete 政策：寫入走 definer functions 與 Go service role
+
+-- rooms 敏感欄位只有系統連線可改（狀態機完整性 = 抽選可信度的地基）；
+-- 客戶端（authenticated）僅能調 exploration
+create or replace function public.guard_room_columns()
+returns trigger language plpgsql security definer as $$
+begin
+  if current_user in ('postgres', 'service_role', 'supabase_admin') then
+    return new;
+  end if;
+  if new.status is distinct from old.status
+     or new.code is distinct from old.code
+     or new.host_id is distinct from old.host_id
+     or new.center_lat is distinct from old.center_lat
+     or new.center_lng is distinct from old.center_lng then
+    raise exception '僅系統可修改房間狀態欄位';
+  end if;
+  return new;
+end $$;
+
+create trigger rooms_guard before update on public.rooms
+  for each row execute function public.guard_room_columns();
 
 -- Realtime
 alter publication supabase_realtime add table public.rooms, public.room_members, public.room_candidates, public.draws;
@@ -212,7 +237,7 @@ alter publication supabase_realtime add table public.rooms, public.room_members,
 ```sql
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(5);
+select plan(8);
 
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000a1', 'a@test.dev'),
@@ -236,6 +261,29 @@ select is(
     where user_id = '00000000-0000-0000-0000-0000000000a1' and ready)::int,
   0, 'B 改不動 A 的成員列');
 
+-- lobby 凍結：房間離開 lobby 後，本人也改不動條件
+reset role;
+update public.rooms set status = 'candidates' where id = (select id from ctx);
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}';
+update public.room_members set ready = true
+  where user_id = '00000000-0000-0000-0000-0000000000b2';
+select is(
+  (select count(*) from public.room_members
+    where user_id = '00000000-0000-0000-0000-0000000000b2' and ready)::int,
+  0, '離開 lobby 後本人也改不動條件');
+
+-- join_room 對已開始的房間應拒絕
+select throws_ok(
+  format($$select public.join_room(%L)$$, (select code from ctx)),
+  '房間不存在或已開始');
+
+-- 房主（A）也不能直接改 rooms 敏感欄位（status 由 Go 服務管理）
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}';
+select throws_ok(
+  format($$update public.rooms set status = 'decided' where id = %L$$, (select id from ctx)),
+  '僅系統可修改房間狀態欄位');
+
 select * from finish();
 rollback;
 ```
@@ -246,7 +294,7 @@ rollback;
 supabase start && supabase db reset && supabase test db
 ```
 
-Expected: `db reset` 無錯誤；pgTAP 5/5 ok。失敗就修 migration 直到全綠。
+Expected: `db reset` 無錯誤；pgTAP 8/8 ok。失敗就修 migration 直到全綠。
 
 - [ ] **Step 5: Commit**
 
@@ -267,7 +315,7 @@ git add -A && git commit -m "feat: supabase schema, RLS policies and pgTAP tests
 - Test: `server/auth_test.go`
 
 **Interfaces:**
-- Consumes: 環境變數 `SUPABASE_JWT_SECRET`（local 預設 `super-secret-jwt-token-with-at-least-32-characters-long`）或 `SUPABASE_JWKS_URL`、`PORT`、`WEB_ORIGIN`
+- Consumes: 環境變數 `SUPABASE_JWT_SECRET`（local 預設 `super-secret-jwt-token-with-at-least-32-characters-long`）或 `SUPABASE_JWKS_URL`（hosted 部署用；Supabase legacy 對稱簽章 2026 年底棄用、新專案一律非對稱，設此變數即切換 JWKS 驗證）、`PORT`、`WEB_ORIGIN`
 - Produces: `NewVerifier() (*Verifier, error)`、`(*Verifier).Middleware(http.Handler) http.Handler`、`UserID(*http.Request) string`；`GET /healthz` 回 `{"ok":true}`。Task 7 的 handlers 掛在這個 middleware 之後。
 
 - [ ] **Step 1: 寫失敗測試**
@@ -278,6 +326,11 @@ git add -A && git commit -m "feat: supabase schema, RLS policies and pgTAP tests
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -331,6 +384,48 @@ func TestAuthMiddleware(t *testing.T) {
 		t.Fatalf("valid token: got %d %q", w3.Code, w3.Body.String())
 	}
 }
+
+func TestAuthMiddlewareJWKS(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwks := map[string]any{"keys": []map[string]string{{
+		"kty": "RSA", "kid": "test-key", "use": "sig", "alg": "RS256",
+		"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
+		"e": "AQAB",
+	}}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(jwks)
+	}))
+	defer srv.Close()
+
+	t.Setenv("SUPABASE_JWKS_URL", srv.URL)
+	t.Setenv("SUPABASE_JWT_SECRET", "") // 確認走的是 JWKS 路徑而非 secret
+	v, err := NewVerifier()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := v.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, UserID(r))
+	}))
+
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"sub": "rsa-user", "exp": time.Now().Add(time.Hour).Unix(),
+	})
+	tok.Header["kid"] = "test-key"
+	signed, err := tok.SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("GET", "/x", nil)
+	r.Header.Set("Authorization", "Bearer "+signed)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || w.Body.String() != "rsa-user" {
+		t.Fatalf("JWKS RS256: got %d %q", w.Code, w.Body.String())
+	}
+}
 ```
 
 - [ ] **Step 2: 跑紅**
@@ -350,6 +445,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -364,6 +460,8 @@ const userIDKey ctxKey = "userID"
 
 type Verifier struct{ keyfunc jwt.Keyfunc }
 
+// local = HS256 shared secret；hosted = JWKS（Supabase legacy 對稱簽章 2026 底棄用，
+// 新專案一律非對稱 — 設 SUPABASE_JWKS_URL 即走非對稱路徑）
 func NewVerifier() (*Verifier, error) {
 	if url := os.Getenv("SUPABASE_JWKS_URL"); url != "" {
 		kf, err := keyfunc.NewDefaultCtx(context.Background(), []string{url})
@@ -373,6 +471,9 @@ func NewVerifier() (*Verifier, error) {
 		return &Verifier{keyfunc: kf.Keyfunc}, nil
 	}
 	secret := []byte(os.Getenv("SUPABASE_JWT_SECRET"))
+	if len(secret) < 32 { // 空/過短 secret = 任何人可偽造 token，直接拒絕啟動
+		return nil, fmt.Errorf("SUPABASE_JWT_SECRET 未設定或過短（<32 字元），拒絕啟動")
+	}
 	return &Verifier{keyfunc: func(t *jwt.Token) (any, error) { return secret, nil }}, nil
 }
 
@@ -570,6 +671,12 @@ func TestOpeningHoursOvernight(t *testing.T) {
 	if oh.IsOpenAt(at(time.Saturday, 3, 0)) {
 		t.Error("週六 03:00 應為未營業")
 	}
+	if got := oh.MinutesUntilClose(at(time.Saturday, 1, 0)); got != 60 {
+		t.Errorf("跨夜段 01:00 距打烊應為 60，got %d", got)
+	}
+	if got := oh.MinutesUntilClose(at(time.Friday, 23, 0)); got != 180 {
+		t.Errorf("週五 23:00 距打烊應為 180（跨夜累計），got %d", got)
+	}
 }
 
 func TestMockProviderRadius(t *testing.T) {
@@ -719,10 +826,11 @@ var mockRestaurants = []Restaurant{
 	{PlaceID: "mock-006", Name: "慕里諾牛排館", CuisineTags: []string{"steak", "western"}, PriceLevel: 4, Lat: 25.0500, Lng: 121.5150, Address: "大同區承德路一段", Hours: daily([2]int{690, 1260}), Rating: 4.5},
 	{PlaceID: "mock-007", Name: "春天素食", CuisineTags: []string{"vegetarian_friendly", "taiwanese"}, PriceLevel: 3, Lat: 25.0470, Lng: 121.5230, Address: "中正區忠孝東路一段", Hours: daily([2]int{690, 1230}), Rating: 4.2},
 	{PlaceID: "mock-008", Name: "老四川麻辣鍋", CuisineTags: []string{"hotpot", "sichuan"}, PriceLevel: 3, Lat: 25.0512, Lng: 121.5195, Address: "大同區南京西路", Hours: daily([2]int{1020, 120}), Rating: 4.4},
-	{PlaceID: "mock-009", Name: "沙巴印度咖哩", CuisineTags: []string{"indian", "curry"}, PriceLevel: 1, Lat: 25.0430, Lng: 121.5190, Address: "中正區開封街一段", Hours: daily([2]int{660, 1260}), Rating: 4.1},
+	{PlaceID: "mock-009", Name: "沙巴印度咖哩", CuisineTags: []string{"indian", "curry", "halal_certified"}, PriceLevel: 1, Lat: 25.0430, Lng: 121.5190, Address: "中正區開封街一段", Hours: daily([2]int{660, 1260}), Rating: 4.1},
 	{PlaceID: "mock-010", Name: "林東芳牛肉麵", CuisineTags: []string{"taiwanese", "beef_noodle"}, PriceLevel: 1, Lat: 25.0478, Lng: 121.5260, Address: "中山區八德路二段", Hours: daily([2]int{660, 180}), Rating: 4.5},
 	{PlaceID: "mock-011", Name: "早安美芝城", CuisineTags: []string{"breakfast", "taiwanese"}, PriceLevel: 0, Lat: 25.0485, Lng: 121.5140, Address: "大同區太原路", Hours: daily([2]int{330, 840}), Rating: 3.9},
 	{PlaceID: "mock-012", Name: "藏壽司", CuisineTags: []string{"japanese", "sushi", "seafood"}, PriceLevel: 2, Lat: 25.0490, Lng: 121.5165, Address: "中正區市民大道一段", Hours: daily([2]int{660, 1320}), Rating: 4.0},
+	{PlaceID: "mock-013", Name: "復興清粥小菜", CuisineTags: []string{"taiwanese", "vegetarian_friendly"}, PriceLevel: 1, Lat: 25.0465, Lng: 121.5205, Address: "中正區忠孝東路一段", Hours: daily([2]int{0, 1440}), Rating: 4.0},
 }
 ```
 
@@ -811,12 +919,21 @@ import (
 var lunchMonday = at(time.Monday, 12, 0) // 沿用 places_test.go 的 at()
 
 func member(over func(*Member)) Member {
-	m := Member{UserID: "u1", BudgetMax: 500, Cuisines: []string{"japanese"},
-		MaxDistanceM: 2000, Transport: "walking"}
+	m := Member{UserID: "u1", DisplayName: "小明", BudgetMax: 500,
+		Cuisines: []string{"japanese"}, MaxDistanceM: 2000, Transport: "walking"}
 	if over != nil {
 		over(&m)
 	}
 	return m
+}
+
+func hasKind(ks []string, want string) bool {
+	for _, k := range ks {
+		if k == want {
+			return true
+		}
+	}
+	return false
 }
 
 func rest(over func(*Restaurant)) Restaurant {
@@ -860,10 +977,28 @@ func TestHardFilters(t *testing.T) {
 				t.Fatalf("應排除，got kept %+v", res.Kept)
 			}
 			e := res.Excluded[0]
-			if e.Kind != c.wantKind || !strings.Contains(e.Reason, c.wantReason) {
-				t.Errorf("want kind=%s reason 含 %q，got %s %q", c.wantKind, c.wantReason, e.Kind, e.Reason)
+			if !hasKind(e.Kinds, c.wantKind) || !strings.Contains(e.Reason, c.wantReason) {
+				t.Errorf("want kind=%s reason 含 %q，got %v %q", c.wantKind, c.wantReason, e.Kinds, e.Reason)
 			}
 		})
+	}
+}
+
+func TestHardFilterCollectsAllReasons(t *testing.T) {
+	r := rest(func(r *Restaurant) {
+		r.CuisineTags = []string{"steak"}
+		r.PriceLevel = 4
+		r.Hours = daily([2]int{330, 660}) // 午餐時間未營業
+	})
+	ms := []Member{member(func(m *Member) { m.Dietary = []string{"no_beef"}; m.BudgetMax = 200 })}
+	res := Evaluate(EngineInput{Restaurants: []Restaurant{r}, Members: ms,
+		Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170})
+	e := res.Excluded[0]
+	if len(e.Kinds) != 3 {
+		t.Fatalf("應收集全部 3 種排除類別，got %v", e.Kinds)
+	}
+	if !strings.Contains(e.Reason, "；") || !strings.Contains(e.Reason, "小明") {
+		t.Errorf("多重原因應以；串接且含成員名，got %q", e.Reason)
 	}
 }
 ```
@@ -871,7 +1006,7 @@ func TestHardFilters(t *testing.T) {
 - [ ] **Step 2: 跑紅**
 
 ```bash
-go test ./... -run TestHardFilters
+go test ./... -run TestHardFilter
 ```
 
 Expected: FAIL（`Evaluate` undefined）。
@@ -887,12 +1022,17 @@ package main
 
 var PriceLevelMaxTWD = map[int]int{0: 100, 1: 200, 2: 400, 3: 800, 4: 1600}
 
-// tag 層級禁忌 → 衝突的餐廳 tag（ADR-0001：不含過敏原判定）
+// 嚴格禁忌：餐廳必須具備正向認證 tag 才保留 — 負向推斷會錯誤放行
+//（例：滷肉飯店沒有衝突 tag 但素食者不能吃），codex review #4
+var DietaryRequires = map[string]string{
+	"vegetarian": "vegetarian_friendly",
+	"halal":      "halal_certified",
+}
+
+// 偏好型禁忌 → 衝突的餐廳 tag（負向排除；漏放行屬可接受誤差，ADR-0001）
 var DietaryConflicts = map[string][]string{
-	"vegetarian": {"bbq", "steak", "hotpot", "seafood", "fried_chicken", "beef_noodle", "ramen"},
-	"no_beef":    {"steak", "beef_noodle"},
-	"no_pork":    {"ramen", "dimsum"},
-	"halal":      {"ramen", "dimsum", "bbq", "hotpot", "fried_chicken"},
+	"no_beef": {"steak", "beef_noodle"},
+	"no_pork": {"ramen", "dimsum"},
 }
 
 var DietaryLabels = map[string]string{
@@ -912,6 +1052,9 @@ const (
 
 	ClosingSoonMinutes = 60
 	ClosingSoonMult    = 0.6
+
+	RateLimitPerSec = 2 // 每使用者每秒請求數（spec §7 token bucket）
+	RateLimitBurst  = 5
 )
 ```
 
@@ -922,11 +1065,13 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
 type Member struct {
 	UserID       string
+	DisplayName  string
 	BudgetMax    int
 	Cuisines     []string
 	Dietary      []string
@@ -949,8 +1094,8 @@ type Candidate struct {
 
 type Excluded struct {
 	Restaurant
-	Kind   string
-	Reason string
+	Kinds  []string // 全部命中的排除類別（dietary/budget/closed），供統計不受檢查順序污染
+	Reason string   // 全部原因以「；」串接，含成員歸因
 }
 
 type EngineInput struct {
@@ -974,37 +1119,57 @@ func hasTag(tags []string, want string) bool {
 	return false
 }
 
-func hardExclude(r Restaurant, ms []Member, now time.Time) (kind, reason string) {
+// hardExclude 收集「全部」違反的硬性條件（不是只記第一個）：
+// 統計才不受檢查順序污染，且理由帶成員名，UI 能建議「誰」放寬什麼（spec §8）
+func hardExclude(r Restaurant, ms []Member, now time.Time) (kinds, reasons []string) {
+	seenKind := map[string]bool{}
+	addKind := func(k string) {
+		if !seenKind[k] {
+			seenKind[k] = true
+			kinds = append(kinds, k)
+		}
+	}
 	for _, m := range ms {
 		for _, d := range m.Dietary {
+			if req, strict := DietaryRequires[d]; strict {
+				if !hasTag(r.CuisineTags, req) {
+					addKind("dietary")
+					reasons = append(reasons, fmt.Sprintf("無 %s 認證標籤，%s（%s）無法用餐",
+						req, m.DisplayName, DietaryLabels[d]))
+				}
+				continue
+			}
 			for _, conflict := range DietaryConflicts[d] {
 				if hasTag(r.CuisineTags, conflict) {
-					return "dietary", fmt.Sprintf("類型「%s」與成員飲食禁忌（%s，vegetarian 標記為 %s）衝突",
-						conflict, DietaryLabels[d], d)
+					addKind("dietary")
+					reasons = append(reasons, fmt.Sprintf("類型「%s」與 %s 的飲食禁忌（%s）衝突",
+						conflict, m.DisplayName, DietaryLabels[d]))
 				}
 			}
 		}
 	}
-	minBudget := ms[0].BudgetMax
+	minBudget, minName := ms[0].BudgetMax, ms[0].DisplayName
 	for _, m := range ms[1:] {
 		if m.BudgetMax < minBudget {
-			minBudget = m.BudgetMax
+			minBudget, minName = m.BudgetMax, m.DisplayName
 		}
 	}
 	if price := PriceLevelMaxTWD[r.PriceLevel]; price > minBudget {
-		return "budget", fmt.Sprintf("價位約 NT$%d，超過成員預算上限 NT$%d", price, minBudget)
+		addKind("budget")
+		reasons = append(reasons, fmt.Sprintf("價位約 NT$%d，超過 %s 的預算上限 NT$%d", price, minName, minBudget))
 	}
 	if !r.Hours.IsOpenAt(now) {
-		return "closed", "目前未營業"
+		addKind("closed")
+		reasons = append(reasons, "目前未營業")
 	}
-	return "", ""
+	return kinds, reasons
 }
 
 func Evaluate(in EngineInput) EngineResult {
 	var res EngineResult
 	for _, r := range in.Restaurants {
-		if kind, reason := hardExclude(r, in.Members, in.Now); kind != "" {
-			res.Excluded = append(res.Excluded, Excluded{r, kind, reason})
+		if kinds, reasons := hardExclude(r, in.Members, in.Now); len(kinds) > 0 {
+			res.Excluded = append(res.Excluded, Excluded{r, kinds, strings.Join(reasons, "；")})
 			continue
 		}
 		c := Candidate{Restaurant: r, Score: 1.0}
@@ -1031,7 +1196,7 @@ func normalize(kept []Candidate) {
 - [ ] **Step 4: 跑綠**
 
 ```bash
-go test ./... -run TestHardFilters
+go test ./... -run TestHardFilter
 ```
 
 Expected: PASS。
@@ -1096,6 +1261,19 @@ func TestScoringFactors(t *testing.T) {
 	}
 	if sum < 0.9999 || sum > 1.0001 {
 		t.Errorf("機率總和應為 1，got %f", sum)
+	}
+}
+
+func TestDistFactorClamp(t *testing.T) {
+	in := EngineInput{Members: []Member{member(nil)},
+		CenterLat: 25.0478, CenterLng: 121.5170}
+	near := rest(func(r *Restaurant) { r.Lat = 25.0478; r.Lng = 121.5170 }) // 0m → ≤5min
+	if e := distFactor(near, in); e.Mult != DistMultBest {
+		t.Errorf("近距離應夾至 %v，got %v", DistMultBest, e.Mult)
+	}
+	far := rest(func(r *Restaurant) { r.Lat = 25.0478; r.Lng = 121.5430 }) // ~2.6km 步行 ~35min → ≥25min
+	if e := distFactor(far, in); e.Mult != DistMultWorst {
+		t.Errorf("遠距離應夾至 %v，got %v", DistMultWorst, e.Mult)
 	}
 }
 
@@ -1194,7 +1372,7 @@ var factors = []factorFn{prefFactor, distFactor, closingFactor}
 - [ ] **Step 4: 跑綠（全部引擎測試）**
 
 ```bash
-go test ./... -run 'TestHardFilters|TestScoring|TestClosingSoon'
+go test ./... -run 'TestHardFilter|TestScoring|TestClosingSoon|TestDistFactor'
 ```
 
 Expected: PASS。
@@ -1260,6 +1438,12 @@ func TestDrawReplayDeterministic(t *testing.T) {
 	}
 }
 
+func TestDrawEmptyCandidates(t *testing.T) {
+	if w, seed := Draw(nil); w != "" || seed == "" {
+		t.Fatalf("空清單應回空 winner 與非空 seed，got %q %q", w, seed)
+	}
+}
+
 func TestDrawDistribution(t *testing.T) {
 	ks := cands(0.5, 0.3, 0.2)
 	counts := map[string]int{}
@@ -1318,6 +1502,9 @@ func Draw(kept []Candidate) (string, string) {
 }
 
 func ReplayWinner(kept []Candidate, seedHex string) string {
+	if len(kept) == 0 {
+		return ""
+	}
 	b, err := hex.DecodeString(seedHex)
 	if err != nil || len(b) != 8 {
 		return ""
@@ -1388,6 +1575,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/time/rate"
 )
 
 func newTestApp(t *testing.T, pool *pgxpool.Pool) http.Handler {
@@ -1489,12 +1677,95 @@ func TestSearchAndDrawHappyPath(t *testing.T) {
 		t.Fatalf("重複 draw: want 409 got %d", w.Code)
 	}
 }
+
+func TestRateLimit429(t *testing.T) {
+	h := rateLimit(&limiterStore{m: map[string]*rate.Limiter{}},
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	last := 0
+	for i := 0; i < RateLimitBurst+1; i++ {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("POST", "/x", nil))
+		last = w.Code
+	}
+	if last != http.StatusTooManyRequests {
+		t.Fatalf("第 %d 個連發請求應 429，got %d", RateLimitBurst+1, last)
+	}
+}
+
+func TestSearchEdgeCases(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	hostID := "33333333-3333-3333-3333-333333333333"
+	strangerID := "44444444-4444-4444-4444-444444444444"
+	roomID := "55555555-5555-5555-5555-555555555555"
+	if _, err = pool.Exec(ctx,
+		`insert into auth.users (id, email) values ($1, 'host2@test.dev') on conflict do nothing`,
+		hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx,
+		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
+		 values ($1, $2, 'lobby', 25.0478, 121.5170)
+		 on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	// budget_max=50：所有 price level 換算金額都 >50 → 全數排除 → 422
+	if _, err = pool.Exec(ctx,
+		`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		 values ($1, $2, 50, '["japanese"]', 2000, 'walking')
+		 on conflict (room_id, user_id) do update set budget_max = 50`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID) })
+
+	h := newTestApp(t, pool)
+	do := func(token, path string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", path, nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	hostTok := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
+	strangerTok := signHS256(t, "test-secret-test-secret-test-secret!", strangerID)
+
+	if w := do(strangerTok, "/api/rooms/"+roomID+"/search"); w.Code != http.StatusForbidden {
+		t.Fatalf("非房主 search: want 403 got %d", w.Code)
+	}
+	if w := do(strangerTok, "/api/rooms/66666666-6666-6666-6666-666666666666/search"); w.Code != http.StatusNotFound {
+		t.Fatalf("不存在的房: want 404 got %d", w.Code)
+	}
+	w := do(hostTok, "/api/rooms/"+roomID+"/search")
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("全排除: want 422 got %d body %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		ExcludedBy map[string]int `json:"excluded_by"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.ExcludedBy["budget"] == 0 {
+		t.Fatalf("422 應含 excluded_by.budget 統計：%s", w.Body.String())
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).
+		Scan(&status); err != nil || status != "lobby" {
+		t.Fatalf("零候選後房間應停留在 lobby，got %q err %v", status, err)
+	}
+}
 ```
 
 - [ ] **Step 2: 跑紅**
 
 ```bash
-go get github.com/jackc/pgx/v5 && go test ./... -run 'TestSearchRequires'
+go get github.com/jackc/pgx/v5 golang.org/x/time/rate && go test ./... -run 'TestSearchRequires|TestRateLimit'
 ```
 
 Expected: FAIL（`buildRoutes` undefined）。
@@ -1537,8 +1808,10 @@ func LoadRoom(ctx context.Context, pool *pgxpool.Pool, roomID string) (RoomRow, 
 
 func LoadMembers(ctx context.Context, pool *pgxpool.Pool, roomID string) ([]Member, error) {
 	rows, err := pool.Query(ctx,
-		`select user_id, budget_max, cuisines, dietary, max_distance_m, transport
-		 from room_members where room_id = $1`, roomID)
+		`select rm.user_id, coalesce(p.display_name, '成員'), rm.budget_max,
+		        rm.cuisines, rm.dietary, rm.max_distance_m, rm.transport
+		 from room_members rm join profiles p on p.id = rm.user_id
+		 where rm.room_id = $1`, roomID)
 	if err != nil {
 		return nil, err
 	}
@@ -1547,12 +1820,17 @@ func LoadMembers(ctx context.Context, pool *pgxpool.Pool, roomID string) ([]Memb
 	for rows.Next() {
 		var m Member
 		var cuisines, dietary []byte
-		if err := rows.Scan(&m.UserID, &m.BudgetMax, &cuisines, &dietary,
+		if err := rows.Scan(&m.UserID, &m.DisplayName, &m.BudgetMax, &cuisines, &dietary,
 			&m.MaxDistanceM, &m.Transport); err != nil {
 			return nil, err
 		}
-		json.Unmarshal(cuisines, &m.Cuisines)
-		json.Unmarshal(dietary, &m.Dietary)
+		// 信任邊界：JSON shape 異常是錯誤，不靜默當空值
+		if err := json.Unmarshal(cuisines, &m.Cuisines); err != nil {
+			return nil, fmt.Errorf("member %s cuisines: %w", m.UserID, err)
+		}
+		if err := json.Unmarshal(dietary, &m.Dietary); err != nil {
+			return nil, fmt.Errorf("member %s dietary: %w", m.UserID, err)
+		}
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -1617,22 +1895,32 @@ func TransitionRoom(ctx context.Context, tx pgx.Tx, roomID, from, to string) err
 	return nil
 }
 
-func LoadKeptCandidates(ctx context.Context, pool *pgxpool.Pool, roomID string) ([]Candidate, error) {
+// LoadRoomRestaurants 取回該房搜尋時的完整餐廳集合（含被排除者）— 抽選前權威重算用
+func LoadRoomRestaurants(ctx context.Context, pool *pgxpool.Pool, roomID string) ([]Restaurant, error) {
 	rows, err := pool.Query(ctx, `
-		select rc.restaurant_id, rc.probability, r.name
+		select r.id, r.place_id, r.name, r.cuisine_tags, r.price_level,
+		       r.lat, r.lng, r.address, r.opening_hours, coalesce(r.rating, 0)
 		from room_candidates rc join restaurants r on r.id = rc.restaurant_id
-		where rc.room_id = $1 and rc.status = 'kept'`, roomID)
+		where rc.room_id = $1`, roomID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Candidate
+	var out []Restaurant
 	for rows.Next() {
-		var c Candidate
-		if err := rows.Scan(&c.Restaurant.ID, &c.Probability, &c.Restaurant.Name); err != nil {
+		var r Restaurant
+		var tags, hours []byte
+		if err := rows.Scan(&r.ID, &r.PlaceID, &r.Name, &tags, &r.PriceLevel,
+			&r.Lat, &r.Lng, &r.Address, &hours, &r.Rating); err != nil {
 			return nil, err
 		}
-		out = append(out, c)
+		if err := json.Unmarshal(tags, &r.CuisineTags); err != nil {
+			return nil, fmt.Errorf("restaurant %s tags: %w", r.PlaceID, err)
+		}
+		if err := json.Unmarshal(hours, &r.Hours); err != nil {
+			return nil, fmt.Errorf("restaurant %s hours: %w", r.PlaceID, err)
+		}
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }
@@ -1649,10 +1937,40 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/time/rate"
 )
+
+type limiterStore struct {
+	mu sync.Mutex
+	m  map[string]*rate.Limiter
+}
+
+// ponytail: map 無上限成長，P2 部署時加 TTL 清理
+func (s *limiterStore) allow(uid string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l, ok := s.m[uid]
+	if !ok {
+		l = rate.NewLimiter(rate.Limit(RateLimitPerSec), RateLimitBurst)
+		s.m[uid] = l
+	}
+	return l.Allow()
+}
+
+func rateLimit(store *limiterStore, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !store.allow(UserID(r)) {
+			jsonError(w, http.StatusTooManyRequests, "請求太頻繁，請稍後再試")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider) http.Handler {
 	mux := http.NewServeMux()
@@ -1666,7 +1984,7 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider) http.Ha
 	api.HandleFunc("POST /api/rooms/{id}/draw", func(w http.ResponseWriter, r *http.Request) {
 		handleDraw(w, r, pool)
 	})
-	mux.Handle("/api/", v.Middleware(api))
+	mux.Handle("/api/", v.Middleware(rateLimit(&limiterStore{m: map[string]*rate.Limiter{}}, api)))
 	return cors(mux)
 }
 
@@ -1731,11 +2049,15 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	result := Evaluate(EngineInput{Restaurants: found, Members: members,
 		Now: time.Now(), CenterLat: room.CenterLat, CenterLng: room.CenterLng})
 
+	// ponytail: 零候選時 rollback 連餐廳快取一併丟棄 — mock 無感；P2 接真 Places 時
+	// 拆成兩個交易（快取先 commit），才不會浪費 API 呼叫且快取可當 fallback（spec §8）
 	if len(result.Kept) == 0 {
 		byKind := map[string]int{}
 		var ex []excludedJSON
 		for _, e := range result.Excluded {
-			byKind[e.Kind]++
+			for _, k := range e.Kinds {
+				byKind[k]++
+			}
 			ex = append(ex, excludedJSON{e.Name, e.Reason})
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1776,43 +2098,66 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 	if !ok {
 		return
 	}
-	kept, err := LoadKeptCandidates(ctx, pool, room.ID)
-	if err != nil || len(kept) == 0 {
-		jsonError(w, http.StatusConflict, "沒有可抽選的候選")
+	if room.Status != "candidates" {
+		jsonError(w, http.StatusConflict, "房間狀態不允許抽選")
 		return
 	}
-	winner, seed := Draw(kept)
+	members, err := LoadMembers(ctx, pool, room.ID)
+	if err != nil || len(members) == 0 {
+		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
+		return
+	}
+	rs, err := LoadRoomRestaurants(ctx, pool, room.ID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "讀取候選失敗")
+		return
+	}
+	// spec §5.5：抽選前權威重算 — 搜尋後才打烊的店在這一步被剔除，機率永遠是當下真實值
+	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
+		Now: time.Now(), CenterLat: room.CenterLat, CenterLng: room.CenterLng})
+	if len(result.Kept) == 0 {
+		jsonError(w, http.StatusConflict, "候選已全數失效（可能都打烊了），請建立新房間重新搜尋")
+		return
+	}
+	winner, seed := Draw(result.Kept)
 	probs := map[string]float64{}
-	for _, c := range kept {
+	for _, c := range result.Kept {
 		probs[c.Restaurant.ID] = c.Probability
 	}
-	if err := insertDrawTx(ctx, pool, room.ID, winner, seed, probs); err != nil {
-		if errors.Is(err, ErrConflict) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := ReplaceCandidates(ctx, tx, room.ID, result); err != nil {
+		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
+		return
+	}
+	if _, err := tx.Exec(ctx,
+		`insert into draws (room_id, seed, winner_restaurant_id, probabilities)
+		 values ($1, $2, $3, $4)`, room.ID, seed, winner, probs); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique(room_id)：並發抽選輸家
 			jsonError(w, http.StatusConflict, "已抽選過")
 			return
 		}
 		jsonError(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	if err := TransitionRoom(ctx, tx, room.ID, "candidates", "decided"); err != nil {
+		if errors.Is(err, ErrConflict) {
+			jsonError(w, http.StatusConflict, "房間狀態已變更")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		jsonError(w, http.StatusInternalServerError, "db error")
+		return
+	}
 	jsonOK(w, map[string]string{"winner_restaurant_id": winner, "seed": seed})
-}
-
-func insertDrawTx(ctx context.Context, pool *pgxpool.Pool, roomID, winner, seed string,
-	probs map[string]float64) error {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx,
-		`insert into draws (room_id, seed, winner_restaurant_id, probabilities)
-		 values ($1, $2, $3, $4)`, roomID, seed, winner, probs); err != nil {
-		return err
-	}
-	if err := TransitionRoom(ctx, tx, roomID, "candidates", "decided"); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
 }
 ```
 
@@ -1842,11 +2187,11 @@ func main() {
 - [ ] **Step 5: 跑綠（含 integration）**
 
 ```bash
-go test ./... -run TestSearchRequires
+go test ./... -run 'TestSearchRequires|TestRateLimit'
 ```
 
 ```bash
-TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' go test ./... -run TestSearchAndDraw -v
+TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' go test ./... -run 'TestSearchAndDraw|TestSearchEdge' -v
 ```
 
 Expected: 兩者 PASS（integration 需 `supabase start` 執行中）。
@@ -2193,6 +2538,7 @@ git add -A && git commit -m "feat(web): home page with create room and join by c
 
 **Files:**
 - Create: `web/src/hooks/useRoom.ts`
+- Create: `web/src/lib/labels.ts`
 - Create: `web/src/components/ConditionsForm.tsx`
 - Create: `web/src/pages/RoomPage.tsx`
 - Modify: `web/src/App.tsx`（掛 RoomPage）
@@ -2216,6 +2562,7 @@ export function useRoom(roomId: string) {
   const [candidates, setCandidates] = useState<CandidateRow[]>([])
   const [draw, setDraw] = useState<DrawRow | null>(null)
   const [myUserId, setMyUserId] = useState('')
+  const [connected, setConnected] = useState(true)
 
   const refetch = useCallback(async () => {
     const [r, m, c, d] = await Promise.all([
@@ -2246,50 +2593,84 @@ export function useRoom(roomId: string) {
       ch = ch.on('postgres_changes',
         { event: '*', schema: 'public', table: t.table, filter: t.filter }, refetch)
     }
-    ch.subscribe()
+    // 斷線不能靜默：非 SUBSCRIBED 顯示橫幅，恢復時整包重拉補上漏掉的事件
+    ch.subscribe(status => {
+      if (status === 'SUBSCRIBED') {
+        setConnected(true)
+        refetch()
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        setConnected(false)
+      }
+    })
     return () => { supabase.removeChannel(ch) }
   }, [roomId, refetch])
 
-  return { room, members, candidates, draw, myUserId, refetch }
+  return { room, members, candidates, draw, myUserId, connected, refetch }
 }
 ```
 
 - [ ] **Step 2: 條件表單**
 
-`web/src/components/ConditionsForm.tsx`：
+`web/src/lib/labels.ts`（中文標籤單一來源 — 元件間共用，勿在元件內重複定義）：
 
-```tsx
-import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
-import type { MemberRow } from '../lib/types'
+```ts
+import type { MemberRow } from './types'
+
+export const TRANSPORT_LABELS: Record<MemberRow['transport'], string> = {
+  walking: '步行', driving: '開車', transit: '大眾運輸',
+}
 
 export const CUISINE_OPTIONS: [string, string][] = [
   ['taiwanese', '台式'], ['japanese', '日式'], ['korean', '韓式'],
   ['cantonese', '港式'], ['western', '西式'], ['indian', '印度'],
   ['sichuan', '川味'], ['hotpot', '火鍋'], ['seafood', '海鮮'], ['ramen', '拉麵'],
 ]
+
 export const DIETARY_OPTIONS: [string, string][] = [
   ['vegetarian', '素食'], ['no_beef', '不吃牛'], ['no_pork', '不吃豬'], ['halal', '清真'],
 ]
-const TRANSPORTS: [MemberRow['transport'], string][] = [
-  ['walking', '步行'], ['driving', '開車'], ['transit', '大眾運輸'],
-]
+```
+
+`web/src/components/ConditionsForm.tsx`：
+
+```tsx
+import { useEffect, useRef, useState } from 'react'
+import { supabase } from '../lib/supabase'
+import type { MemberRow } from '../lib/types'
+import { CUISINE_OPTIONS, DIETARY_OPTIONS, TRANSPORT_LABELS } from '../lib/labels'
+
+const TRANSPORTS = Object.entries(TRANSPORT_LABELS) as [MemberRow['transport'], string][]
 
 export default function ConditionsForm({ me }: { me: MemberRow }) {
   const [form, setForm] = useState(me)
-  useEffect(() => setForm(me), [me.room_id, me.user_id])
+  const savedRef = useRef(me)   // 最後一次確認寫入成功的值（失敗時還原用）
+  const pushTimer = useRef<ReturnType<typeof setTimeout>>()
+  useEffect(() => {
+    setForm(me)
+    savedRef.current = me
+  }, [me.room_id, me.user_id])
 
-  async function save(patch: Partial<MemberRow>) {
+  // debounce 400ms：slider 拖曳每格都會觸發 onChange，直接連發 update 會逆序落庫
+  function save(patch: Partial<MemberRow>) {
     const next = { ...form, ...patch }
     setForm(next)
-    await supabase.from('room_members').update({
-      budget_max: next.budget_max,
-      cuisines: next.cuisines,
-      dietary: next.dietary,
-      max_distance_m: next.max_distance_m,
-      transport: next.transport,
-      ready: next.ready,
-    }).eq('room_id', me.room_id).eq('user_id', me.user_id)
+    clearTimeout(pushTimer.current)
+    pushTimer.current = setTimeout(async () => {
+      const { error } = await supabase.from('room_members').update({
+        budget_max: next.budget_max,
+        cuisines: next.cuisines,
+        dietary: next.dietary,
+        max_distance_m: next.max_distance_m,
+        transport: next.transport,
+        ready: next.ready,
+      }).eq('room_id', me.room_id).eq('user_id', me.user_id)
+      if (error) {
+        setForm(savedRef.current) // RLS 拒絕（如房間已離開 lobby）→ 還原，不讓 UI 與 DB 分歧
+        alert('儲存失敗：房間可能已開始選餐，條件已凍結')
+      } else {
+        savedRef.current = next
+      }
+    }, 400)
   }
 
   function toggle(list: string[], v: string) {
@@ -2358,7 +2739,7 @@ import ConditionsForm from '../components/ConditionsForm'
 
 export default function RoomPage() {
   const { id = '' } = useParams()
-  const { room, members, candidates, draw, myUserId } = useRoom(id)
+  const { room, members, candidates, draw, myUserId, connected } = useRoom(id)
   if (!room) return <p className="p-8 text-center">載入中…</p>
 
   const me = members.find(m => m.user_id === myUserId)
@@ -2366,6 +2747,11 @@ export default function RoomPage() {
 
   return (
     <div className="mx-auto max-w-lg space-y-4 p-4">
+      {!connected && (
+        <div className="rounded bg-amber-100 p-2 text-center text-sm text-amber-800">
+          連線中斷，嘗試重連中… 畫面可能不是最新狀態
+        </div>
+      )}
       <header className="flex items-center justify-between">
         <h1 className="text-xl font-bold">房間 {room.code}</h1>
         <span className="text-sm text-gray-500">{
@@ -2392,22 +2778,21 @@ export default function RoomPage() {
 
       {room.status === 'lobby' && me && <ConditionsForm me={me} />}
       {room.status === 'lobby' && isHost && (
-        <SearchButton roomId={room.id} />
+        <button className="w-full rounded bg-orange-500 p-3 text-white"
+          onClick={() => {
+            const notReady = members.filter(m => !m.ready).length
+            if (notReady > 0 &&
+              !confirm(`還有 ${notReady} 位成員未按準備，開始後條件將凍結。確定開始搜尋？`)) return
+            import('../lib/api').then(m => m.searchRoom(room.id))
+          }}>
+          開始搜尋餐廳
+        </button>
       )}
       {/* Task 11: candidates 視圖；Task 12: 轉盤與結果 */}
       {room.status !== 'lobby' && (
         <p className="text-sm text-gray-500">候選 {candidates.length} 筆，draw：{draw ? '有' : '無'}</p>
       )}
     </div>
-  )
-}
-
-export function SearchButton({ roomId }: { roomId: string }) {
-  return (
-    <button className="w-full rounded bg-orange-500 p-3 text-white"
-      onClick={() => import('../lib/api').then(m => m.searchRoom(roomId))}>
-      開始搜尋餐廳
-    </button>
   )
 }
 ```
@@ -2677,6 +3062,11 @@ describe('buildMapsUrl', () => {
     expect(url).toContain('destination_place_id=abc123')
     expect(url).toContain('travelmode=transit')
   })
+  it('mock place_id 不進 URL（非真實 Google Place ID）', () => {
+    const url = buildMapsUrl(25.05, 121.52, 'mock-008', 'walking')
+    expect(url).not.toContain('destination_place_id')
+    expect(url).toContain('destination=25.05%2C121.52')
+  })
 })
 ```
 
@@ -2690,9 +3080,10 @@ export function buildMapsUrl(
   const q = new URLSearchParams({
     api: '1',
     destination: `${lat},${lng}`,
-    destination_place_id: placeId,
     travelmode: transport,
   })
+  // mock id 不是真 Google Place ID，塞進去會讓導航行為不定 → 純座標導航
+  if (placeId && !placeId.startsWith('mock-')) q.set('destination_place_id', placeId)
   return `https://www.google.com/maps/dir/?${q.toString()}`
 }
 ```
@@ -2708,7 +3099,7 @@ Expected: PASS。
 `web/src/components/Wheel.tsx`：
 
 ```tsx
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CandidateRow } from '../lib/types'
 import { formatPercent, sortKept } from '../lib/probability'
 
@@ -2739,15 +3130,19 @@ export default function Wheel({ rows, winnerId, onDone }: {
   }, [kept])
 
   const [rotation, setRotation] = useState(0)
+  const slicesRef = useRef(slices)
+  slicesRef.current = slices
+  const doneRef = useRef(onDone)
+  doneRef.current = onDone
   useEffect(() => {
     if (!winnerId) return
-    const s = slices.find(x => x.c.restaurant_id === winnerId)
+    const s = slicesRef.current.find(x => x.c.restaurant_id === winnerId)
     if (!s) return
     const center = (s.start + s.end) / 2
     setRotation(5 * 360 + (360 - center)) // 指針固定在 12 點鐘，轉輪本體旋轉
-    const t = setTimeout(onDone, 4200)
+    const t = setTimeout(() => doneRef.current(), 4200)
     return () => clearTimeout(t)
-  }, [winnerId, slices, onDone])
+  }, [winnerId]) // slices/onDone 走 ref：realtime refetch 不會重設 4 秒計時器
 
   return (
     <div className="relative mx-auto w-72">
@@ -2781,6 +3176,7 @@ export default function Wheel({ rows, winnerId, onDone }: {
 import type { CandidateRow, DrawRow, MemberRow } from '../lib/types'
 import { buildMapsUrl } from '../lib/maps'
 import { formatPercent } from '../lib/probability'
+import { TRANSPORT_LABELS } from '../lib/labels'
 
 export default function ResultCard({ draw, candidates, me }: {
   draw: DrawRow
@@ -2799,7 +3195,7 @@ export default function ResultCard({ draw, candidates, me }: {
       <a className="block rounded bg-blue-600 p-3 text-white"
         href={buildMapsUrl(r.lat, r.lng, r.place_id, me?.transport ?? 'walking')}
         target="_blank" rel="noreferrer">
-        用 Google Maps 導航（{{ walking: '步行', driving: '開車', transit: '大眾運輸' }[me?.transport ?? 'walking']}）
+        用 Google Maps 導航（{TRANSPORT_LABELS[me?.transport ?? 'walking']}）
       </a>
     </div>
   )
@@ -2836,7 +3232,7 @@ export default function ResultCard({ draw, candidates, me }: {
 npm test && npm run build
 ```
 
-手動雙瀏覽器完整閉環：建房 → 兩人設條件 → 搜尋 → 候選與機率 → 房主啟動轉盤 → **兩邊同時**播放旋轉動畫且停在同一家 → 結果卡 → 點導航開啟 Google Maps 且 travelmode 是自己設的交通方式。再按一次 draw API（重整後房主按鈕已消失，用 curl 驗證）→ 409。
+手動雙瀏覽器完整閉環：建房 → 兩人設條件 → 搜尋 → 候選與機率 → 房主啟動轉盤 → 兩邊**幾乎同時**（Realtime 送達差異約百毫秒級，屬預期）播放旋轉動畫且停在同一家 → 結果卡 → 點導航開啟 Google Maps 且 travelmode 是自己設的交通方式。再按一次 draw API（重整後房主按鈕已消失，用 curl 驗證）→ 409。
 
 - [ ] **Step 5: Commit**
 
@@ -2871,6 +3267,8 @@ git add -A && git commit -m "feat(web): synchronized wheel animation, result car
 
 ## 本地啟動（三個終端）
 
+Git Bash：
+
 ```bash
 # 1. Supabase local stack
 supabase start        # 記下 anon key 與 JWT secret
@@ -2885,13 +3283,34 @@ go run .
 cd web && npm i && npm run dev   # .env.local 填 anon key
 ```
 
+PowerShell（同三個終端，只是環境變數語法不同）：
+
+```powershell
+# 2. Go 核心服務
+cd server
+$env:SUPABASE_DB_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+$env:SUPABASE_JWT_SECRET = '<supabase status 的 JWT secret>'
+go run .
+```
+
 ## 測試
+
+Git Bash（每行獨立執行，皆從 repo 根目錄開始）：
 
 ```bash
 supabase test db                                   # RLS pgTAP
-cd server && go test ./...                         # 引擎/抽選/auth
-cd server && TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' go test ./... -run TestSearchAndDraw -v
-cd web && npm test                                 # 機率顯示與 maps URL
+(cd server && go test ./...)                       # 引擎/抽選/auth
+(cd server && TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' go test ./... -run 'TestSearchAndDraw|TestSearchEdge' -v)
+(cd web && npm test)                               # 機率顯示與 maps URL
+```
+
+PowerShell：
+
+```powershell
+supabase test db
+Push-Location server; go test ./...; Pop-Location
+Push-Location server; $env:TEST_DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'; go test ./... -run 'TestSearchAndDraw|TestSearchEdge' -v; Pop-Location
+Push-Location web; npm test; Pop-Location
 ```
 
 Phase 1 使用 mock 餐廳資料（台北車站周邊 12 家）；真實 Google Places 於 Phase 2 切換。
@@ -2915,6 +3334,9 @@ Phase 1 使用 mock 餐廳資料（台北車站周邊 12 家）；真實 Google 
 7. A 按「啟動轉盤」→ 兩邊同步旋轉、停在同一家
 8. 結果卡 → 點「用 Google Maps 導航」→ 開啟 Maps 且交通方式正確
 9. （選）打開 Supabase Studio 看 draws.seed 與機率快照 — 抽選留有紀錄
+
+備註：mock 營業時間對照真實時鐘。深夜展示時素食組合仍可中（復興清粥小菜 24h）；
+任何時段皆可用的保底組合：日式 + 預算 800（一蘭拉麵 24h）。
 ```
 
 - [ ] **Step 3: 全套驗證**
@@ -2926,3 +3348,21 @@ git add -A && git commit -m "docs: readme and demo script for phase 1"
 ```
 
 Expected: Phase 1 閉環完成 — 這就是 spec §11 Phase 1 的全部範圍。
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
+| Codex Review | outside voice (in `/plan-eng-review`) | Independent 2nd opinion | 1 | ABSORBED | 12 findings：9 採納、1 推翻先前修剪（JWKS）、2 張力點以軟解收斂 |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR | 12 issues + 7 test gaps，全數折入計畫（26 個決策 D1–D26） |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
+
+**CODEX:** 12 條 outside-voice findings 全數裁決 — draw 前權威重算、正向禁忌認證、信任邊界驗證、空 secret 守衛、rooms 敏感欄 trigger 等 9 條折入；ready 軟確認與轉盤措辭 2 條張力點採中間解；轉盤時鐘同步 1 條維持現狀。
+
+**CROSS-MODEL:** 互補明顯 — codex 抓到 spec-coverage（重算）與信任邊界類；本 review 抓到 409 映射、RLS lobby 凍結、計時器漂移類。無殘留分歧。
+
+**VERDICT:** ENG CLEARED — ready to implement.
+
+NO UNRESOLVED DECISIONS
