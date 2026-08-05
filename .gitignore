@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.env.local
+server/server
+server/server.exe
+supabase/.temp/
+.superpowers/
+.codegraph/
