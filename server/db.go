@@ -225,7 +225,7 @@ func LoadRoomRestaurants(ctx context.Context, q querier, roomID string) ([]Resta
 		select r.id, r.place_id, r.name, r.cuisine_tags, r.price_level,
 		       r.lat, r.lng, r.address, r.opening_hours, coalesce(r.rating, 0)
 		from room_candidates rc join restaurants r on r.id = rc.restaurant_id
-		where rc.room_id = $1`, roomID)
+		where rc.room_id = $1 order by rc.restaurant_id`, roomID)
 	if err != nil {
 		return nil, err
 	}

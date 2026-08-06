@@ -18,15 +18,6 @@ func member(over func(*Member)) Member {
 	return m
 }
 
-func hasKind(ks []string, want string) bool {
-	for _, k := range ks {
-		if k == want {
-			return true
-		}
-	}
-	return false
-}
-
 func rest(over func(*Restaurant)) Restaurant {
 	r := Restaurant{PlaceID: "p1", Name: "測試餐廳", CuisineTags: []string{"japanese"},
 		PriceLevel: 1, Lat: 25.0480, Lng: 121.5172, Hours: daily([2]int{0, 1440})}

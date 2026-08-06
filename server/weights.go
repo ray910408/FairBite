@@ -43,10 +43,11 @@ const (
 	ClosingSoonMinutes  = 60
 	ClosingSoonMult     = 0.6
 	VoteBoostPerUp      = 0.10 // 每張贊成票 +10%（spec §5 投票加成）
+	VetoQuota           = 2    // 每人同房同時最多否決數（spec §4；D15 後唯一權威，UI 文案另有顯示用複本）
 	RecencyFloorMult    = 0.3  // 全員 14 天內去過 → ×0.3
 	RecencyFadingWeight = 0.5  // 15–30 天的成員減半計
 	RecencyMinMult      = 0.1  // 懲罰下限；現行參數下不觸發，調參安全網
 
-	RateLimitPerSec = 2 // 每使用者每秒請求數（spec §7 token bucket）
-	RateLimitBurst  = 5
+	RateLimitPerSec = 2  // 每使用者每秒請求數（spec §7 token bucket）
+	RateLimitBurst  = 10 // P2 投票為高頻互動，burst 需覆蓋一輪快速操作
 )

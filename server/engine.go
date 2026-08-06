@@ -39,6 +39,15 @@ type Candidate struct {
 	Trace       []TraceEntry
 }
 
+func hasKind(ks []string, want string) bool {
+	for _, k := range ks {
+		if k == want {
+			return true
+		}
+	}
+	return false
+}
+
 type Excluded struct {
 	Restaurant
 	Kinds  []string // 全部命中的排除類別（dietary/budget/closed/veto），供統計不受檢查順序污染
