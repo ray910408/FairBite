@@ -102,6 +102,55 @@ func hardExclude(r Restaurant, ms []Member, now time.Time) (kinds, reasons []str
 	return kinds, reasons
 }
 
+type factorFn func(r Restaurant, in EngineInput) TraceEntry
+
+func prefFactor(r Restaurant, in EngineInput) TraceEntry {
+	hits := 0
+	for _, m := range in.Members {
+		for _, c := range m.Cuisines {
+			if hasTag(r.CuisineTags, c) {
+				hits++
+				break
+			}
+		}
+	}
+	ratio := float64(hits) / float64(len(in.Members))
+	mult := PrefMultMin + (PrefMultMax-PrefMultMin)*ratio
+	return TraceEntry{"preference", mult,
+		fmt.Sprintf("%d/%d 位成員偏好命中", hits, len(in.Members))}
+}
+
+func distFactor(r Restaurant, in EngineInput) TraceEntry {
+	dist := Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng)
+	var sumMult, sumMin float64
+	for _, m := range in.Members {
+		minutes := dist / TransportMetersPerMin[m.Transport]
+		frac := (minutes - DistBestMin) / (DistWorstMin - DistBestMin)
+		if frac < 0 {
+			frac = 0
+		}
+		if frac > 1 {
+			frac = 1
+		}
+		sumMult += DistMultBest + (DistMultWorst-DistMultBest)*frac
+		sumMin += minutes
+	}
+	n := float64(len(in.Members))
+	return TraceEntry{"distance", sumMult / n,
+		fmt.Sprintf("平均交通約 %.0f 分鐘", sumMin/n)}
+}
+
+func closingFactor(r Restaurant, in EngineInput) TraceEntry {
+	left := r.Hours.MinutesUntilClose(in.Now)
+	if left >= 0 && left < ClosingSoonMinutes {
+		return TraceEntry{"closing_soon", ClosingSoonMult,
+			fmt.Sprintf("%d 分鐘後打烊", left)}
+	}
+	return TraceEntry{"closing_soon", 1.0, "營業時間充裕"}
+}
+
+var factors = []factorFn{prefFactor, distFactor, closingFactor}
+
 func Evaluate(in EngineInput) EngineResult {
 	var res EngineResult
 	for _, r := range in.Restaurants {
@@ -110,6 +159,11 @@ func Evaluate(in EngineInput) EngineResult {
 			continue
 		}
 		c := Candidate{Restaurant: r, Score: 1.0}
+		for _, f := range factors {
+			e := f(r, in)
+			c.Score *= e.Mult
+			c.Trace = append(c.Trace, e)
+		}
 		res.Kept = append(res.Kept, c)
 	}
 	normalize(res.Kept)

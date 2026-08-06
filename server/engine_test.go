@@ -91,3 +91,68 @@ func TestHardFilterCollectsAllReasons(t *testing.T) {
 		t.Errorf("多重原因應以；串接且含成員名，got %q", e.Reason)
 	}
 }
+
+func TestScoringFactors(t *testing.T) {
+	rJP := rest(func(r *Restaurant) { r.PlaceID = "jp"; r.CuisineTags = []string{"japanese"} })
+	rKR := rest(func(r *Restaurant) { r.PlaceID = "kr"; r.CuisineTags = []string{"korean"} })
+	ms := []Member{
+		member(nil), // 偏好 japanese
+		member(func(m *Member) { m.UserID = "u2"; m.Cuisines = []string{"japanese", "korean"} }),
+	}
+	res := Evaluate(EngineInput{Restaurants: []Restaurant{rJP, rKR}, Members: ms,
+		Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170})
+	if len(res.Kept) != 2 {
+		t.Fatalf("應保留 2 家，got %d", len(res.Kept))
+	}
+	byID := map[string]Candidate{}
+	for _, c := range res.Kept {
+		byID[c.PlaceID] = c
+	}
+	if !(byID["jp"].Score > byID["kr"].Score) {
+		t.Errorf("2/2 命中的日式應高於 1/2 命中的韓式：%f vs %f", byID["jp"].Score, byID["kr"].Score)
+	}
+	var sum float64
+	for _, c := range res.Kept {
+		sum += c.Probability
+		if len(c.Trace) != 3 {
+			t.Errorf("%s trace 應有 3 個因素，got %d", c.PlaceID, len(c.Trace))
+		}
+		for _, e := range c.Trace {
+			if e.Reason == "" || e.Mult <= 0 {
+				t.Errorf("trace 不完整: %+v", e)
+			}
+		}
+	}
+	if sum < 0.9999 || sum > 1.0001 {
+		t.Errorf("機率總和應為 1，got %f", sum)
+	}
+}
+
+func TestDistFactorClamp(t *testing.T) {
+	in := EngineInput{Members: []Member{member(nil)},
+		CenterLat: 25.0478, CenterLng: 121.5170}
+	near := rest(func(r *Restaurant) { r.Lat = 25.0478; r.Lng = 121.5170 }) // 0m → ≤5min
+	if e := distFactor(near, in); e.Mult != DistMultBest {
+		t.Errorf("近距離應夾至 %v，got %v", DistMultBest, e.Mult)
+	}
+	far := rest(func(r *Restaurant) { r.Lat = 25.0478; r.Lng = 121.5430 }) // ~2.6km 步行 ~35min → ≥25min
+	if e := distFactor(far, in); e.Mult != DistMultWorst {
+		t.Errorf("遠距離應夾至 %v，got %v", DistMultWorst, e.Mult)
+	}
+}
+
+func TestClosingSoonDemoted(t *testing.T) {
+	soon := rest(func(r *Restaurant) { r.PlaceID = "soon"; r.Hours = daily([2]int{0, 750}) })  // 12:30 打烊
+	late := rest(func(r *Restaurant) { r.PlaceID = "late"; r.Hours = daily([2]int{0, 1440}) })
+	res := Evaluate(EngineInput{Restaurants: []Restaurant{soon, late},
+		Members: []Member{member(nil)}, Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170})
+	byID := map[string]Candidate{}
+	for _, c := range res.Kept {
+		byID[c.PlaceID] = c
+	}
+	want := byID["late"].Score * ClosingSoonMult
+	got := byID["soon"].Score
+	if got < want-0.0001 || got > want+0.0001 {
+		t.Errorf("即將打烊應 ×%.1f：got %f want %f", ClosingSoonMult, got, want)
+	}
+}
