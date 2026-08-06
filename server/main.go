@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func jsonError(w http.ResponseWriter, code int, msg string) {
@@ -40,17 +43,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		jsonOK(w, map[string]bool{"ok": true})
-	})
-	// Task 7 會把真正的 /api 路由掛進來；先掛 middleware 驗證接線
-	mux.Handle("/api/", verifier.Middleware(http.NotFoundHandler()))
-
+	pool, err := pgxpool.New(context.Background(), os.Getenv("SUPABASE_DB_URL"))
+	if err != nil {
+		log.Fatal(err)
+	}
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8787"
 	}
 	log.Printf("listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, cors(mux)))
+	log.Fatal(http.ListenAndServe(":"+port, buildRoutes(verifier, pool, NewMockProvider())))
 }
