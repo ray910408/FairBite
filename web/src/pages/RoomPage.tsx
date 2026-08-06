@@ -182,6 +182,7 @@ export default function RoomPage() {
                 onClick={async () => {
                   setActionError('')
                   const msg = await startVoting(room.id)
+                    .catch(() => '開始投票失敗：無法連線到伺服器')
                   if (msg) setActionError(msg)
                 }}>
                 開始投票
