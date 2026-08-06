@@ -9,6 +9,7 @@ export function useRoom(roomId: string) {
   const [draw, setDraw] = useState<DrawRow | null>(null)
   const [myUserId, setMyUserId] = useState('')
   const [connected, setConnected] = useState(true)
+  const [notFound, setNotFound] = useState(false)
 
   const refetch = useCallback(async () => {
     const [r, m, c, d] = await Promise.all([
@@ -18,6 +19,8 @@ export function useRoom(roomId: string) {
         .select('*, restaurants(name, lat, lng, place_id)').eq('room_id', roomId),
       supabase.from('draws').select('*').eq('room_id', roomId).maybeSingle(),
     ])
+    // 讀不到房間（不存在、或 RLS 擋掉非成員）要讓 UI 停止無限「載入中」
+    setNotFound(!r.data)
     if (r.data) setRoom(r.data as Room)
     setMembers((m.data ?? []) as MemberRow[])
     setCandidates((c.data ?? []) as CandidateRow[])
@@ -34,6 +37,9 @@ export function useRoom(roomId: string) {
       { table: 'room_candidates', filter: `room_id=eq.${roomId}` },
       { table: 'draws', filter: `room_id=eq.${roomId}` },
     ]
+    // roomId/refetch 變動會重跑本 effect：舊 channel 的 CLOSED 會晚於新 channel 的
+    // SUBSCRIBED 抵達，沒有 live 旗標就會把已連線的狀態蓋回「斷線」
+    let live = true
     let ch = supabase.channel(`room-${roomId}`)
     for (const t of tables) {
       ch = ch.on('postgres_changes',
@@ -41,6 +47,7 @@ export function useRoom(roomId: string) {
     }
     // 斷線不能靜默：非 SUBSCRIBED 顯示橫幅，恢復時整包重拉補上漏掉的事件
     ch.subscribe(status => {
+      if (!live) return
       if (status === 'SUBSCRIBED') {
         setConnected(true)
         refetch()
@@ -48,8 +55,8 @@ export function useRoom(roomId: string) {
         setConnected(false)
       }
     })
-    return () => { supabase.removeChannel(ch) }
+    return () => { live = false; supabase.removeChannel(ch) }
   }, [roomId, refetch])
 
-  return { room, members, candidates, draw, myUserId, connected, refetch }
+  return { room, members, candidates, draw, myUserId, connected, notFound, refetch }
 }

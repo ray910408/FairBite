@@ -1,11 +1,16 @@
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
 import ConditionsForm from '../components/ConditionsForm'
 
 export default function RoomPage() {
   const { id = '' } = useParams()
-  const { room, members, candidates, draw, myUserId, connected } = useRoom(id)
-  if (!room) return <p className="p-8 text-center">載入中…</p>
+  const { room, members, candidates, draw, myUserId, connected, notFound } = useRoom(id)
+  if (!room) return notFound ? (
+    <div className="space-y-3 p-8 text-center">
+      <p>找不到房間，或你不是成員</p>
+      <Link to="/" className="text-orange-600 underline">回首頁</Link>
+    </div>
+  ) : <p className="p-8 text-center">載入中…</p>
 
   const me = members.find(m => m.user_id === myUserId)
   const isHost = room.host_id === myUserId
@@ -49,6 +54,7 @@ export default function RoomPage() {
             if (notReady > 0 &&
               !confirm(`還有 ${notReady} 位成員未按準備，開始後條件將凍結。確定開始搜尋？`)) return
             import('../lib/api').then(m => m.searchRoom(room.id))
+              .catch(() => alert('搜尋失敗：無法連線到伺服器'))
           }}>
           開始搜尋餐廳
         </button>

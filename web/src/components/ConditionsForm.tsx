@@ -20,15 +20,16 @@ export default function ConditionsForm({ me }: { me: MemberRow }) {
     setForm(next)
     clearTimeout(pushTimer.current)
     pushTimer.current = setTimeout(async () => {
-      const { error } = await supabase.from('room_members').update({
+      // count: 'exact'：RLS 凍結時 UPDATE 影響 0 列且回 204 無 error，只看 error 會誤判成功
+      const { error, count } = await supabase.from('room_members').update({
         budget_max: next.budget_max,
         cuisines: next.cuisines,
         dietary: next.dietary,
         max_distance_m: next.max_distance_m,
         transport: next.transport,
         ready: next.ready,
-      }).eq('room_id', me.room_id).eq('user_id', me.user_id)
-      if (error) {
+      }, { count: 'exact' }).eq('room_id', me.room_id).eq('user_id', me.user_id)
+      if (error || count === 0) {
         setForm(savedRef.current) // RLS 拒絕（如房間已離開 lobby）→ 還原，不讓 UI 與 DB 分歧
         alert('儲存失敗：房間可能已開始選餐，條件已凍結')
       } else {
