@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(9);
+select plan(13);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於這 9 列。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -20,7 +20,8 @@ select results_eq(
       ('restaurants','SELECT'),
       ('room_candidates','SELECT'),
       ('room_members','SELECT'), ('room_members','UPDATE'),
-      ('rooms','SELECT'), ('rooms','UPDATE')
+      ('rooms','SELECT'), ('rooms','UPDATE'),
+      ('votes','SELECT')
     order by 1, 2
   $$,
   'authenticated 的 table grant 矩陣精確等於預期（多/少/換一條即紅，擋 insert/delete bypass 回歸）'
@@ -70,6 +71,34 @@ set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000a1",
 select throws_ok(
   format($$update public.rooms set status = 'decided' where id = %L$$, (select id from ctx)),
   '僅系統可修改房間狀態欄位');
+
+-- ============ P2：votes 唯讀 RLS（寫入走 Go，D15/D9）============
+reset role;
+insert into auth.users (id, email) values
+  ('00000000-0000-0000-0000-0000000000c3', 'c@test.dev');
+insert into public.restaurants (id, place_id, name, lat, lng) values
+  ('99999999-9999-9999-9999-999999999901', 'pg-1', '測試餐廳一', 25.04, 121.51);
+-- 模擬 Go service role 寫入的一張票
+insert into public.votes (room_id, user_id, restaurant_id, kind) values
+  ((select id from ctx), '00000000-0000-0000-0000-0000000000a1',
+   '99999999-9999-9999-9999-999999999901', 'up');
+
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}';
+select is((select count(*) from public.votes)::int, 1, '成員看得到全房的票');
+
+select throws_like(format(
+  $$insert into public.votes (room_id, user_id, restaurant_id, kind)
+    values (%L, '00000000-0000-0000-0000-0000000000b2', '99999999-9999-9999-9999-999999999901', 'up')$$,
+  (select id from ctx)),
+  '%permission denied%', 'authenticated 無 INSERT grant（寫入走 Go）');
+select throws_like(
+  $$delete from public.votes$$,
+  '%permission denied%', 'authenticated 無 DELETE grant（收回也走 Go）');
+
+-- 非成員（C）看不到任何票（D9：policy 否定面）
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated"}';
+select is((select count(*) from public.votes)::int, 0, '非成員看不到任何票');
 
 select * from finish();
 rollback;
