@@ -10,6 +10,7 @@ export default function RoomPage() {
   const { id = '' } = useParams()
   const { room, members, candidates, draw, myUserId, connected, notFound } = useRoom(id)
   const [spun, setSpun] = useState(false)
+  const [actionError, setActionError] = useState('')
   if (!room) return notFound ? (
     <div className="space-y-3 p-8 text-center">
       <p>找不到房間，或你不是成員</p>
@@ -33,6 +34,12 @@ export default function RoomPage() {
           { lobby: '等待中', candidates: '候選已出爐', decided: '已定案' }[room.status]
         }</span>
       </header>
+
+      {actionError && (
+        <div className="whitespace-pre-line rounded bg-red-100 p-2 text-center text-sm text-red-800">
+          {actionError}
+        </div>
+      )}
 
       <section className="rounded border p-3">
         <h2 className="mb-2 text-sm text-gray-600">成員（{members.length}）</h2>
@@ -58,8 +65,10 @@ export default function RoomPage() {
             const notReady = members.filter(m => !m.ready).length
             if (notReady > 0 &&
               !confirm(`還有 ${notReady} 位成員未按準備，開始後條件將凍結。確定開始搜尋？`)) return
+            setActionError('')
             import('../lib/api').then(m => m.searchRoom(room.id))
-              .catch(() => alert('搜尋失敗：無法連線到伺服器'))
+              .then(msg => setActionError(msg ?? ''))
+              .catch(() => setActionError('搜尋失敗：無法連線到伺服器'))
           }}>
           開始搜尋餐廳
         </button>
@@ -70,8 +79,10 @@ export default function RoomPage() {
           {isHost && (
             <button className="w-full rounded bg-orange-500 p-3 text-white"
               onClick={() => {
+                setActionError('')
                 import('../lib/api').then(m => m.drawRoom(room.id))
-                  .catch(() => alert('抽選失敗：無法連線到伺服器'))
+                  .then(msg => setActionError(msg ?? ''))
+                  .catch(() => setActionError('抽選失敗：無法連線到伺服器'))
               }}>
               啟動轉盤
             </button>
