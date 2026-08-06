@@ -3075,6 +3075,8 @@ git add -A && git commit -m "feat(web): candidate list with probabilities and tr
 
 預估 90 分鐘。
 
+> **實作註記（2026-08-06，commits 5180342 → 406fae7）**：入庫版相對本節有兩處修正 — ① `spinning` state 與 useEffect 整段移除（恆等於 `draw && !spun`；且原位置在 early return 之後會觸發 React hooks 順序 crash — hooks 必須在任何條件 return 之前）；② `arcPath` 內夾 `a1c = Math.min(a1, a0 + 359.99)`（單一候選 p=1 時 360° 弧端點重合會被 SVG 略去 → 空白轉盤）。驗收 gate 自此包含 `npm run lint`（rules-of-hooks 級錯誤 tsc/vitest 抓不到）。以 git 為準。
+
 **Files:**
 - Create: `web/src/lib/maps.ts`
 - Create: `web/src/components/Wheel.tsx`
