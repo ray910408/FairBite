@@ -1,1 +1,116 @@
 @import "tailwindcss";
+
+@theme {
+  /* CJK 走系統字（PingFang TC / 微軟正黑）：零下載、無 FOUT；拉丁字交給 system-ui */
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", "PingFang TC", "Noto Sans TC",
+    "Microsoft JhengHei", "Hiragino Sans", sans-serif;
+
+  /* 暖橘（食慾）＋ 信任藍，淺色底 */
+  --color-canvas: #fff7ed;
+  --color-surface: #ffffff;
+  --color-fg: #0f172a;
+  /* slate-600 而非 500：淺暖底 #fff7ed 上 slate-500 只有 4.48:1，差一點過不了 AA */
+  --color-fg-muted: #475569;
+  --color-border: #f2e3d5;
+  /* brand 用 orange-700 而非 orange-600：白字對比 5.2:1，orange-600 只有 3.5:1 */
+  --color-brand: #c2410c;
+  --color-brand-strong: #9a3412;
+  --color-brand-soft: #ffedd5;
+  --color-accent: #2563eb;
+  --color-accent-strong: #1d4ed8;
+  --color-ok: #15803d;
+  --color-ok-soft: #dcfce7;
+  --color-warn: #b45309;
+  --color-warn-soft: #fef3c7;
+  --color-danger: #b91c1c;
+  --color-danger-soft: #fee2e2;
+  --color-ring: #c2410c;
+
+  --radius-card: 1rem;
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 8px 24px -14px rgb(124 45 18 / 0.25);
+
+  --animate-rise: rise 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-canvas text-fg antialiased;
+  }
+  /* Tailwind v4 preflight 把 button 設成 cursor: default，要自己補回來 */
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  summary {
+    @apply cursor-pointer;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+  input[type="range"] {
+    @apply accent-brand;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-card border border-border bg-surface p-4 shadow-card;
+  }
+  /* min-h-11 = 44px 觸控目標 */
+  .btn {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4
+      text-base font-semibold transition-colors duration-150
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply bg-brand text-white hover:bg-brand-strong;
+  }
+  .btn-accent {
+    @apply bg-accent text-white hover:bg-accent-strong;
+  }
+  .btn-quiet {
+    @apply border border-border bg-surface text-fg hover:bg-brand-soft;
+  }
+  .field {
+    @apply min-h-11 w-full rounded-xl border border-border bg-surface px-3 text-base
+      text-fg transition-colors duration-150 placeholder:text-fg-muted focus:border-brand;
+  }
+  .label {
+    @apply text-sm font-medium text-fg-muted;
+  }
+  .chip {
+    @apply inline-flex min-h-11 items-center rounded-full border border-border bg-surface
+      px-4 text-sm transition-colors duration-150 hover:bg-brand-soft;
+  }
+  .banner {
+    @apply flex items-start gap-2 rounded-xl px-3 py-2 text-sm;
+  }
+  /* group-open:rotate-180 在這個 Tailwind 版本沒生成出對應 utility，直接寫 CSS */
+  .disclosure-chevron {
+    @apply transition-[rotate] duration-150;
+    rotate: 0deg; /* 起始值不能留 none，否則 rotate 過渡到 180deg 會停在 0deg */
+  }
+  details[open] .disclosure-chevron {
+    rotate: 180deg;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

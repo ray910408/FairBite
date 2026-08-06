@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { MemberRow } from '../lib/types'
 import { CUISINE_OPTIONS, DIETARY_OPTIONS, TRANSPORT_LABELS } from '../lib/labels'
+import { Alert, Check } from './icons'
 
 const TRANSPORTS = Object.entries(TRANSPORT_LABELS) as [MemberRow['transport'], string][]
 
 export default function ConditionsForm({ me }: { me: MemberRow }) {
   const [form, setForm] = useState(me)
+  const [saveError, setSaveError] = useState('')
   const savedRef = useRef(me)   // 最後一次確認寫入成功的值（失敗時還原用）
   const pushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => {
@@ -31,9 +33,10 @@ export default function ConditionsForm({ me }: { me: MemberRow }) {
       }, { count: 'exact' }).eq('room_id', me.room_id).eq('user_id', me.user_id)
       if (error || count === 0) {
         setForm(savedRef.current) // RLS 拒絕（如房間已離開 lobby）→ 還原，不讓 UI 與 DB 分歧
-        alert('儲存失敗：房間可能已開始選餐，條件已凍結')
+        setSaveError('儲存失敗：房間可能已開始選餐，條件已凍結')
       } else {
         savedRef.current = next
+        setSaveError('')
       }
     }, 400)
   }
@@ -43,52 +46,80 @@ export default function ConditionsForm({ me }: { me: MemberRow }) {
   }
 
   return (
-    <div className="space-y-4 rounded border p-4">
-      <label className="block">
-        <span className="text-sm text-gray-600">每人預算上限 NT${form.budget_max}</span>
-        <input type="range" min={100} max={1600} step={100} className="w-full"
+    <div className="card animate-rise space-y-5">
+      <h2 className="text-base font-semibold">我的條件</h2>
+
+      {saveError && (
+        <p role="alert" className="banner bg-danger-soft text-danger">
+          <Alert className="h-5 w-5 shrink-0" />
+          <span>{saveError}</span>
+        </p>
+      )}
+
+      <label className="block space-y-1">
+        <span className="flex items-baseline justify-between">
+          <span className="label">每人預算上限</span>
+          <span className="font-mono text-sm font-semibold text-brand">NT${form.budget_max}</span>
+        </span>
+        <input type="range" min={100} max={1600} step={100} className="h-6 w-full"
           value={form.budget_max}
           onChange={e => save({ budget_max: +e.target.value })} />
       </label>
-      <div>
-        <span className="text-sm text-gray-600">料理偏好</span>
-        <div className="mt-1 flex flex-wrap gap-2">
+
+      <div role="group" aria-labelledby="cuisine-label">
+        <span id="cuisine-label" className="label">料理偏好</span>
+        <div className="mt-2 flex flex-wrap gap-2">
           {CUISINE_OPTIONS.map(([v, label]) => (
             <button key={v} type="button" aria-pressed={form.cuisines.includes(v)}
-              className={`rounded-full border px-3 py-1 text-sm ${form.cuisines.includes(v) ? 'bg-orange-500 text-white' : ''}`}
+              className={`chip ${form.cuisines.includes(v)
+                ? 'border-brand bg-brand text-white hover:bg-brand-strong' : ''}`}
               onClick={() => save({ cuisines: toggle(form.cuisines, v) })}>{label}</button>
           ))}
         </div>
       </div>
-      <div>
-        <span className="text-sm text-gray-600">飲食禁忌</span>
-        <div className="mt-1 flex flex-wrap gap-2">
+
+      <div role="group" aria-labelledby="dietary-label">
+        <span id="dietary-label" className="label">飲食禁忌</span>
+        <p className="mt-0.5 text-xs text-fg-muted">硬性排除：不符合的店不會出現在轉盤上</p>
+        <div className="mt-2 flex flex-wrap gap-2">
           {DIETARY_OPTIONS.map(([v, label]) => (
             <button key={v} type="button" aria-pressed={form.dietary.includes(v)}
-              className={`rounded-full border px-3 py-1 text-sm ${form.dietary.includes(v) ? 'bg-red-500 text-white' : ''}`}
+              className={`chip ${form.dietary.includes(v)
+                ? 'border-danger bg-danger text-white hover:bg-danger' : ''}`}
               onClick={() => save({ dietary: toggle(form.dietary, v) })}>{label}</button>
           ))}
         </div>
       </div>
-      <label className="block">
-        <span className="text-sm text-gray-600">可接受距離 {form.max_distance_m} 公尺</span>
-        <input type="range" min={300} max={3000} step={100} className="w-full"
+
+      <label className="block space-y-1">
+        <span className="flex items-baseline justify-between">
+          <span className="label">可接受距離</span>
+          <span className="font-mono text-sm font-semibold text-brand">{form.max_distance_m} 公尺</span>
+        </span>
+        <input type="range" min={300} max={3000} step={100} className="h-6 w-full"
           value={form.max_distance_m}
           onChange={e => save({ max_distance_m: +e.target.value })} />
       </label>
-      <div className="flex gap-2">
-        {TRANSPORTS.map(([v, label]) => (
-          <button key={v} type="button" aria-pressed={form.transport === v}
-            className={`rounded border px-3 py-1 text-sm ${form.transport === v ? 'bg-gray-800 text-white' : ''}`}
-            onClick={() => save({ transport: v })}>{label}</button>
-        ))}
+
+      <div role="group" aria-labelledby="transport-label">
+        <span id="transport-label" className="label">交通方式</span>
+        <div className="mt-2 flex gap-2">
+          {TRANSPORTS.map(([v, label]) => (
+            <button key={v} type="button" aria-pressed={form.transport === v}
+              className={`chip flex-1 justify-center ${form.transport === v
+                ? 'border-fg bg-fg text-white hover:bg-fg' : ''}`}
+              onClick={() => save({ transport: v })}>{label}</button>
+          ))}
+        </div>
       </div>
+
       <button type="button" aria-pressed={form.ready}
-        className={`w-full rounded p-2 text-white ${form.ready ? 'bg-green-600' : 'bg-gray-400'}`}
+        className={`btn w-full ${form.ready
+          ? 'bg-ok text-white hover:bg-ok/90' : 'btn-quiet'}`}
         onClick={() => save({ ready: !form.ready })}>
-        {form.ready ? '已準備 ✓（點擊取消）' : '我準備好了'}
+        {form.ready && <Check className="h-5 w-5" />}
+        {form.ready ? '已準備（點擊取消）' : '我準備好了'}
       </button>
     </div>
   )
 }
-

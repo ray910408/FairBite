@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { Alert, Logo, LogOut, Spinner } from '../components/icons'
 
 const FALLBACK = { lat: 25.0478, lng: 121.517 } // 台北車站：拒絕定位時的 demo 預設
 
@@ -39,26 +40,58 @@ export default function HomePage() {
   async function joinRoom(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    const { data, error } = await supabase.rpc('join_room', { p_code: code })
-    if (error) setError('房間不存在或已開始')
-    else nav(`/room/${data}`)
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.rpc('join_room', { p_code: code })
+      if (error) setError('房間不存在或已開始')
+      else nav(`/room/${data}`)
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
-    <div className="mx-auto mt-16 max-w-sm space-y-6 p-4">
-      <h1 className="text-2xl font-bold">今天吃什麼</h1>
-      <button onClick={createRoom} disabled={busy}
-        className="w-full rounded bg-orange-500 p-3 text-white disabled:opacity-50">
-        {busy ? '定位中…' : '建立房間'}
-      </button>
-      <form onSubmit={joinRoom} className="flex gap-2">
-        <input className="flex-1 rounded border p-2 uppercase" aria-label="邀請碼" placeholder="邀請碼"
-          value={code} onChange={e => setCode(e.target.value)} required maxLength={6} />
-        <button className="rounded bg-gray-800 px-4 text-white" type="submit">加入</button>
-      </form>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <button className="text-sm text-gray-500 underline"
-        onClick={() => supabase.auth.signOut()}>登出</button>
+    <div className="min-h-screen">
+      <header className="mx-auto flex w-full max-w-md items-center justify-between p-4">
+        <div className="flex items-center gap-2">
+          <Logo className="h-8 w-8" />
+          <span className="text-lg font-bold">今天吃什麼</span>
+        </div>
+        <button className="btn btn-quiet min-h-11 px-3 text-sm" onClick={() => supabase.auth.signOut()}>
+          <LogOut className="h-4 w-4" />
+          登出
+        </button>
+      </header>
+
+      <main className="mx-auto w-full max-w-md space-y-4 p-4">
+        <section className="card animate-rise space-y-3 bg-linear-to-b from-brand-soft to-surface">
+          <h1 className="text-2xl font-bold tracking-tight">開一場聚餐決策</h1>
+          <p className="text-sm text-fg-muted">
+            以你現在的位置為中心建立房間，把邀請碼給大家，各自設好條件就能開始搜尋。
+          </p>
+          <button onClick={createRoom} disabled={busy} className="btn btn-primary w-full">
+            {busy && <Spinner className="h-5 w-5" />}
+            {busy ? '定位中…' : '建立房間'}
+          </button>
+        </section>
+
+        <section className="card animate-rise space-y-3">
+          <h2 className="text-base font-semibold">已經有邀請碼？</h2>
+          <form onSubmit={joinRoom} className="flex gap-2">
+            <input className="field flex-1 font-mono text-lg tracking-[0.3em] uppercase"
+              aria-label="邀請碼" placeholder="ABC123" autoCapitalize="characters"
+              value={code} onChange={e => setCode(e.target.value)} required maxLength={6} />
+            <button className="btn btn-quiet px-5" type="submit" disabled={busy}>加入</button>
+          </form>
+        </section>
+
+        {error && (
+          <p role="alert" className="banner bg-danger-soft text-danger">
+            <Alert className="h-5 w-5 shrink-0" />
+            <span>{error}</span>
+          </p>
+        )}
+      </main>
     </div>
   )
 }

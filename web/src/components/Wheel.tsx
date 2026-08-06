@@ -2,8 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CandidateRow } from '../lib/types'
 import { formatPercents, sortKept } from '../lib/probability'
 
-const COLORS = ['#f97316', '#0ea5e9', '#22c55e', '#eab308', '#a855f7',
-  '#ef4444', '#14b8a6', '#f43f5e', '#8b5cf6', '#84cc16', '#06b6d4', '#d946ef']
+const COLORS = ['#c2410c', '#0369a1', '#15803d', '#a16207', '#7e22ce',
+  '#be123c', '#0f766e', '#b91c1c', '#6d28d9', '#4d7c0f', '#0e7490', '#a21caf']
+
+const SPIN_MS = 4000
+
+// 減少動態偏好：不轉滿 4 秒，直接定位並縮短等待
+const prefersReduced = () =>
+  typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
 function arcPath(cx: number, cy: number, r: number, a0: number, a1: number): string {
   const rad = (a: number) => ((a - 90) * Math.PI) / 180
@@ -41,26 +47,39 @@ export default function Wheel({ rows, winnerId, onDone }: {
     if (!s) return
     const center = (s.start + s.end) / 2
     setRotation(5 * 360 + (360 - center)) // 指針固定在 12 點鐘，轉輪本體旋轉
-    const t = setTimeout(() => doneRef.current(), 4200)
+    const t = setTimeout(() => doneRef.current(), prefersReduced() ? 700 : SPIN_MS + 200)
     return () => clearTimeout(t)
-  }, [winnerId]) // slices/onDone 走 ref：realtime refetch 不會重設 4 秒計時器
+  }, [winnerId]) // slices/onDone 走 ref：realtime refetch 不會重設計時器
 
   return (
-    <div className="relative mx-auto w-72">
-      <div className="absolute -top-1 left-1/2 z-10 -translate-x-1/2 text-2xl">▼</div>
-      <svg viewBox="0 0 200 200"
-        style={{ transform: `rotate(${rotation}deg)`, transition: 'transform 4s cubic-bezier(0.2, 0.8, 0.2, 1)' }}>
-        {slices.map(s => (
-          <path key={s.c.restaurant_id} d={arcPath(100, 100, 98, s.start, s.end)}
-            fill={s.color} stroke="white" strokeWidth="1" />
-        ))}
-      </svg>
-      <ul className="mt-3 space-y-1 text-sm">
+    <div className="card animate-rise space-y-4">
+      <p className="text-center text-sm text-fg-muted" role="status">轉盤抽選中…</p>
+      <div className="relative mx-auto w-64 max-w-full">
+        <div className="absolute -top-2 left-1/2 z-10 -translate-x-1/2">
+          <svg viewBox="0 0 24 20" aria-hidden="true" className="h-5 w-6 drop-shadow-sm">
+            <path d="M12 20 1 0h22z" className="fill-fg" />
+          </svg>
+        </div>
+        <svg viewBox="0 0 200 200" aria-hidden="true"
+          className="rounded-full shadow-card ring-4 ring-surface"
+          style={{
+            transform: `rotate(${rotation}deg)`,
+            transition: `transform ${prefersReduced() ? 0 : SPIN_MS}ms cubic-bezier(0.2, 0.8, 0.2, 1)`,
+          }}>
+          {slices.map(s => (
+            <path key={s.c.restaurant_id} d={arcPath(100, 100, 98, s.start, s.end)}
+              fill={s.color} stroke="white" strokeWidth="1.5" />
+          ))}
+          <circle cx="100" cy="100" r="14" fill="white" />
+        </svg>
+      </div>
+      <ul className="space-y-1.5 text-sm">
         {slices.map((s, i) => (
           <li key={s.c.restaurant_id} className="flex items-center gap-2">
-            <span className="inline-block h-3 w-3 rounded-sm" style={{ background: s.color }} />
-            <span className="flex-1">{s.c.restaurants.name}</span>
-            <span className="font-mono">{percents[i]}</span>
+            <span aria-hidden="true" className="inline-block h-3 w-3 shrink-0 rounded-sm"
+              style={{ background: s.color }} />
+            <span className="flex-1 truncate">{s.c.restaurants.name}</span>
+            <span className="font-mono text-fg-muted">{percents[i]}</span>
           </li>
         ))}
       </ul>

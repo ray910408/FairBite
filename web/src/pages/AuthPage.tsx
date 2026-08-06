@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { authErrorMessage } from '../lib/authErrors'
 import { supabase } from '../lib/supabase'
+import { Alert, Logo, Spinner } from '../components/icons'
 
 export default function AuthPage() {
   const nav = useNavigate()
@@ -10,43 +11,82 @@ export default function AuthPage() {
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    const { error } =
-      mode === 'register'
-        ? await supabase.auth.signUp({
-            email,
-            password,
-            options: { data: { display_name: displayName } },
-          })
-        : await supabase.auth.signInWithPassword({ email, password })
-    if (error) setError(authErrorMessage(error))
-    else nav('/')
+    setBusy(true)
+    try {
+      const { error } =
+        mode === 'register'
+          ? await supabase.auth.signUp({
+              email,
+              password,
+              options: { data: { display_name: displayName } },
+            })
+          : await supabase.auth.signInWithPassword({ email, password })
+      if (error) setError(authErrorMessage(error))
+      else nav('/')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
-    <div className="mx-auto mt-16 max-w-sm space-y-4 p-4">
-      <h1 className="text-2xl font-bold">今天吃什麼</h1>
-      <form onSubmit={submit} className="space-y-3">
-        {mode === 'register' && (
-          <input className="w-full rounded border p-2" aria-label="顯示名稱" placeholder="顯示名稱"
-            value={displayName} onChange={e => setDisplayName(e.target.value)} required />
-        )}
-        <input className="w-full rounded border p-2" type="email" aria-label="Email" placeholder="Email"
-          value={email} onChange={e => setEmail(e.target.value)} required />
-        <input className="w-full rounded border p-2" type="password" aria-label="密碼" placeholder="密碼（至少 6 碼）"
-          value={password} onChange={e => setPassword(e.target.value)} required minLength={6} />
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        <button className="w-full rounded bg-orange-500 p-2 text-white" type="submit">
-          {mode === 'login' ? '登入' : '註冊'}
-        </button>
-      </form>
-      <button className="text-sm text-gray-500 underline"
-        onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
-        {mode === 'login' ? '沒有帳號？註冊' : '已有帳號？登入'}
-      </button>
-    </div>
+    <main className="mx-auto flex min-h-screen w-full max-w-sm flex-col justify-center gap-6 p-5">
+      <div className="animate-rise flex flex-col items-center gap-3 text-center">
+        <Logo className="h-14 w-14" />
+        <h1 className="text-3xl font-bold tracking-tight">今天吃什麼</h1>
+        <p className="text-sm text-fg-muted">一群人各自設條件，五分鐘內轉出今天的店</p>
+      </div>
+
+      <div className="card animate-rise space-y-4">
+        <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
+          {(['login', 'register'] as const).map(m => (
+            <button key={m} type="button" aria-pressed={mode === m}
+              className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                mode === m ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
+              }`}
+              onClick={() => { setMode(m); setError('') }}>
+              {m === 'login' ? '登入' : '註冊'}
+            </button>
+          ))}
+        </div>
+
+        <form onSubmit={submit} className="space-y-3">
+          {mode === 'register' && (
+            <div className="space-y-1">
+              <label className="label" htmlFor="displayName">顯示名稱</label>
+              <input id="displayName" className="field" placeholder="房間裡看到的名字"
+                value={displayName} onChange={e => setDisplayName(e.target.value)} required />
+            </div>
+          )}
+          <div className="space-y-1">
+            <label className="label" htmlFor="email">Email</label>
+            <input id="email" className="field" type="email" autoComplete="email"
+              placeholder="you@example.com"
+              value={email} onChange={e => setEmail(e.target.value)} required />
+          </div>
+          <div className="space-y-1">
+            <label className="label" htmlFor="password">密碼</label>
+            <input id="password" className="field" type="password"
+              autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+              placeholder="至少 6 碼"
+              value={password} onChange={e => setPassword(e.target.value)} required minLength={6} />
+          </div>
+          {error && (
+            <p role="alert" className="banner bg-danger-soft text-danger">
+              <Alert className="h-5 w-5 shrink-0" />
+              <span>{error}</span>
+            </p>
+          )}
+          <button className="btn btn-primary w-full" type="submit" disabled={busy}>
+            {busy && <Spinner className="h-5 w-5" />}
+            {mode === 'login' ? '登入' : '建立帳號'}
+          </button>
+        </form>
+      </div>
+    </main>
   )
 }

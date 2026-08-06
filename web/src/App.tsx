@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
+import { Spinner } from './components/icons'
 import AuthPage from './pages/AuthPage'
 import HomePage from './pages/HomePage'
 import RoomPage from './pages/RoomPage'
@@ -20,9 +21,18 @@ export function useSession() {
   return { session, loading }
 }
 
+function PageLoading({ text = '載入中…' }: { text?: string }) {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-fg-muted">
+      <Spinner className="h-7 w-7 text-brand" />
+      <p className="text-sm">{text}</p>
+    </div>
+  )
+}
+
 function Guard({ children }: { children: React.ReactNode }) {
   const { session, loading } = useSession()
-  if (loading) return <p className="p-8 text-center">載入中…</p>
+  if (loading) return <PageLoading />
   if (!session) return <Navigate to="/auth" replace />
   return <>{children}</>
 }
