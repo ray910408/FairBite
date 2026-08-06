@@ -347,7 +347,7 @@ git add -A && git commit -m "feat: supabase schema, RLS policies and pgTAP tests
 - Test: `server/auth_test.go`
 
 **Interfaces:**
-- Consumes: 環境變數 `SUPABASE_JWT_SECRET`（local 預設 `super-secret-jwt-token-with-at-least-32-characters-long`）或 `SUPABASE_JWKS_URL`（hosted 部署用；Supabase legacy 對稱簽章 2026 年底棄用、新專案一律非對稱，設此變數即切換 JWKS 驗證）、`PORT`、`WEB_ORIGIN`
+- Consumes: 環境變數 `SUPABASE_JWKS_URL`（設定即走非對稱驗證；supabase CLI 2.x local 與 hosted 新專案皆簽發 ES256，本地開發同樣走這條 — local `http://127.0.0.1:54321/auth/v1/.well-known/jwks.json`）或 `SUPABASE_JWT_SECRET`（僅供仍在 legacy 對稱簽章的舊專案，HS256，2026 年底棄用）、`PORT`、`WEB_ORIGIN`
 - Produces: `NewVerifier() (*Verifier, error)`、`(*Verifier).Middleware(http.Handler) http.Handler`、`UserID(*http.Request) string`；`GET /healthz` 回 `{"ok":true}`。Task 7 的 handlers 掛在這個 middleware 之後。
 
 - [ ] **Step 1: 寫失敗測試**
@@ -2878,7 +2878,7 @@ export async function drawRoom(roomId: string) {
 npm run build
 ```
 
-手動雙瀏覽器：兩帳號進同房 → A 改條件、按 ready → B 畫面 1 秒內看到 ready 徽章變化（Realtime 生效）。啟動 Go（`SUPABASE_DB_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' SUPABASE_JWT_SECRET='<supabase status 顯示的 JWT secret>' go run ./server`）→ 房主按「開始搜尋餐廳」→ 兩邊同時看到狀態變「候選已出爐」與筆數。
+手動雙瀏覽器：兩帳號進同房 → A 改條件、按 ready → B 畫面 1 秒內看到 ready 徽章變化（Realtime 生效）。啟動 Go（`SUPABASE_DB_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' SUPABASE_JWKS_URL='http://127.0.0.1:54321/auth/v1/.well-known/jwks.json' go run ./server`）→ 房主按「開始搜尋餐廳」→ 兩邊同時看到狀態變「候選已出爐」與筆數。
 
 - [ ] **Step 5: Commit**
 
@@ -3287,6 +3287,8 @@ git add -A && git commit -m "feat(web): synchronized wheel animation, result car
 ### Task 13: README + demo script + 完整驗證
 
 預估 30 分鐘。
+
+> **實作註記（2026-08-06，commit 983d003）**：入庫的 README 本地啟動指引改用 `SUPABASE_JWKS_URL`，不用本節原寫的 `SUPABASE_JWT_SECRET`。原因是 E2E 實測：supabase CLI 2.x 的 local stack 已改簽 ES256（不再是 legacy HS256 對稱簽章），照原指引啟動 Go 服務後所有 `/api` 呼叫一律 401 invalid token。local JWKS endpoint 為 `http://127.0.0.1:54321/auth/v1/.well-known/jwks.json`；`SUPABASE_JWT_SECRET` 自此僅保留給仍在 legacy 對稱簽章的舊專案（2026 年底棄用）。Task 2 決策 D4 保留 JWKS 雙路徑正是這次能直接切換的原因。Task 2 Interfaces 與 Task 10 Step 4 的啟動指令已同步改寫。以 git 為準。
 
 **Files:**
 - Create: `README.md`
