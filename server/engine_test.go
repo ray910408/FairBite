@@ -142,6 +142,32 @@ func TestDistFactorClamp(t *testing.T) {
 	}
 }
 
+func TestDistOverheadAndSlowest(t *testing.T) {
+	// 兩位成員：步行 vs 大眾運輸。距離 ~1500m：
+	// 步行 0 + 1500/75 = 20 分；大眾運輸 8 + 1500/200 = 15.5 分 → 最慢是步行
+	in := EngineInput{
+		Members: []Member{
+			member(nil), // walking
+			member(func(m *Member) { m.UserID = "u2"; m.Transport = "transit" }),
+		},
+		CenterLat: 25.0478, CenterLng: 121.5170,
+	}
+	r := rest(func(r *Restaurant) { r.Lat = 25.0478; r.Lng = 121.5319 }) // 東移 ~1500m
+	e := distFactor(r, in)
+	if !strings.Contains(e.Reason, "最慢") || !strings.Contains(e.Reason, "步行") {
+		t.Errorf("reason 應標示最慢成員與交通方式：%q", e.Reason)
+	}
+	// transit 的 overhead 生效：純除法是 7.5 分，加 8 分 overhead 後 >15 分
+	solo := EngineInput{
+		Members:   []Member{member(func(m *Member) { m.Transport = "transit" })},
+		CenterLat: 25.0478, CenterLng: 121.5170,
+	}
+	e2 := distFactor(r, solo)
+	if !strings.Contains(e2.Reason, "16 分鐘") && !strings.Contains(e2.Reason, "15 分鐘") {
+		t.Errorf("transit overhead 應計入估時：%q", e2.Reason)
+	}
+}
+
 func TestClosingSoonDemoted(t *testing.T) {
 	soon := rest(func(r *Restaurant) { r.PlaceID = "soon"; r.Hours = daily([2]int{0, 750}) }) // 12:30 打烊
 	late := rest(func(r *Restaurant) { r.PlaceID = "late"; r.Hours = daily([2]int{0, 1440}) })

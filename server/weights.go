@@ -23,6 +23,11 @@ var DietaryLabels = map[string]string{
 
 var TransportMetersPerMin = map[string]float64{"walking": 75, "driving": 500, "transit": 200}
 
+// 交通時間細化（P2）：起步 overhead（開車找車位、大眾運輸等車），單位分鐘
+var TransportOverheadMin = map[string]float64{"walking": 0, "driving": 6, "transit": 8}
+
+var TransportLabels = map[string]string{"walking": "步行", "driving": "開車", "transit": "大眾運輸"}
+
 // 探索檔位 = 近期懲罰強度的 preset（spec §5.4）。新店加成係數屬 P3 曝光因素，屆時再加
 var RecencyPenaltyScale = map[string]float64{"familiar": 0.5, "balanced": 1.0, "explore": 1.25}
 

@@ -143,9 +143,10 @@ func prefFactor(r Restaurant, in EngineInput) TraceEntry {
 
 func distFactor(r Restaurant, in EngineInput) TraceEntry {
 	dist := Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng)
-	var sumMult, sumMin float64
+	var sumMult, sumMin, worstMin float64
+	worstTransport := in.Members[0].Transport
 	for _, m := range in.Members {
-		minutes := dist / TransportMetersPerMin[m.Transport]
+		minutes := TransportOverheadMin[m.Transport] + dist/TransportMetersPerMin[m.Transport]
 		frac := (minutes - DistBestMin) / (DistWorstMin - DistBestMin)
 		if frac < 0 {
 			frac = 0
@@ -155,10 +156,14 @@ func distFactor(r Restaurant, in EngineInput) TraceEntry {
 		}
 		sumMult += DistMultBest + (DistMultWorst-DistMultBest)*frac
 		sumMin += minutes
+		if minutes > worstMin {
+			worstMin, worstTransport = minutes, m.Transport
+		}
 	}
 	n := float64(len(in.Members))
 	return TraceEntry{"distance", sumMult / n,
-		fmt.Sprintf("平均交通約 %.0f 分鐘", sumMin/n)}
+		fmt.Sprintf("平均交通約 %.0f 分鐘（最慢 %.0f 分鐘，%s）",
+			sumMin/n, worstMin, TransportLabels[worstTransport])}
 }
 
 func closingFactor(r Restaurant, in EngineInput) TraceEntry {
