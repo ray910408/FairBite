@@ -39,6 +39,12 @@ type Candidate struct {
 	Trace       []TraceEntry
 }
 
+type Excluded struct {
+	Restaurant
+	Kinds  []string // 全部命中的排除類別（dietary/budget/closed/veto），供統計不受檢查順序污染
+	Reason string   // 全部原因以「；」串接，含成員歸因
+}
+
 func hasKind(ks []string, want string) bool {
 	for _, k := range ks {
 		if k == want {
@@ -46,12 +52,6 @@ func hasKind(ks []string, want string) bool {
 		}
 	}
 	return false
-}
-
-type Excluded struct {
-	Restaurant
-	Kinds  []string // 全部命中的排除類別（dietary/budget/closed/veto），供統計不受檢查順序污染
-	Reason string   // 全部原因以「；」串接，含成員歸因
 }
 
 type EngineInput struct {

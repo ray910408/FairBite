@@ -88,7 +88,7 @@ func loadHostRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (R
 	return room, true
 }
 
-// loadMemberRoom：任一成員可用的操作（rescore）用這個；房主限定仍走 loadHostRoom
+// loadMemberRoom：任一成員可用的操作（vote）用這個；房主限定仍走 loadHostRoom
 func loadMemberRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (RoomRow, bool) {
 	room, err := LoadRoom(r.Context(), pool, r.PathValue("id"))
 	if err != nil {
@@ -406,22 +406,36 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 		jsonError(w, http.StatusConflict, "房間狀態不允許抽選")
 		return
 	}
-	members, err := LoadMembers(ctx, pool, room.ID)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := TransitionRoom(ctx, tx, room.ID, "voting", "decided"); err != nil {
+		if errors.Is(err, ErrConflict) {
+			jsonError(w, http.StatusConflict, "房間狀態已變更")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	members, err := LoadMembers(ctx, tx, room.ID)
 	if err != nil || len(members) == 0 {
 		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
 		return
 	}
-	rs, err := LoadRoomRestaurants(ctx, pool, room.ID)
+	rs, err := LoadRoomRestaurants(ctx, tx, room.ID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "讀取候選失敗")
 		return
 	}
-	votes, err := LoadVotes(ctx, pool, room.ID)
+	votes, err := LoadVotes(ctx, tx, room.ID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "讀取投票失敗")
 		return
 	}
-	recency, err := LoadRecency(ctx, pool, memberIDs(members), restaurantIDs(rs))
+	recency, err := LoadRecency(ctx, tx, memberIDs(members), restaurantIDs(rs))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "讀取同席紀錄失敗")
 		return
@@ -445,12 +459,6 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 	for _, c := range result.Kept {
 		probs[c.Restaurant.ID] = c.Probability
 	}
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-		return
-	}
-	defer tx.Rollback(ctx)
 	if err := ReplaceCandidates(ctx, tx, room.ID, result); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
 		return
@@ -461,14 +469,6 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique(room_id)：並發抽選輸家
 			jsonError(w, http.StatusConflict, "已抽選過")
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-		return
-	}
-	if err := TransitionRoom(ctx, tx, room.ID, "voting", "decided"); err != nil {
-		if errors.Is(err, ErrConflict) {
-			jsonError(w, http.StatusConflict, "房間狀態已變更")
 			return
 		}
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")

@@ -513,6 +513,9 @@ func TestVotingFlow(t *testing.T) {
 	if w := vote(strangerID, cands[0], "up", "cast"); w.Code != http.StatusForbidden {
 		t.Fatalf("非成員 vote: want 403 got %d", w.Code)
 	}
+	if w := vote(memberID, "00000000-0000-0000-0000-00000000dead", "up", "cast"); w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "不在本房的候選名單中") {
+		t.Fatalf("非候選餐廳 vote: want 422 with message got %d %s", w.Code, w.Body.String())
+	}
 
 	// 全否決前先清掉 member 的否決（host 無票）→ draw 從 voting 出發
 	if _, err := pool.Exec(ctx,
