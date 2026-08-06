@@ -16,6 +16,11 @@ type Member struct {
 	Transport    string
 }
 
+type VoteInfo struct {
+	Ups     int
+	Vetoers []string
+}
+
 type TraceEntry struct {
 	Factor string  `json:"factor"`
 	Mult   float64 `json:"mult"`
@@ -40,6 +45,7 @@ type EngineInput struct {
 	Members              []Member
 	Now                  time.Time
 	CenterLat, CenterLng float64
+	Votes                map[string]VoteInfo // key = rkey(r)；nil = 無投票資料（P1 相容）
 }
 
 type EngineResult struct {
@@ -54,6 +60,14 @@ func hasTag(tags []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// rkey：真實流程一律有 DB uuid；引擎測試無 DB 用 PlaceID
+func rkey(r Restaurant) string {
+	if r.ID != "" {
+		return r.ID
+	}
+	return r.PlaceID
 }
 
 // hardExclude 收集「全部」違反的硬性條件（不是只記第一個）：
@@ -149,13 +163,27 @@ func closingFactor(r Restaurant, in EngineInput) TraceEntry {
 	return TraceEntry{"closing_soon", 1.0, "營業時間充裕"}
 }
 
-var factors = []factorFn{prefFactor, distFactor, closingFactor}
+func voteFactor(r Restaurant, in EngineInput) TraceEntry {
+	ups := in.Votes[rkey(r)].Ups
+	if ups == 0 {
+		return TraceEntry{"votes", 1.0, "尚無贊成票"}
+	}
+	return TraceEntry{"votes", 1 + VoteBoostPerUp*float64(ups),
+		fmt.Sprintf("%d 張贊成票", ups)}
+}
+
+var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor}
 
 func Evaluate(in EngineInput) EngineResult {
 	var res EngineResult
 	for _, r := range in.Restaurants {
 		if kinds, reasons := hardExclude(r, in.Members, in.Now); len(kinds) > 0 {
 			res.Excluded = append(res.Excluded, Excluded{r, kinds, strings.Join(reasons, "；")})
+			continue
+		}
+		if v := in.Votes[rkey(r)]; len(v.Vetoers) > 0 {
+			res.Excluded = append(res.Excluded, Excluded{r, []string{"veto"},
+				fmt.Sprintf("遭 %s 否決（可收回）", strings.Join(v.Vetoers, "、"))})
 			continue
 		}
 		c := Candidate{Restaurant: r, Score: 1.0}

@@ -34,6 +34,7 @@ const (
 
 	ClosingSoonMinutes = 60
 	ClosingSoonMult    = 0.6
+	VoteBoostPerUp     = 0.10 // 每張贊成票 +10%（spec §5 投票加成）
 
 	RateLimitPerSec = 2 // 每使用者每秒請求數（spec §7 token bucket）
 	RateLimitBurst  = 5

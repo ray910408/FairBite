@@ -114,8 +114,8 @@ func TestScoringFactors(t *testing.T) {
 	var sum float64
 	for _, c := range res.Kept {
 		sum += c.Probability
-		if len(c.Trace) != 3 {
-			t.Errorf("%s trace 應有 3 個因素，got %d", c.PlaceID, len(c.Trace))
+		if len(c.Trace) != 4 {
+			t.Errorf("%s trace 應有 4 個因素，got %d", c.PlaceID, len(c.Trace))
 		}
 		for _, e := range c.Trace {
 			if e.Reason == "" || e.Mult <= 0 {
@@ -154,5 +154,65 @@ func TestClosingSoonDemoted(t *testing.T) {
 	got := byID["soon"].Score
 	if got < want-0.0001 || got > want+0.0001 {
 		t.Errorf("即將打烊應 ×%.1f：got %f want %f", ClosingSoonMult, got, want)
+	}
+}
+
+func TestVoteFactor(t *testing.T) {
+	rA := rest(func(r *Restaurant) { r.PlaceID = "a" })
+	rB := rest(func(r *Restaurant) { r.PlaceID = "b" })
+	res := Evaluate(EngineInput{
+		Restaurants: []Restaurant{rA, rB},
+		Members:     []Member{member(nil)},
+		Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+		Votes: map[string]VoteInfo{"a": {Ups: 2}},
+	})
+	byID := map[string]Candidate{}
+	for _, c := range res.Kept {
+		byID[c.PlaceID] = c
+	}
+	// 每張贊成票 +10%（spec §5）：兩票 → ×1.2
+	want := byID["b"].Score * (1 + 2*VoteBoostPerUp)
+	got := byID["a"].Score
+	if got < want-0.0001 || got > want+0.0001 {
+		t.Errorf("2 張贊成票應 ×%.1f：got %f want %f", 1+2*VoteBoostPerUp, got, want)
+	}
+	for _, c := range res.Kept {
+		if len(c.Trace) != 4 {
+			t.Errorf("%s trace 應有 4 個因素，got %d", c.PlaceID, len(c.Trace))
+		}
+	}
+}
+
+func TestVetoExcludes(t *testing.T) {
+	rA := rest(func(r *Restaurant) { r.PlaceID = "a" })
+	rB := rest(func(r *Restaurant) { r.PlaceID = "b" })
+	res := Evaluate(EngineInput{
+		Restaurants: []Restaurant{rA, rB},
+		Members:     []Member{member(nil)},
+		Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+		Votes: map[string]VoteInfo{"a": {Vetoers: []string{"小明", "小華"}}},
+	})
+	if len(res.Kept) != 1 || res.Kept[0].PlaceID != "b" {
+		t.Fatalf("被否決者應移出轉盤，kept=%+v", res.Kept)
+	}
+	e := res.Excluded[0]
+	if !hasKind(e.Kinds, "veto") {
+		t.Errorf("kind 應含 veto，got %v", e.Kinds)
+	}
+	if e.Reason != "遭 小明、小華 否決（可收回）" {
+		t.Errorf("reason 格式不符：%q", e.Reason)
+	}
+	// 唯一候選機率應為 1
+	if p := res.Kept[0].Probability; p < 0.9999 || p > 1.0001 {
+		t.Errorf("唯一候選機率應為 1，got %f", p)
+	}
+}
+
+func TestNilVotesNeutral(t *testing.T) {
+	res := Evaluate(EngineInput{Restaurants: []Restaurant{rest(nil)},
+		Members: []Member{member(nil)}, Now: lunchMonday,
+		CenterLat: 25.0478, CenterLng: 121.5170})
+	if len(res.Kept) != 1 {
+		t.Fatalf("nil Votes 不應影響保留，got %+v", res.Excluded)
 	}
 }
