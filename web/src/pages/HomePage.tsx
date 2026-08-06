@@ -52,7 +52,7 @@ export default function HomePage() {
         {busy ? '定位中…' : '建立房間'}
       </button>
       <form onSubmit={joinRoom} className="flex gap-2">
-        <input className="flex-1 rounded border p-2 uppercase" placeholder="邀請碼"
+        <input className="flex-1 rounded border p-2 uppercase" aria-label="邀請碼" placeholder="邀請碼"
           value={code} onChange={e => setCode(e.target.value)} required maxLength={6} />
         <button className="rounded bg-gray-800 px-4 text-white" type="submit">加入</button>
       </form>
