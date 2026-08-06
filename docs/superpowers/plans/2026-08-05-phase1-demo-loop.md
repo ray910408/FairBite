@@ -898,6 +898,7 @@ git add -A && git commit -m "feat(server): places provider interface with mock t
 ```go
 type Member struct {
 	UserID       string
+	DisplayName  string
 	BudgetMax    int
 	Cuisines     []string
 	Dietary      []string
@@ -917,8 +918,8 @@ type Candidate struct {
 }
 type Excluded struct {
 	Restaurant
-	Kind   string // "dietary" | "budget" | "closed"
-	Reason string
+	Kinds  []string // 全部命中的排除類別："dietary" | "budget" | "closed"（去重）
+	Reason string   // 全部原因以「；」串接，含成員歸因
 }
 type EngineInput struct {
 	Restaurants          []Restaurant
