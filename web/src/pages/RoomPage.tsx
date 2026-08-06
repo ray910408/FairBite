@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
 import ConditionsForm from '../components/ConditionsForm'
+import CandidateList from '../components/CandidateList'
 
 export default function RoomPage() {
   const { id = '' } = useParams()
@@ -59,8 +60,22 @@ export default function RoomPage() {
           開始搜尋餐廳
         </button>
       )}
-      {/* Task 11: candidates 視圖；Task 12: 轉盤與結果 */}
-      {room.status !== 'lobby' && (
+      {room.status === 'candidates' && (
+        <>
+          <CandidateList rows={candidates} />
+          {isHost && (
+            <button className="w-full rounded bg-orange-500 p-3 text-white"
+              onClick={() => {
+                import('../lib/api').then(m => m.drawRoom(room.id))
+                  .catch(() => alert('抽選失敗：無法連線到伺服器'))
+              }}>
+              啟動轉盤
+            </button>
+          )}
+        </>
+      )}
+      {/* Task 12: 轉盤與結果 */}
+      {room.status === 'decided' && (
         <p className="text-sm text-gray-500">候選 {candidates.length} 筆，draw：{draw ? '有' : '無'}</p>
       )}
     </div>
