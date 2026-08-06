@@ -54,7 +54,7 @@ export default function ConditionsForm({ me }: { me: MemberRow }) {
         <span className="text-sm text-gray-600">料理偏好</span>
         <div className="mt-1 flex flex-wrap gap-2">
           {CUISINE_OPTIONS.map(([v, label]) => (
-            <button key={v} type="button"
+            <button key={v} type="button" aria-pressed={form.cuisines.includes(v)}
               className={`rounded-full border px-3 py-1 text-sm ${form.cuisines.includes(v) ? 'bg-orange-500 text-white' : ''}`}
               onClick={() => save({ cuisines: toggle(form.cuisines, v) })}>{label}</button>
           ))}
@@ -64,7 +64,7 @@ export default function ConditionsForm({ me }: { me: MemberRow }) {
         <span className="text-sm text-gray-600">飲食禁忌</span>
         <div className="mt-1 flex flex-wrap gap-2">
           {DIETARY_OPTIONS.map(([v, label]) => (
-            <button key={v} type="button"
+            <button key={v} type="button" aria-pressed={form.dietary.includes(v)}
               className={`rounded-full border px-3 py-1 text-sm ${form.dietary.includes(v) ? 'bg-red-500 text-white' : ''}`}
               onClick={() => save({ dietary: toggle(form.dietary, v) })}>{label}</button>
           ))}
@@ -78,12 +78,12 @@ export default function ConditionsForm({ me }: { me: MemberRow }) {
       </label>
       <div className="flex gap-2">
         {TRANSPORTS.map(([v, label]) => (
-          <button key={v} type="button"
+          <button key={v} type="button" aria-pressed={form.transport === v}
             className={`rounded border px-3 py-1 text-sm ${form.transport === v ? 'bg-gray-800 text-white' : ''}`}
             onClick={() => save({ transport: v })}>{label}</button>
         ))}
       </div>
-      <button type="button"
+      <button type="button" aria-pressed={form.ready}
         className={`w-full rounded p-2 text-white ${form.ready ? 'bg-green-600' : 'bg-gray-400'}`}
         onClick={() => save({ ready: !form.ready })}>
         {form.ready ? '已準備 ✓（點擊取消）' : '我準備好了'}
