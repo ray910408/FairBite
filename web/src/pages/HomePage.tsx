@@ -24,13 +24,16 @@ export default function HomePage() {
   async function createRoom() {
     setBusy(true)
     setError('')
-    const pos = await getPosition()
-    const { data, error } = await supabase.rpc('create_room', {
-      p_lat: pos.lat, p_lng: pos.lng,
-    })
-    setBusy(false)
-    if (error) setError(error.message)
-    else nav(`/room/${data}`)
+    try {
+      const pos = await getPosition()
+      const { data, error } = await supabase.rpc('create_room', {
+        p_lat: pos.lat, p_lng: pos.lng,
+      })
+      if (error) setError(error.message)
+      else nav(`/room/${data}`)
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function joinRoom(e: React.FormEvent) {
