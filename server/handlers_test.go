@@ -375,10 +375,10 @@ func TestVotingFlow(t *testing.T) {
 	}
 	t.Cleanup(func() { pool.Close() })
 
-	hostID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-	memberID := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-	strangerID := "cccccccc-cccc-cccc-cccc-cccccccccccc"
-	roomID := "dddddddd-dddd-dddd-dddd-dddddddddddd"
+	hostID := "71717171-7171-7171-7171-717171717171"
+	memberID := "72727272-7272-7272-7272-727272727272"
+	strangerID := "73737373-7373-7373-7373-737373737373"
+	roomID := "74747474-7474-7474-7474-747474747474"
 	if _, err = pool.Exec(ctx, `
 		insert into auth.users (id, email) values
 		  ($1, 'vhost@test.dev'), ($2, 'vmember@test.dev'), ($3, 'vstranger@test.dev')
@@ -450,8 +450,8 @@ func TestVotingFlow(t *testing.T) {
 		cands = append(cands, id)
 	}
 	rows.Close()
-	if len(cands) < 4 {
-		t.Fatalf("測試需要至少 4 家候選，got %d", len(cands))
+	if len(cands) < 3 {
+		t.Fatalf("測試需要至少 3 家候選，got %d", len(cands))
 	}
 	if w := vote(memberID, cands[0], "up", "cast"); w.Code != http.StatusConflict {
 		t.Fatalf("candidates 階段 vote: want 409 got %d", w.Code)
@@ -512,6 +512,11 @@ func TestVotingFlow(t *testing.T) {
 	// 非成員 403；不在候選名單的餐廳 422
 	if w := vote(strangerID, cands[0], "up", "cast"); w.Code != http.StatusForbidden {
 		t.Fatalf("非成員 vote: want 403 got %d", w.Code)
+	}
+	for _, rid := range []string{"", "not-a-uuid"} {
+		if w := vote(memberID, rid, "up", "cast"); w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "餐廳 ID 格式不正確") {
+			t.Fatalf("非法 restaurant_id vote: want 422 with message got %d %s", w.Code, w.Body.String())
+		}
 	}
 	if w := vote(memberID, "00000000-0000-0000-0000-00000000dead", "up", "cast"); w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "不在本房的候選名單中") {
 		t.Fatalf("非候選餐廳 vote: want 422 with message got %d %s", w.Code, w.Body.String())
@@ -621,5 +626,9 @@ func TestDrawAllVetoed(t *testing.T) {
 	if w.Code != http.StatusConflict ||
 		!strings.Contains(w.Body.String(), "候選已全數被否決，請成員收回否決後再抽選") {
 		t.Fatalf("全否決 draw 應 409 且有專用訊息：%d %s", w.Code, w.Body.String())
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).Scan(&status); err != nil || status != "voting" {
+		t.Fatalf("全否決後房間應停留在 voting，got %q err %v", status, err)
 	}
 }

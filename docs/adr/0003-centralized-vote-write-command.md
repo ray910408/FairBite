@@ -11,6 +11,6 @@
 ## Consequences
 
 - 可調參數只剩一份權威（`server/weights.go`）；DB 不再持有業務數字，改規則不必動 migration
-- 前端不需處理 duplicate key 與樂觀更新回滾；Realtime 仍以 DB 變更為同步來源，命令回應只是讓發起者提早看到結果
+- 前端不需處理 duplicate key 與樂觀更新回滾；Realtime 仍以 DB 變更為同步來源；命令回應 payload 仍是 API contract 的一部分，但目前 web client 不消費，成功後依 Realtime + debounce refetch 取得結果
 - 每次投票多一次 Go 往返，且同房投票被 room row lock 序列化——單一房間規模下可接受，若日後房間人數量級改變需重新評估鎖粒度
 - `votes` 的寫入路徑只有 service role 一條，安全面收斂；相對地 Go 必須自己測到四個不變式，測試責任從 pgTAP 移到 handler tests

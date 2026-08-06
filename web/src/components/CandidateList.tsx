@@ -8,7 +8,7 @@ type VotingProps = {
   onToggle: (restaurantId: string, kind: 'up' | 'veto') => void
 }
 
-const VETO_QUOTA = 2 // UI 顯示常數，與 Go VetoQuota 及 migration 0002 trigger 一致
+const VETO_QUOTA = 2 // UI 顯示常數，與 Go VetoQuota 一致
 
 export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; voting?: VotingProps }) {
   const kept = sortKept(rows)
