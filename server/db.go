@@ -12,25 +12,33 @@ import (
 
 var ErrConflict = errors.New("status conflict")
 
+// D2/D15：讀取函式吃 querier（*pgxpool.Pool 與 pgx.Tx 皆滿足），
+// vote 交易才能在 room row lock 之後於 tx 內讀，杜絕 stale 讀寫競態
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 type RoomRow struct {
-	ID        string
-	HostID    string
-	Status    string
-	CenterLat float64
-	CenterLng float64
+	ID          string
+	HostID      string
+	Status      string
+	CenterLat   float64
+	CenterLng   float64
+	Exploration string
 }
 
 func LoadRoom(ctx context.Context, pool *pgxpool.Pool, roomID string) (RoomRow, error) {
 	var r RoomRow
 	err := pool.QueryRow(ctx,
-		`select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0)
+		`select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), exploration
 		 from rooms where id = $1`, roomID).
-		Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng)
+		Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.Exploration)
 	return r, err
 }
 
-func LoadMembers(ctx context.Context, pool *pgxpool.Pool, roomID string) ([]Member, error) {
-	rows, err := pool.Query(ctx,
+func LoadMembers(ctx context.Context, q querier, roomID string) ([]Member, error) {
+	rows, err := q.Query(ctx,
 		`select rm.user_id, coalesce(nullif(p.display_name, ''), '成員'), rm.budget_max,
 		        rm.cuisines, rm.dietary, rm.max_distance_m, rm.transport
 		 from room_members rm join profiles p on p.id = rm.user_id
@@ -57,6 +65,99 @@ func LoadMembers(ctx context.Context, pool *pgxpool.Pool, roomID string) ([]Memb
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+func memberIDs(ms []Member) []string {
+	ids := make([]string, len(ms))
+	for i, m := range ms {
+		ids[i] = m.UserID
+	}
+	return ids
+}
+
+func LoadVotes(ctx context.Context, q querier, roomID string) (map[string]VoteInfo, error) {
+	rows, err := q.Query(ctx,
+		`select v.restaurant_id, v.kind, coalesce(nullif(p.display_name, ''), '成員')
+		 from votes v join profiles p on p.id = v.user_id
+		 where v.room_id = $1
+		 order by v.created_at`, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]VoteInfo{}
+	for rows.Next() {
+		var rid, kind, name string
+		if err := rows.Scan(&rid, &kind, &name); err != nil {
+			return nil, err
+		}
+		v := out[rid]
+		if kind == "up" {
+			v.Ups++
+		} else {
+			v.Vetoers = append(v.Vetoers, name)
+		}
+		out[rid] = v
+	}
+	return out, rows.Err()
+}
+
+// LoadRecency：每位成員對每家餐廳取「最近一次同席」，分 14 天內 / 15–30 天兩桶（spec §5 近期去過）
+func LoadRecency(ctx context.Context, q querier, memberIDs, restaurantIDs []string) (map[string]RecencyCount, error) {
+	rows, err := q.Query(ctx, `
+		select restaurant_id,
+		       count(*) filter (where last_at > now() - interval '14 days'),
+		       count(*) filter (where last_at <= now() - interval '14 days')
+		from (
+			select restaurant_id, user_id, max(decided_at) as last_at
+			from dining_history
+			where user_id = any($1::uuid[]) and restaurant_id = any($2::uuid[])
+			  and decided_at > now() - interval '30 days'
+			group by 1, 2
+		) t group by 1`, memberIDs, restaurantIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]RecencyCount{}
+	for rows.Next() {
+		var rid string
+		var c RecencyCount
+		if err := rows.Scan(&rid, &c.Fresh, &c.Fading); err != nil {
+			return nil, err
+		}
+		out[rid] = c
+	}
+	return out, rows.Err()
+}
+
+// RecordExposure：搜尋成功時為「每位成員 × 每家 kept」+1（P3 曝光平衡的資料來源）
+func RecordExposure(ctx context.Context, tx pgx.Tx, memberIDs, keptRestaurantIDs []string) error {
+	_, err := tx.Exec(ctx, `
+		insert into exposure_stats (user_id, restaurant_id, recommended_count)
+		select u, r, 1 from unnest($1::uuid[]) u cross join unnest($2::uuid[]) r
+		on conflict (user_id, restaurant_id) do update
+		  set recommended_count = exposure_stats.recommended_count + 1`,
+		memberIDs, keptRestaurantIDs)
+	return err
+}
+
+// RecordDecision：房間 decided 時為每位成員寫一筆同席紀錄（ADR-0002）並更新 winner 曝光統計
+func RecordDecision(ctx context.Context, tx pgx.Tx, roomID string, memberIDs []string, winnerID string) error {
+	if _, err := tx.Exec(ctx, `
+		insert into dining_history (user_id, restaurant_id, room_id)
+		select u, $2, $1 from unnest($3::uuid[]) u
+		on conflict (room_id, user_id) do nothing`,
+		roomID, winnerID, memberIDs); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `
+		insert into exposure_stats (user_id, restaurant_id, chosen_count, last_chosen_at)
+		select u, $1, 1, now() from unnest($2::uuid[]) u
+		on conflict (user_id, restaurant_id) do update
+		  set chosen_count = exposure_stats.chosen_count + 1, last_chosen_at = now()`,
+		winnerID, memberIDs)
+	return err
 }
 
 // UpsertRestaurants 寫入快取並回填 DB uuid 到 rs[i].ID
@@ -119,8 +220,8 @@ func TransitionRoom(ctx context.Context, tx pgx.Tx, roomID, from, to string) err
 }
 
 // LoadRoomRestaurants 取回該房搜尋時的完整餐廳集合（含被排除者）— 抽選前權威重算用
-func LoadRoomRestaurants(ctx context.Context, pool *pgxpool.Pool, roomID string) ([]Restaurant, error) {
-	rows, err := pool.Query(ctx, `
+func LoadRoomRestaurants(ctx context.Context, q querier, roomID string) ([]Restaurant, error) {
+	rows, err := q.Query(ctx, `
 		select r.id, r.place_id, r.name, r.cuisine_tags, r.price_level,
 		       r.lat, r.lng, r.address, r.opening_hours, coalesce(r.rating, 0)
 		from room_candidates rc join restaurants r on r.id = rc.restaurant_id

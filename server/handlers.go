@@ -86,6 +86,14 @@ type excludedJSON struct {
 	Reason string `json:"reason"`
 }
 
+func restaurantIDs(rs []Restaurant) []string {
+	ids := make([]string, len(rs))
+	for i, r := range rs {
+		ids[i] = r.ID
+	}
+	return ids
+}
+
 func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, places PlacesProvider) {
 	ctx := r.Context()
 	room, ok := loadHostRoom(w, r, pool)
@@ -129,8 +137,14 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
 		return
 	}
+	recency, err := LoadRecency(ctx, pool, memberIDs(members), restaurantIDs(found))
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "讀取同席紀錄失敗")
+		return
+	}
 	result := Evaluate(EngineInput{Restaurants: found, Members: members,
-		Now: time.Now(), CenterLat: room.CenterLat, CenterLng: room.CenterLng})
+		Now: time.Now(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
+		Recency: recency, Exploration: room.Exploration})
 
 	// ponytail: 零候選時 rollback 連餐廳快取一併丟棄 — mock 無感；P2 接真 Places 時
 	// 拆成兩個交易（快取先 commit），才不會浪費 API 呼叫且快取可當 fallback（spec §8）
@@ -150,6 +164,14 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	}
 	if err := ReplaceCandidates(ctx, tx, room.ID, result); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
+		return
+	}
+	keptIDs := make([]string, len(result.Kept))
+	for i, c := range result.Kept {
+		keptIDs[i] = c.Restaurant.ID
+	}
+	if err := RecordExposure(ctx, tx, memberIDs(members), keptIDs); err != nil {
+		jsonError(w, http.StatusInternalServerError, "寫入曝光統計失敗")
 		return
 	}
 	if err := TransitionRoom(ctx, tx, room.ID, "lobby", "candidates"); err != nil {
@@ -195,9 +217,15 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 		jsonError(w, http.StatusInternalServerError, "讀取候選失敗")
 		return
 	}
+	recency, err := LoadRecency(ctx, pool, memberIDs(members), restaurantIDs(rs))
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "讀取同席紀錄失敗")
+		return
+	}
 	// spec §5.5：抽選前權威重算 — 搜尋後才打烊的店在這一步被剔除，機率永遠是當下真實值
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
-		Now: time.Now(), CenterLat: room.CenterLat, CenterLng: room.CenterLng})
+		Now: time.Now(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
+		Recency: recency, Exploration: room.Exploration})
 	if len(result.Kept) == 0 {
 		jsonError(w, http.StatusConflict, "候選已全數失效（可能都打烊了），請建立新房間重新搜尋")
 		return
@@ -234,6 +262,10 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 			return
 		}
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	if err := RecordDecision(ctx, tx, room.ID, memberIDs(members), winner); err != nil {
+		jsonError(w, http.StatusInternalServerError, "寫入同席紀錄失敗")
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {

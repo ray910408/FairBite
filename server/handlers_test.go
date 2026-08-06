@@ -200,3 +200,158 @@ func TestSearchEdgeCases(t *testing.T) {
 		t.Fatalf("零候選後房間應停留在 lobby，got %q err %v", status, err)
 	}
 }
+
+func TestSearchDrawRecordsHistory(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	hostID := "77777777-7777-7777-7777-777777777777"
+	roomID := "88888888-8888-8888-8888-888888888888"
+	if _, err = pool.Exec(ctx,
+		`insert into auth.users (id, email) values ($1, 'hist@test.dev') on conflict do nothing`,
+		hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx,
+		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
+		 values ($1, $2, 'lobby', 25.0478, 121.5170)
+		 on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx,
+		`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		 values ($1, $2, 500, '["japanese"]', 2000, 'walking') on conflict do nothing`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.dining_history where room_id = $1`, roomID)
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+	})
+
+	h := newTestApp(t, pool)
+	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
+	do := func(path string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", path, nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+
+	if w := do("/api/rooms/" + roomID + "/search"); w.Code != http.StatusOK {
+		t.Fatalf("search: want 200 got %d body %s", w.Code, w.Body.String())
+	}
+	var recommended int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from public.exposure_stats
+		 where user_id = $1 and recommended_count > 0`, hostID).Scan(&recommended); err != nil {
+		t.Fatal(err)
+	}
+	if recommended == 0 {
+		t.Fatal("search 後 exposure_stats.recommended_count 應有紀錄")
+	}
+
+	if w := do("/api/rooms/" + roomID + "/draw"); w.Code != http.StatusOK {
+		t.Fatalf("draw: want 200 got %d body %s", w.Code, w.Body.String())
+	}
+	var histCount, chosenCount int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from public.dining_history where room_id = $1 and user_id = $2`,
+		roomID, hostID).Scan(&histCount); err != nil {
+		t.Fatal(err)
+	}
+	if histCount != 1 {
+		t.Fatalf("draw 後每位成員應有 1 筆同席紀錄，got %d", histCount)
+	}
+	if err := pool.QueryRow(ctx,
+		`select count(*) from public.exposure_stats
+		 where user_id = $1 and chosen_count > 0 and last_chosen_at is not null`,
+		hostID).Scan(&chosenCount); err != nil {
+		t.Fatal(err)
+	}
+	if chosenCount != 1 {
+		t.Fatalf("draw 後 winner 的 chosen_count 應 +1，got %d", chosenCount)
+	}
+}
+
+func TestLoadRecencyBuckets(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	u1 := "99999999-9999-9999-9999-999999999999"
+	u2 := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	u3 := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	r1 := "cccccccc-cccc-cccc-cccc-cccccccccccc"
+	roomIDs := []string{
+		"dddddddd-dddd-dddd-dddd-dddddddddddd",
+		"eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+		"ffffffff-ffff-ffff-ffff-ffffffffffff",
+		"12121212-1212-1212-1212-121212121212",
+	}
+
+	if _, err = pool.Exec(ctx, `
+		insert into auth.users (id, email) values
+		  ($1, 'recency-u1@test.dev'),
+		  ($2, 'recency-u2@test.dev'),
+		  ($3, 'recency-u3@test.dev')
+		on conflict do nothing`, u1, u2, u3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `
+		insert into public.restaurants (id, place_id, name, lat, lng)
+		values ($1, 'recency-r1', 'Recency R1', 25.0478, 121.5170)
+		on conflict (id) do nothing`, r1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `
+		insert into public.rooms (id, host_id, status) values
+		  ($1, $5, 'decided'),
+		  ($2, $5, 'decided'),
+		  ($3, $5, 'decided'),
+		  ($4, $5, 'decided')
+		on conflict (id) do nothing`, roomIDs[0], roomIDs[1], roomIDs[2], roomIDs[3], u1); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.dining_history where room_id = any($1::uuid[])`, roomIDs)
+		pool.Exec(ctx, `delete from public.rooms where id = any($1::uuid[])`, roomIDs)
+		pool.Exec(ctx, `delete from public.restaurants where id = $1`, r1)
+		pool.Exec(ctx, `delete from auth.users where id = any($1::uuid[])`, []string{u1, u2, u3})
+	})
+
+	if _, err = pool.Exec(ctx, `
+		insert into public.dining_history (user_id, restaurant_id, room_id, decided_at) values
+		  ($1, $4, $5, now() - interval '10 days'),
+		  ($2, $4, $6, now() - interval '20 days'),
+		  ($3, $4, $7, now() - interval '40 days'),
+		  ($1, $4, $8, now() - interval '25 days')`,
+		u1, u2, u3, r1, roomIDs[0], roomIDs[1], roomIDs[2], roomIDs[3]); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadRecency(ctx, pool, []string{u1, u2, u3}, []string{r1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[r1].Fresh != 1 || got[r1].Fading != 1 {
+		t.Fatalf("LoadRecency = %#v, want map[%s:{Fresh:1 Fading:1}]", got, r1)
+	}
+}
