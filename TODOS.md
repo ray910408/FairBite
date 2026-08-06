@@ -33,7 +33,7 @@ feat/phase-1 全分支 final review 的 DEFER-P2 批次。前三項優先（安�
 11. 並發 draw 的 23505 / transition conflict 無實測（僅狀態前置檢查覆蓋）。
 12. `[]` / `null` 契約無測試斷言（現有測試 excluded/kept 皆非空）。
 13. createRoom 錯誤訊息透傳 raw message，與 join 不對稱。
-14. 條件表單輸入框無 label，僅 placeholder。
+14. 條件表單輸入框無 label，僅 placeholder。（/qa 2026-08-06 已處理：slider 原本就有 label 包裹；toggle 群補 aria-pressed（1be41dd）、auth/home 文字框補 aria-label（f204a5a）。殘留：料理/禁忌群組標題與按鈕群無 role="group" 程式化關聯，留待完整 a11y pass。）
 15. unmount 未清 debounce timer。
 16. 搜尋鈕無 in-flight guard（可連按）。
 17. 首次掛載期的暫時性讀取失敗會閃「找不到房間」頁 — 應三態化（loading / notFound / ok）。
