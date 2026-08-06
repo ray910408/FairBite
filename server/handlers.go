@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/time/rate"
@@ -54,11 +55,16 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider) http.Ha
 	return cors(mux)
 }
 
-// loadHostRoom 驗證房主身分並回房間；非房主回 403、找不到回 404
+// loadHostRoom 驗證房主身分並回房間；非房主回 403、找不到回 404、DB 故障回 500
 func loadHostRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (RoomRow, bool) {
 	room, err := LoadRoom(r.Context(), pool, r.PathValue("id"))
 	if err != nil {
-		jsonError(w, http.StatusNotFound, "房間不存在")
+		// 非法 uuid 文字會是 pgtype 解析錯誤（非 ErrNoRows）而落 500；route 只會帶 uuid，可接受
+		if errors.Is(err, pgx.ErrNoRows) {
+			jsonError(w, http.StatusNotFound, "房間不存在")
+		} else {
+			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		}
 		return room, false
 	}
 	if room.HostID != UserID(r) {
@@ -104,7 +110,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "db error")
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
 	defer tx.Rollback(ctx)
@@ -119,7 +125,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	// 拆成兩個交易（快取先 commit），才不會浪費 API 呼叫且快取可當 fallback（spec §8）
 	if len(result.Kept) == 0 {
 		byKind := map[string]int{}
-		var ex []excludedJSON
+		ex := []excludedJSON{}
 		for _, e := range result.Excluded {
 			for _, k := range e.Kinds {
 				byKind[k]++
@@ -140,18 +146,18 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 			jsonError(w, http.StatusConflict, "房間狀態已變更")
 			return
 		}
-		jsonError(w, http.StatusInternalServerError, "db error")
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
-		jsonError(w, http.StatusInternalServerError, "db error")
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
-	var kept []keptJSON
+	kept := []keptJSON{}
 	for _, c := range result.Kept {
 		kept = append(kept, keptJSON{c.Restaurant.ID, c.Name, c.Probability, c.Trace})
 	}
-	var ex []excludedJSON
+	ex := []excludedJSON{}
 	for _, e := range result.Excluded {
 		ex = append(ex, excludedJSON{e.Name, e.Reason})
 	}
@@ -192,7 +198,7 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "db error")
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
 	defer tx.Rollback(ctx)
@@ -208,7 +214,7 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 			jsonError(w, http.StatusConflict, "已抽選過")
 			return
 		}
-		jsonError(w, http.StatusInternalServerError, "db error")
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
 	if err := TransitionRoom(ctx, tx, room.ID, "candidates", "decided"); err != nil {
@@ -216,11 +222,11 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 			jsonError(w, http.StatusConflict, "房間狀態已變更")
 			return
 		}
-		jsonError(w, http.StatusInternalServerError, "db error")
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
-		jsonError(w, http.StatusInternalServerError, "db error")
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
 	jsonOK(w, map[string]string{"winner_restaurant_id": winner, "seed": seed})
