@@ -1,0 +1,55 @@
+# 今天吃什麼 — 多人餐廳決策與公平抽選
+
+多人房間 + 條件過濾 + 加權可解釋機率 + 伺服器抽選。設計文件見
+`docs/superpowers/specs/2026-08-05-group-restaurant-decision-app-design.md`，
+詞彙表見 `CONTEXT.md`，決策紀錄見 `docs/adr/`。
+
+## 本地啟動（三個終端）
+
+Git Bash：
+
+```bash
+# 1. Supabase local stack
+supabase start        # 記下 anon key 與 JWT secret
+
+# 2. Go 核心服務
+cd server
+SUPABASE_DB_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
+SUPABASE_JWT_SECRET='<supabase status 的 JWT secret>' \
+go run .
+
+# 3. Web
+cd web && npm i && npm run dev   # .env.local 填 anon key
+```
+
+PowerShell（同三個終端，只是環境變數語法不同）：
+
+```powershell
+# 2. Go 核心服務
+cd server
+$env:SUPABASE_DB_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+$env:SUPABASE_JWT_SECRET = '<supabase status 的 JWT secret>'
+go run .
+```
+
+## 測試
+
+Git Bash（每行獨立執行，皆從 repo 根目錄開始）：
+
+```bash
+supabase test db                                   # RLS pgTAP
+(cd server && go test ./...)                       # 引擎/抽選/auth
+(cd server && TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' go test ./... -run 'TestSearchAndDraw|TestSearchEdge' -v)
+(cd web && npm test)                               # 機率顯示與 maps URL
+```
+
+PowerShell：
+
+```powershell
+supabase test db
+Push-Location server; go test ./...; Pop-Location
+Push-Location server; $env:TEST_DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'; go test ./... -run 'TestSearchAndDraw|TestSearchEdge' -v; Pop-Location
+Push-Location web; npm test; Pop-Location
+```
+
+Phase 1 使用 mock 餐廳資料（台北車站周邊 12 家）；真實 Google Places 於 Phase 2 切換。
