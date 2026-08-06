@@ -2512,13 +2512,16 @@ export default function HomePage() {
   async function createRoom() {
     setBusy(true)
     setError('')
-    const pos = await getPosition()
-    const { data, error } = await supabase.rpc('create_room', {
-      p_lat: pos.lat, p_lng: pos.lng,
-    })
-    setBusy(false)
-    if (error) setError(error.message)
-    else nav(`/room/${data}`)
+    try {
+      const pos = await getPosition()
+      const { data, error } = await supabase.rpc('create_room', {
+        p_lat: pos.lat, p_lng: pos.lng,
+      })
+      if (error) setError(error.message)
+      else nav(`/room/${data}`)
+    } finally {
+      setBusy(false) // rejection（定位被封鎖/網路層失敗）也要解鎖按鈕；不加 catch 保留 console 除錯訊號
+    }
   }
 
   async function joinRoom(e: React.FormEvent) {
