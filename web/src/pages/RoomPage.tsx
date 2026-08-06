@@ -2,6 +2,8 @@ import { useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
 import { startVoting, voteRoom } from '../lib/api'
+import { EXPLORATION_OPTIONS } from '../lib/labels'
+import { supabase } from '../lib/supabase'
 import type { Room } from '../lib/types'
 import ConditionsForm from '../components/ConditionsForm'
 import CandidateList from '../components/CandidateList'
@@ -159,6 +161,42 @@ export default function RoomPage() {
           </ul>
         </section>
 
+        {(room.status === 'candidates' || room.status === 'voting') && (
+          <p className="text-xs text-fg-muted">
+            探索檔位：{EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[1]}
+          </p>
+        )}
+        {room.status === 'lobby' && (
+          <section className="card animate-rise">
+            <h2 className="mb-1 text-sm font-semibold text-fg-muted">探索檔位</h2>
+            <p className="mb-3 text-xs text-fg-muted">
+              {EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[2]}
+              {!isHost && '（由房主設定）'}
+            </p>
+            {/* D14：冷啟動誠實說明 —— 檔位靠同席紀錄運作，沒紀錄前三檔等效 */}
+            <p className="mb-3 text-xs text-fg-muted">
+              檔位依成員的同席紀錄調整機率；大家開始用這裡抽餐廳後才會逐漸生效
+            </p>
+            <div className="grid grid-cols-3 gap-1 rounded-xl bg-brand-soft p-1">
+              {EXPLORATION_OPTIONS.map(([key, label]) => (
+                <button key={key} type="button" aria-pressed={room.exploration === key}
+                  disabled={!isHost}
+                  className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                    room.exploration === key ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
+                  } disabled:cursor-default`}
+                  onClick={async () => {
+                    setActionError('')
+                    // count:'exact'：RLS 擋下時 204 無 error，只看 error 會誤判成功
+                    const { error, count } = await supabase.from('rooms')
+                      .update({ exploration: key }, { count: 'exact' }).eq('id', room.id)
+                    if (error || count === 0) setActionError('探索檔位更新失敗')
+                  }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
         {room.status === 'lobby' && me && <ConditionsForm me={me} />}
         {room.status === 'lobby' && isHost && (
           <button className="btn btn-primary w-full"
