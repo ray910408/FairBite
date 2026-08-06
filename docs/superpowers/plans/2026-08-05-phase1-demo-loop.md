@@ -2574,6 +2574,8 @@ git add -A && git commit -m "feat(web): home page with create room and join by c
 
 預估 90 分鐘。
 
+> **實作註記（2026-08-06，commits e1509a8 → eb5dae6）**：入庫版相對本節有四處修正 — ① ConditionsForm 的 update 需帶 `{ count: 'exact' }` 並檢查 `count === 0`：RLS 凍結時 PostgREST 回 204 **無 error**（USING 濾成 0 列），否則還原/告警是死碼；② useRoom 的 status callback 需 `live` 旗標：舊 channel 的非同步 CLOSED 會蓋掉新 channel 的 SUBSCRIBED（StrictMode 必踩）；③ 搜尋鈕 dynamic import 鏈補 `.catch`（伺服器不可達時的唯一回饋）；④ 新增 `notFound` state 處理非成員/不存在房間（否則無限載入）。以 git 為準。
+
 **Files:**
 - Create: `web/src/hooks/useRoom.ts`
 - Create: `web/src/lib/labels.ts`
