@@ -1,20 +1,21 @@
 import { useState } from 'react'
 import type { CandidateRow } from '../lib/types'
-import { chipLabel, formatPercent, sortExcluded, sortKept } from '../lib/probability'
+import { chipLabel, formatPercents, sortExcluded, sortKept } from '../lib/probability'
 
 export default function CandidateList({ rows }: { rows: CandidateRow[] }) {
   const [showExcluded, setShowExcluded] = useState(false)
   const kept = sortKept(rows)
+  const percents = formatPercents(kept.map(c => c.probability ?? 0))
   const excluded = sortExcluded(rows)
 
   return (
     <div className="space-y-3">
-      {kept.map(c => (
+      {kept.map((c, ci) => (
         <div key={c.restaurant_id} className="rounded border p-3">
           <div className="flex justify-between">
             <span className="font-medium">{c.restaurants.name}</span>
             <span className="font-mono text-orange-600">
-              {formatPercent(c.probability ?? 0)}
+              {percents[ci]}
             </span>
           </div>
           <div className="mt-2 flex flex-wrap gap-1">

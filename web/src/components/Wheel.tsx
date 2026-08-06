@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CandidateRow } from '../lib/types'
-import { formatPercent, sortKept } from '../lib/probability'
+import { formatPercents, sortKept } from '../lib/probability'
 
 const COLORS = ['#f97316', '#0ea5e9', '#22c55e', '#eab308', '#a855f7',
   '#ef4444', '#14b8a6', '#f43f5e', '#8b5cf6', '#84cc16', '#06b6d4', '#d946ef']
@@ -28,6 +28,7 @@ export default function Wheel({ rows, winnerId, onDone }: {
       return { c, start, end: acc, color: COLORS[i % COLORS.length] }
     })
   }, [kept])
+  const percents = useMemo(() => formatPercents(kept.map(c => c.probability ?? 0)), [kept])
 
   const [rotation, setRotation] = useState(0)
   const slicesRef = useRef(slices)
@@ -55,11 +56,11 @@ export default function Wheel({ rows, winnerId, onDone }: {
         ))}
       </svg>
       <ul className="mt-3 space-y-1 text-sm">
-        {slices.map(s => (
+        {slices.map((s, i) => (
           <li key={s.c.restaurant_id} className="flex items-center gap-2">
             <span className="inline-block h-3 w-3 rounded-sm" style={{ background: s.color }} />
             <span className="flex-1">{s.c.restaurants.name}</span>
-            <span className="font-mono">{formatPercent(s.c.probability ?? 0)}</span>
+            <span className="font-mono">{percents[i]}</span>
           </li>
         ))}
       </ul>

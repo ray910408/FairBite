@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chipLabel, formatPercent, sortKept } from './probability'
+import { chipLabel, formatPercent, formatPercents, sortKept } from './probability'
 import type { CandidateRow } from './types'
 
 const cand = (p: number | null, status: 'kept' | 'excluded' = 'kept'): CandidateRow => ({
@@ -12,6 +12,29 @@ describe('formatPercent', () => {
   it('一般值取一位小數', () => expect(formatPercent(0.3121)).toBe('31.2%'))
   it('小於 1% 顯示 <1%', () => expect(formatPercent(0.004)).toBe('<1%'))
   it('1 顯示 100%', () => expect(formatPercent(1)).toBe('100.0%'))
+})
+
+// Regression: ISSUE-005 — 候選機率顯示總和 100.1%
+// Found by /qa on 2026-08-06
+// Report: .gstack/qa-reports/qa-report-localhost-5173-2026-08-06.md
+describe('formatPercents', () => {
+  const sum = (out: string[]) => out.reduce((s, x) => s + parseFloat(x), 0)
+
+  it('QA 案例：各自四捨五入會得到 100.1%', () => {
+    const probs = [0.2118, 0.2118, 0.0848, 0.0848, 0.0848, 0.083, 0.08, 0.08, 0.079]
+    expect(sum(probs.map(formatPercent))).toBeCloseTo(100.1, 10)
+    expect(sum(formatPercents(probs))).toBeCloseTo(100, 10)
+  })
+
+  it('其他分佈總和也是 100.0%', () => {
+    expect(sum(formatPercents([1 / 3, 1 / 3, 1 / 3]))).toBeCloseTo(100, 10)
+    expect(sum(formatPercents([0.4444, 0.2222, 0.1667, 0.1667]))).toBeCloseTo(100, 10)
+  })
+
+  it('空陣列回傳空陣列', () => expect(formatPercents([])).toEqual([]))
+  it('單一項目顯示 100.0%', () => expect(formatPercents([1])).toEqual(['100.0%']))
+  it('總和為 0 時全部顯示 0.0%', () =>
+    expect(formatPercents([0, 0])).toEqual(['0.0%', '0.0%']))
 })
 
 describe('chipLabel', () => {
