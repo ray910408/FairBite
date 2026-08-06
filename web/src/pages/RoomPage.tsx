@@ -1,7 +1,10 @@
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
 import ConditionsForm from '../components/ConditionsForm'
 import CandidateList from '../components/CandidateList'
+import Wheel from '../components/Wheel'
+import ResultCard from '../components/ResultCard'
 
 export default function RoomPage() {
   const { id = '' } = useParams()
@@ -15,6 +18,12 @@ export default function RoomPage() {
 
   const me = members.find(m => m.user_id === myUserId)
   const isHost = room.host_id === myUserId
+  const [spinning, setSpinning] = useState(false)
+  const [spun, setSpun] = useState(false)
+
+  useEffect(() => {
+    if (draw && !spun) setSpinning(true)
+  }, [draw, spun])
 
   return (
     <div className="mx-auto max-w-lg space-y-4 p-4">
@@ -74,9 +83,13 @@ export default function RoomPage() {
           )}
         </>
       )}
-      {/* Task 12: 轉盤與結果 */}
-      {room.status === 'decided' && (
-        <p className="text-sm text-gray-500">候選 {candidates.length} 筆，draw：{draw ? '有' : '無'}</p>
+      {room.status === 'decided' && draw && (
+        spinning && !spun ? (
+          <Wheel rows={candidates} winnerId={draw.winner_restaurant_id}
+            onDone={() => { setSpun(true); setSpinning(false) }} />
+        ) : (
+          <ResultCard draw={draw} candidates={candidates} me={me} />
+        )
       )}
     </div>
   )
