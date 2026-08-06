@@ -13,7 +13,7 @@
 
 ### Final review 遞延（2026-08-06）
 
-feat/phase-1 全分支 final review 的 DEFER-P2 批次。前三項優先（安全/依賴面），其餘為測試缺口與 UX 細節。逐條出處見 `.superpowers/sdd/2026-08-05-phase1-demo-loop/progress.md`。
+feat/phase-1 全分支 final review 的 DEFER-P2 批次。前三項優先（安全/依賴面），其餘為測試缺口與 UX 細節。逐條出處見 `docs/superpowers/sdd-ledger-phase1.md`。
 
 優先：
 
