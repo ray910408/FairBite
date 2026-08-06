@@ -10,12 +10,12 @@ Git Bash：
 
 ```bash
 # 1. Supabase local stack
-supabase start        # 記下 anon key 與 JWT secret
+supabase start        # 記下 anon key
 
 # 2. Go 核心服務
 cd server
 SUPABASE_DB_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
-SUPABASE_JWT_SECRET='<supabase status 的 JWT secret>' \
+SUPABASE_JWKS_URL='http://127.0.0.1:54321/auth/v1/.well-known/jwks.json' \
 go run .
 
 # 3. Web
@@ -28,9 +28,12 @@ PowerShell（同三個終端，只是環境變數語法不同）：
 # 2. Go 核心服務
 cd server
 $env:SUPABASE_DB_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
-$env:SUPABASE_JWT_SECRET = '<supabase status 的 JWT secret>'
+$env:SUPABASE_JWKS_URL = 'http://127.0.0.1:54321/auth/v1/.well-known/jwks.json'
 go run .
 ```
+
+新版 supabase CLI local stack 簽發 ES256 token，一律用 JWKS；`SUPABASE_JWT_SECRET`
+僅適用仍在 legacy 對稱簽章的舊專案（HS256，2026 年底棄用）。
 
 ## 測試
 
