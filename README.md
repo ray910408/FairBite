@@ -1,8 +1,8 @@
 # 今天吃什麼 — 多人餐廳決策與公平抽選
 
-多人房間 + 條件過濾 + 加權可解釋機率 + 伺服器抽選。設計文件見
-`docs/superpowers/specs/2026-08-05-group-restaurant-decision-app-design.md`，
-詞彙表見 `CONTEXT.md`，決策紀錄見 `docs/adr/`。
+多人房間 + 條件過濾 + 加權可解釋機率 + 伺服器抽選。詞彙表見 `CONTEXT.md`，
+決策紀錄見 `docs/adr/`。（設計文件與 SDD ledger 在 `docs/superpowers/`，
+未納入版控，僅存在於本機工作目錄。）
 
 ## 本地啟動（三個終端）
 
