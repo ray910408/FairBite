@@ -142,7 +142,7 @@ func TestDistFactorClamp(t *testing.T) {
 }
 
 func TestClosingSoonDemoted(t *testing.T) {
-	soon := rest(func(r *Restaurant) { r.PlaceID = "soon"; r.Hours = daily([2]int{0, 750}) })  // 12:30 打烊
+	soon := rest(func(r *Restaurant) { r.PlaceID = "soon"; r.Hours = daily([2]int{0, 750}) }) // 12:30 打烊
 	late := rest(func(r *Restaurant) { r.PlaceID = "late"; r.Hours = daily([2]int{0, 1440}) })
 	res := Evaluate(EngineInput{Restaurants: []Restaurant{soon, late},
 		Members: []Member{member(nil)}, Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170})

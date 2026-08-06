@@ -42,7 +42,9 @@ func TestSearchAndDrawHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
+	// 先註冊 = 後執行（Cleanup 為 LIFO）：確保下方刪 room 的 cleanup 在 pool 關閉前跑完，
+	// 否則 delete 打在已關閉的 pool 上被靜默丟棄，殘留的 draws 列會讓下次執行的 draw 直接 409
+	t.Cleanup(func() { pool.Close() })
 
 	hostID := "11111111-1111-1111-1111-111111111111"
 	roomID := "22222222-2222-2222-2222-222222222222"
@@ -137,7 +139,9 @@ func TestSearchEdgeCases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
+	// 先註冊 = 後執行（Cleanup 為 LIFO）：確保下方刪 room 的 cleanup 在 pool 關閉前跑完，
+	// 否則 delete 打在已關閉的 pool 上被靜默丟棄，殘留的 draws 列會讓下次執行的 draw 直接 409
+	t.Cleanup(func() { pool.Close() })
 
 	hostID := "33333333-3333-3333-3333-333333333333"
 	strangerID := "44444444-4444-4444-4444-444444444444"

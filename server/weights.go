@@ -5,7 +5,7 @@ package main
 var PriceLevelMaxTWD = map[int]int{0: 100, 1: 200, 2: 400, 3: 800, 4: 1600}
 
 // 嚴格禁忌：餐廳必須具備正向認證 tag 才保留 — 負向推斷會錯誤放行
-//（例：滷肉飯店沒有衝突 tag 但素食者不能吃），codex review #4
+// （例：滷肉飯店沒有衝突 tag 但素食者不能吃），codex review #4
 var DietaryRequires = map[string]string{
 	"vegetarian": "vegetarian_friendly",
 	"halal":      "halal_certified",
