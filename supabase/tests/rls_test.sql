@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(20);
+select plan(21);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -64,9 +64,16 @@ select is(
   0, '離開 lobby 後本人也改不動條件');
 
 -- join_room 對已開始的房間應拒絕
-select throws_ok(
-  format($$select public.join_room(%L)$$, (select code from ctx)),
-  '房間不存在或已開始');
+select is(
+  (select public.join_room((select code from ctx))), null,
+  'join_room 對已開始的房間回 null（D25：raise 會回滾 attempt）');
+reset role;
+select is(
+  (select count(*) from public.join_attempts
+    where user_id = '00000000-0000-0000-0000-0000000000b2')::int,
+  2, '失敗的 join 嘗試會留痕（成功 1 + 失敗 1）');
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}';
 
 -- 房主（A）也不能直接改 rooms 敏感欄位（status 由 Go 服務管理）
 set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}';

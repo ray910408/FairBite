@@ -56,6 +56,9 @@ create table public.join_attempts (
 create index join_attempts_user_time on public.join_attempts (user_id, attempted_at);
 alter table public.join_attempts enable row level security;
 
+-- D25：not-found 不可 raise —— raise 會回滾同交易剛寫入的 attempt，限流對列舉攻擊歸零。
+-- 契約：查無/已開始 → 回 null（交易提交、嘗試留痕）；只有未登入與限流仍 raise
+--（限流 raise 時前 10 筆已提交，機制仍有效）。web 端把 null 映射成「房間不存在或已開始」（Task 8）。
 create or replace function public.join_room(p_code text)
 returns uuid language plpgsql security definer set search_path = public as $$
 declare v_room_id uuid;
@@ -69,7 +72,7 @@ begin
   end if;
   insert into join_attempts (user_id) values (auth.uid());
   select id into v_room_id from rooms where code = upper(trim(p_code)) and status = 'lobby';
-  if v_room_id is null then raise exception '房間不存在或已開始'; end if;
+  if v_room_id is null then return null; end if;
   insert into room_members (room_id, user_id) values (v_room_id, auth.uid())
   on conflict do nothing;
   return v_room_id;
