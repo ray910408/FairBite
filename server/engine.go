@@ -21,6 +21,11 @@ type VoteInfo struct {
 	Vetoers []string
 }
 
+type RecencyCount struct {
+	Fresh  int
+	Fading int
+}
+
 type TraceEntry struct {
 	Factor string  `json:"factor"`
 	Mult   float64 `json:"mult"`
@@ -36,7 +41,7 @@ type Candidate struct {
 
 type Excluded struct {
 	Restaurant
-	Kinds  []string // 全部命中的排除類別（dietary/budget/closed），供統計不受檢查順序污染
+	Kinds  []string // 全部命中的排除類別（dietary/budget/closed/veto），供統計不受檢查順序污染
 	Reason string   // 全部原因以「；」串接，含成員歸因
 }
 
@@ -45,7 +50,9 @@ type EngineInput struct {
 	Members              []Member
 	Now                  time.Time
 	CenterLat, CenterLng float64
-	Votes                map[string]VoteInfo // key = rkey(r)；nil = 無投票資料（P1 相容）
+	Votes                map[string]VoteInfo     // key = rkey(r)；nil = 無投票資料（P1 相容）
+	Recency              map[string]RecencyCount // key = rkey(r)；nil = 無紀錄
+	Exploration          string                  // familiar/balanced/explore；"" 視為 balanced
 }
 
 type EngineResult struct {
@@ -172,7 +179,31 @@ func voteFactor(r Restaurant, in EngineInput) TraceEntry {
 		fmt.Sprintf("%d 張贊成票", ups)}
 }
 
-var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor}
+func recencyFactor(r Restaurant, in EngineInput) TraceEntry {
+	c := in.Recency[rkey(r)]
+	if c.Fresh == 0 && c.Fading == 0 {
+		return TraceEntry{"recency", 1.0, "近 30 天無成員造訪"}
+	}
+	eff := (float64(c.Fresh) + RecencyFadingWeight*float64(c.Fading)) / float64(len(in.Members))
+	scale, ok := RecencyPenaltyScale[in.Exploration]
+	if !ok {
+		scale = RecencyPenaltyScale["balanced"]
+	}
+	mult := 1 - (1-RecencyFloorMult)*eff*scale
+	if mult < RecencyMinMult {
+		mult = RecencyMinMult
+	}
+	var parts []string
+	if c.Fresh > 0 {
+		parts = append(parts, fmt.Sprintf("%d 位成員 14 天內造訪過", c.Fresh))
+	}
+	if c.Fading > 0 {
+		parts = append(parts, fmt.Sprintf("%d 位成員 15–30 天前造訪過", c.Fading))
+	}
+	return TraceEntry{"recency", mult, strings.Join(parts, "；")}
+}
+
+var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor}
 
 func Evaluate(in EngineInput) EngineResult {
 	var res EngineResult

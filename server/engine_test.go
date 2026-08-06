@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -114,8 +115,8 @@ func TestScoringFactors(t *testing.T) {
 	var sum float64
 	for _, c := range res.Kept {
 		sum += c.Probability
-		if len(c.Trace) != 4 {
-			t.Errorf("%s trace 應有 4 個因素，got %d", c.PlaceID, len(c.Trace))
+		if len(c.Trace) != 5 {
+			t.Errorf("%s trace 應有 5 個因素，got %d", c.PlaceID, len(c.Trace))
 		}
 		for _, e := range c.Trace {
 			if e.Reason == "" || e.Mult <= 0 {
@@ -177,8 +178,8 @@ func TestVoteFactor(t *testing.T) {
 		t.Errorf("2 張贊成票應 ×%.1f：got %f want %f", 1+2*VoteBoostPerUp, got, want)
 	}
 	for _, c := range res.Kept {
-		if len(c.Trace) != 4 {
-			t.Errorf("%s trace 應有 4 個因素，got %d", c.PlaceID, len(c.Trace))
+		if len(c.Trace) != 5 {
+			t.Errorf("%s trace 應有 5 個因素，got %d", c.PlaceID, len(c.Trace))
 		}
 	}
 }
@@ -215,4 +216,70 @@ func TestNilVotesNeutral(t *testing.T) {
 	if len(res.Kept) != 1 {
 		t.Fatalf("nil Votes 不應影響保留，got %+v", res.Excluded)
 	}
+}
+
+func recencyIn(rc RecencyCount, exploration string, nMembers int) EngineInput {
+	ms := make([]Member, nMembers)
+	for i := range ms {
+		ms[i] = member(func(m *Member) { m.UserID = fmt.Sprintf("u%d", i) })
+	}
+	return EngineInput{Restaurants: []Restaurant{rest(nil)}, Members: ms,
+		Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+		Recency:     map[string]RecencyCount{"p1": rc},
+		Exploration: exploration}
+}
+
+func recencyMult(t *testing.T, in EngineInput) float64 {
+	t.Helper()
+	res := Evaluate(in)
+	if len(res.Kept) != 1 {
+		t.Fatalf("應保留，got %+v", res.Excluded)
+	}
+	for _, e := range res.Kept[0].Trace {
+		if e.Factor == "recency" {
+			return e.Mult
+		}
+	}
+	t.Fatal("trace 缺 recency 因素")
+	return 0
+}
+
+func TestRecencyFactor(t *testing.T) {
+	// spec §5：全員 14 天內 → ×0.3；比例線性；15–30 天減半計
+	cases := []struct {
+		name string
+		rc   RecencyCount
+		expl string
+		n    int
+		want float64
+	}{
+		{"全員 14 天內", RecencyCount{Fresh: 4}, "balanced", 4, 0.3},
+		{"半數 14 天內（線性內插）", RecencyCount{Fresh: 2}, "balanced", 4, 0.65},
+		{"15-30 天減半計", RecencyCount{Fading: 4}, "balanced", 4, 0.65},
+		{"無紀錄中性", RecencyCount{}, "balanced", 4, 1.0},
+		{"熟悉檔懲罰減半", RecencyCount{Fresh: 4}, "familiar", 4, 0.65},
+		{"探索檔加重", RecencyCount{Fresh: 4}, "explore", 4, 0.125},
+		{"空字串視為 balanced", RecencyCount{Fresh: 4}, "", 4, 0.3},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := recencyMult(t, recencyIn(c.rc, c.expl, c.n))
+			if got < c.want-0.0001 || got > c.want+0.0001 {
+				t.Errorf("want %f got %f", c.want, got)
+			}
+		})
+	}
+}
+
+func TestRecencyReason(t *testing.T) {
+	res := Evaluate(recencyIn(RecencyCount{Fresh: 1, Fading: 2}, "balanced", 4))
+	for _, e := range res.Kept[0].Trace {
+		if e.Factor == "recency" {
+			if e.Reason != "1 位成員 14 天內造訪過；2 位成員 15–30 天前造訪過" {
+				t.Errorf("reason 格式不符：%q", e.Reason)
+			}
+			return
+		}
+	}
+	t.Fatal("trace 缺 recency")
 }
