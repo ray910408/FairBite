@@ -4,6 +4,7 @@ import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
 import AuthPage from './pages/AuthPage'
 import HomePage from './pages/HomePage'
+import RoomPage from './pages/RoomPage'
 
 export function useSession() {
   const [session, setSession] = useState<Session | null>(null)
@@ -32,7 +33,7 @@ export default function App() {
       <Routes>
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/" element={<Guard><HomePage /></Guard>} />
-        <Route path="/room/:id" element={<Guard><p className="p-8">房間（Task 10）</p></Guard>} />
+        <Route path="/room/:id" element={<Guard><RoomPage /></Guard>} />
       </Routes>
     </BrowserRouter>
   )
