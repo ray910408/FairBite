@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
+import { startVoting, voteRoom } from '../lib/api'
+import type { Room } from '../lib/types'
 import ConditionsForm from '../components/ConditionsForm'
 import CandidateList from '../components/CandidateList'
 import Wheel from '../components/Wheel'
@@ -10,10 +12,11 @@ import { Alert, Check, Copy, Logo, Spinner, Users } from '../components/icons'
 const STEPS = [
   { key: 'lobby', label: '設定條件' },
   { key: 'candidates', label: '候選出爐' },
+  { key: 'voting', label: '投票' },
   { key: 'decided', label: '定案' },
 ] as const
 
-function Stepper({ status }: { status: 'lobby' | 'candidates' | 'decided' }) {
+function Stepper({ status }: { status: Room['status'] }) {
   const current = STEPS.findIndex(s => s.key === status)
   return (
     <ol className="flex items-center gap-1 text-xs">
@@ -36,10 +39,11 @@ function Stepper({ status }: { status: 'lobby' | 'candidates' | 'decided' }) {
 
 export default function RoomPage() {
   const { id = '' } = useParams()
-  const { room, members, candidates, draw, myUserId, connected, notFound } = useRoom(id)
+  const { room, members, candidates, draw, votes, setVotes, myUserId, connected, notFound } = useRoom(id)
   const [spun, setSpun] = useState(false)
   const [actionError, setActionError] = useState('')
   const [copied, setCopied] = useState(false)
+  const voteInFlight = useRef(false)
   if (!room) return notFound ? (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
       <Logo className="h-12 w-12 opacity-60" />
@@ -66,6 +70,28 @@ export default function RoomPage() {
     }
   }
 
+  async function toggleVote(restaurantId: string, kind: 'up' | 'veto') {
+    if (voteInFlight.current) return // D6：連點鎖 —— 慢網路下不重送、不閃假錯誤
+    voteInFlight.current = true
+    setActionError('')
+    const has = votes.some(v =>
+      v.user_id === myUserId && v.restaurant_id === restaurantId && v.kind === kind)
+    const op = has ? 'retract' : 'cast'
+    const msg = await voteRoom(room!.id, restaurantId, kind, op)
+      .catch(() => '投票失敗：無法連線到伺服器')
+    voteInFlight.current = false
+    if (msg) {
+      setActionError(msg) // D4：伺服器訊息直達（額度用盡/不在投票階段都有明確下一步）
+      return
+    }
+    // D6：本地先行 merge —— 按鈕 aria-pressed 立即反應，不等 Realtime round-trip；
+    // cast 同時清掉自己同店另一 kind（鏡射伺服器互斥語意），權威資料稍後由 refetch 帶回
+    setVotes(vs => op === 'retract'
+      ? vs.filter(v => !(v.user_id === myUserId && v.restaurant_id === restaurantId && v.kind === kind))
+      : [...vs.filter(v => !(v.user_id === myUserId && v.restaurant_id === restaurantId)),
+          { room_id: room!.id, user_id: myUserId, restaurant_id: restaurantId, kind }])
+  }
+
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-20 border-b border-border bg-canvas/85 backdrop-blur">
@@ -81,7 +107,7 @@ export default function RoomPage() {
           </button>
           <span className="sr-only" aria-live="polite">{copied ? '邀請碼已複製' : ''}</span>
           <span className="ml-auto rounded-full bg-brand-soft px-3 py-1 text-xs font-semibold text-brand-strong">
-            {{ lobby: '等待中', candidates: '候選已出爐', decided: '已定案' }[room.status]}
+            {{ lobby: '等待中', candidates: '候選已出爐', voting: '投票中', decided: '已定案' }[room.status]}
           </span>
         </div>
         <div className="mx-auto w-full max-w-lg px-3 pb-3">
@@ -153,6 +179,32 @@ export default function RoomPage() {
             <CandidateList rows={candidates} />
             {isHost && (
               <button className="btn btn-primary w-full"
+                onClick={async () => {
+                  setActionError('')
+                  const msg = await startVoting(room.id)
+                  if (msg) setActionError(msg)
+                }}>
+                開始投票
+              </button>
+            )}
+          </>
+        )}
+        {room.status === 'voting' && (
+          <>
+            <CandidateList rows={candidates}
+              voting={{ votes, myUserId, onToggle: toggleVote }} />
+            {candidates.some(c => c.status === 'kept') ? null : (
+              // D16：「全否決」和「全打烊」是兩種死路——理由字串是自家 contract，可安全判斷
+              <p role="status" className="banner bg-warn-soft text-warn">
+                <Alert className="h-5 w-5 shrink-0" />
+                <span>{candidates.some(c => c.exclusion_reason?.includes('否決'))
+                  ? '候選已全數被否決，需有人收回否決才能抽選'
+                  : '候選已全數失效（可能都打烊了），請建立新房間重新搜尋'}</span>
+              </p>
+            )}
+            {isHost && (
+              <button className="btn btn-primary w-full"
+                disabled={!candidates.some(c => c.status === 'kept')}
                 onClick={() => {
                   setActionError('')
                   import('../lib/api').then(m => m.drawRoom(room.id))

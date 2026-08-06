@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, test } from 'vitest'
 import { chipLabel, formatPercent, formatPercents, sortKept } from './probability'
 import type { CandidateRow } from './types'
 
@@ -6,6 +6,13 @@ const cand = (p: number | null, status: 'kept' | 'excluded' = 'kept'): Candidate
   room_id: 'r', restaurant_id: String(p), status, probability: p,
   weight_breakdown: [], exclusion_reason: null,
   restaurants: { name: 'x', lat: 0, lng: 0, place_id: 'p' },
+})
+
+test('P2 新因素有中文標籤', () => {
+  expect(chipLabel({ factor: 'votes', mult: 1.2, reason: '2 張贊成票' }))
+    .toBe('投票 ×1.20 · 2 張贊成票')
+  expect(chipLabel({ factor: 'recency', mult: 0.65, reason: '2 位成員 14 天內造訪過' }))
+    .toBe('最近去過 ×0.65 · 2 位成員 14 天內造訪過')
 })
 
 describe('formatPercent', () => {

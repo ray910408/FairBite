@@ -4,6 +4,8 @@ export const FACTOR_LABELS: Record<string, string> = {
   preference: '偏好',
   distance: '距離',
   closing_soon: '打烊',
+  votes: '投票',
+  recency: '最近去過',
 }
 
 export function formatPercent(p: number): string {

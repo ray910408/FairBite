@@ -1,24 +1,26 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import type { CandidateRow, DrawRow, MemberRow, Room } from '../lib/types'
+import type { CandidateRow, DrawRow, MemberRow, Room, VoteRow } from '../lib/types'
 
 export function useRoom(roomId: string) {
   const [room, setRoom] = useState<Room | null>(null)
   const [members, setMembers] = useState<MemberRow[]>([])
   const [candidates, setCandidates] = useState<CandidateRow[]>([])
   const [draw, setDraw] = useState<DrawRow | null>(null)
+  const [votes, setVotes] = useState<VoteRow[]>([])
   const [myUserId, setMyUserId] = useState('')
   const [connected, setConnected] = useState(true)
   const [notFound, setNotFound] = useState(false)
 
   const refetch = useCallback(async () => {
-    const [r, m, c, d] = await Promise.all([
+    const [r, m, c, d, v] = await Promise.all([
       supabase.from('rooms').select('*').eq('id', roomId).single(),
       supabase.from('room_members').select('*, profiles(display_name)').eq('room_id', roomId),
       supabase.from('room_candidates')
         .select('*, restaurants(name, lat, lng, place_id)').eq('room_id', roomId)
         .order('restaurant_id'),
       supabase.from('draws').select('*').eq('room_id', roomId).maybeSingle(),
+      supabase.from('votes').select('*').eq('room_id', roomId),
     ])
     // 讀不到房間（不存在、或 RLS 擋掉非成員）要讓 UI 停止無限「載入中」
     setNotFound(!r.data)
@@ -26,6 +28,7 @@ export function useRoom(roomId: string) {
     setMembers((m.data ?? []) as MemberRow[])
     setCandidates((c.data ?? []) as CandidateRow[])
     setDraw((d.data ?? null) as DrawRow | null)
+    setVotes((v.data ?? []) as VoteRow[])
   }, [roomId])
 
   useEffect(() => {
@@ -37,14 +40,20 @@ export function useRoom(roomId: string) {
       { table: 'room_members', filter: `room_id=eq.${roomId}` },
       { table: 'room_candidates', filter: `room_id=eq.${roomId}` },
       { table: 'draws', filter: `room_id=eq.${roomId}` },
+      { table: 'votes', filter: `room_id=eq.${roomId}` },
     ]
     // roomId/refetch 變動會重跑本 effect：舊 channel 的 CLOSED 會晚於新 channel 的
     // SUBSCRIBED 抵達，沒有 live 旗標就會把已連線的狀態蓋回「斷線」
     let live = true
+    let refetchTimer: ReturnType<typeof setTimeout> | undefined
+    const scheduleRefetch = () => {
+      clearTimeout(refetchTimer)
+      refetchTimer = setTimeout(refetch, 150)
+    }
     let ch = supabase.channel(`room-${roomId}`)
     for (const t of tables) {
       ch = ch.on('postgres_changes',
-        { event: '*', schema: 'public', table: t.table, filter: t.filter }, refetch)
+        { event: '*', schema: 'public', table: t.table, filter: t.filter }, scheduleRefetch)
     }
     // 斷線不能靜默：非 SUBSCRIBED 顯示橫幅，恢復時整包重拉補上漏掉的事件
     ch.subscribe(status => {
@@ -56,8 +65,12 @@ export function useRoom(roomId: string) {
         setConnected(false)
       }
     })
-    return () => { live = false; supabase.removeChannel(ch) }
+    return () => {
+      live = false
+      clearTimeout(refetchTimer)
+      supabase.removeChannel(ch)
+    }
   }, [roomId, refetch])
 
-  return { room, members, candidates, draw, myUserId, connected, notFound, refetch }
+  return { room, members, candidates, draw, votes, setVotes, myUserId, connected, notFound, refetch }
 }

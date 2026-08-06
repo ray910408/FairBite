@@ -4,7 +4,7 @@ export type Room = {
   id: string
   code: string
   host_id: string
-  status: 'lobby' | 'candidates' | 'decided'
+  status: 'lobby' | 'candidates' | 'voting' | 'decided'
   center_lat: number
   center_lng: number
   exploration: 'familiar' | 'balanced' | 'explore'
@@ -37,6 +37,13 @@ export type CandidateRow = {
   weight_breakdown: TraceEntry[]
   exclusion_reason: string | null
   restaurants: RestaurantRef
+}
+
+export type VoteRow = {
+  room_id: string
+  user_id: string
+  restaurant_id: string
+  kind: 'up' | 'veto'
 }
 
 export type DrawRow = {
