@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
 import AuthPage from './pages/AuthPage'
+import HomePage from './pages/HomePage'
 
 export function useSession() {
   const [session, setSession] = useState<Session | null>(null)
@@ -30,7 +31,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/auth" element={<AuthPage />} />
-        <Route path="/" element={<Guard><p className="p-8">首頁（Task 9）</p></Guard>} />
+        <Route path="/" element={<Guard><HomePage /></Guard>} />
         <Route path="/room/:id" element={<Guard><p className="p-8">房間（Task 10）</p></Guard>} />
       </Routes>
     </BrowserRouter>
