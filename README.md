@@ -44,6 +44,8 @@ supabase test db                                   # RLS pgTAP
 (cd server && go test ./...)                       # 引擎/抽選/auth
 (cd server && TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' go test ./... -run 'TestSearchAndDraw|TestSearchEdge' -v)
 (cd web && npm test)                               # 機率顯示與 maps URL
+(cd web && npm run lint)                           # rules-of-hooks 這類 tsc 抓不到的錯
+(cd web && npm run build)                          # 型別檢查 + 產出
 ```
 
 PowerShell：
@@ -53,6 +55,8 @@ supabase test db
 Push-Location server; go test ./...; Pop-Location
 Push-Location server; $env:TEST_DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'; go test ./... -run 'TestSearchAndDraw|TestSearchEdge' -v; Pop-Location
 Push-Location web; npm test; Pop-Location
+Push-Location web; npm run lint; Pop-Location
+Push-Location web; npm run build; Pop-Location
 ```
 
-Phase 1 使用 mock 餐廳資料（台北車站周邊 12 家）；真實 Google Places 於 Phase 2 切換。
+Phase 1 使用 mock 餐廳資料（台北車站周邊 13 家）；真實 Google Places 於 Phase 2 切換。

@@ -13,10 +13,18 @@ export async function searchRoom(roomId: string) {
   const res = await post(`/api/rooms/${roomId}/search`)
   if (res.status === 422) {
     const body = await res.json()
-    const by = Object.entries(body.excluded_by as Record<string, number>)
+    // 附近沒餐廳 ≠ 條件太嚴：後者叫人放寬條件才有用，前者要叫人換地點
+    if (body.error === 'no_restaurants_in_range') {
+      alert(body.message)
+      return
+    }
+    const by = Object.entries((body.excluded_by ?? {}) as Record<string, number>)
       .sort((a, b) => b[1] - a[1])
     const label: Record<string, string> = { budget: '預算', dietary: '飲食禁忌', closed: '營業時間' }
-    alert(`找不到符合所有條件的餐廳。\n最主要原因：${label[by[0]?.[0]] ?? by[0]?.[0]}（排除 ${by[0]?.[1]} 家）。\n請放寬條件後再試。`)
+    // excluded_by 缺席/空物件時別把 undefined 插進字串
+    alert(by.length === 0
+      ? '找不到符合條件的餐廳，請放寬條件'
+      : `找不到符合所有條件的餐廳。\n最主要原因：${label[by[0][0]] ?? by[0][0]}（排除 ${by[0][1]} 家）。\n請放寬條件後再試。`)
   } else if (!res.ok) {
     alert(`搜尋失敗（${res.status}）`)
   }

@@ -108,6 +108,17 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusBadGateway, "餐廳搜尋失敗")
 		return
 	}
+	// 「附近根本沒資料」和「有資料但全被條件排除」是兩種不同的死路，
+	// 混成同一個 422 會叫使用者去放寬條件卻永遠沒用 — 分流才誠實
+	if len(found) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		jsonOK(w, map[string]any{
+			"error":   "no_restaurants_in_range",
+			"message": "此位置附近沒有餐廳資料（Phase 1 mock 資料僅涵蓋台北車站周邊），請靠近示範區域或縮小距離再試",
+		})
+		return
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")

@@ -31,7 +31,7 @@ func LoadRoom(ctx context.Context, pool *pgxpool.Pool, roomID string) (RoomRow, 
 
 func LoadMembers(ctx context.Context, pool *pgxpool.Pool, roomID string) ([]Member, error) {
 	rows, err := pool.Query(ctx,
-		`select rm.user_id, coalesce(p.display_name, '成員'), rm.budget_max,
+		`select rm.user_id, coalesce(nullif(p.display_name, ''), '成員'), rm.budget_max,
 		        rm.cuisines, rm.dietary, rm.max_distance_m, rm.transport
 		 from room_members rm join profiles p on p.id = rm.user_id
 		 where rm.room_id = $1`, roomID)

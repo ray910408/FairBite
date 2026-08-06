@@ -17,8 +17,8 @@ const userIDKey ctxKey = "userID"
 
 type Verifier struct{ keyfunc jwt.Keyfunc }
 
-// local = HS256 shared secret；hosted = JWKS（Supabase legacy 對稱簽章 2026 底棄用，
-// 新專案一律非對稱 — 設 SUPABASE_JWKS_URL 即走非對稱路徑）
+// SUPABASE_JWKS_URL 設定時走非對稱（supabase CLI 2.x local 與 hosted 新專案皆為 ES256）；
+// SUPABASE_JWT_SECRET 僅供 legacy 對稱簽章專案（2026 底棄用）
 func NewVerifier() (*Verifier, error) {
 	if url := os.Getenv("SUPABASE_JWKS_URL"); url != "" {
 		kf, err := keyfunc.NewDefaultCtx(context.Background(), []string{url})

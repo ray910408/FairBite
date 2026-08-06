@@ -16,7 +16,8 @@ export function useRoom(roomId: string) {
       supabase.from('rooms').select('*').eq('id', roomId).single(),
       supabase.from('room_members').select('*, profiles(display_name)').eq('room_id', roomId),
       supabase.from('room_candidates')
-        .select('*, restaurants(name, lat, lng, place_id)').eq('room_id', roomId),
+        .select('*, restaurants(name, lat, lng, place_id)').eq('room_id', roomId)
+        .order('restaurant_id'),
       supabase.from('draws').select('*').eq('room_id', roomId).maybeSingle(),
     ])
     // 讀不到房間（不存在、或 RLS 擋掉非成員）要讓 UI 停止無限「載入中」

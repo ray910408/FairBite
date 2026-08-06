@@ -1,6 +1,8 @@
+import type { MemberRow } from './types'
+
 export function buildMapsUrl(
   lat: number, lng: number, placeId: string,
-  transport: 'walking' | 'driving' | 'transit',
+  transport: MemberRow['transport'],
 ): string {
   const q = new URLSearchParams({
     api: '1',

@@ -15,6 +15,7 @@ import (
 
 func newTestApp(t *testing.T, pool *pgxpool.Pool) http.Handler {
 	t.Setenv("SUPABASE_JWT_SECRET", "test-secret-test-secret-test-secret!")
+	t.Setenv("SUPABASE_JWKS_URL", "") // 外部環境設了就會誤走 JWKS 路徑，HS256 測試必失敗
 	v, err := NewVerifier()
 	if err != nil {
 		t.Fatal(err)
