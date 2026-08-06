@@ -8,8 +8,9 @@ const COLORS = ['#f97316', '#0ea5e9', '#22c55e', '#eab308', '#a855f7',
 function arcPath(cx: number, cy: number, r: number, a0: number, a1: number): string {
   const rad = (a: number) => ((a - 90) * Math.PI) / 180
   const x0 = cx + r * Math.cos(rad(a0)), y0 = cy + r * Math.sin(rad(a0))
-  const x1 = cx + r * Math.cos(rad(a1)), y1 = cy + r * Math.sin(rad(a1))
-  const large = a1 - a0 > 180 ? 1 : 0
+  const a1c = Math.min(a1, a0 + 359.99) // 360° 時端點重合，SVG 會略去弧線 → 留 0.01° 缺口
+  const x1 = cx + r * Math.cos(rad(a1c)), y1 = cy + r * Math.sin(rad(a1c))
+  const large = a1c - a0 > 180 ? 1 : 0
   return `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1} Z`
 }
 

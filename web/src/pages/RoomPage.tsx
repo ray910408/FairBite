@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
 import ConditionsForm from '../components/ConditionsForm'
@@ -9,6 +9,7 @@ import ResultCard from '../components/ResultCard'
 export default function RoomPage() {
   const { id = '' } = useParams()
   const { room, members, candidates, draw, myUserId, connected, notFound } = useRoom(id)
+  const [spun, setSpun] = useState(false)
   if (!room) return notFound ? (
     <div className="space-y-3 p-8 text-center">
       <p>找不到房間，或你不是成員</p>
@@ -18,12 +19,6 @@ export default function RoomPage() {
 
   const me = members.find(m => m.user_id === myUserId)
   const isHost = room.host_id === myUserId
-  const [spinning, setSpinning] = useState(false)
-  const [spun, setSpun] = useState(false)
-
-  useEffect(() => {
-    if (draw && !spun) setSpinning(true)
-  }, [draw, spun])
 
   return (
     <div className="mx-auto max-w-lg space-y-4 p-4">
@@ -84,9 +79,9 @@ export default function RoomPage() {
         </>
       )}
       {room.status === 'decided' && draw && (
-        spinning && !spun ? (
+        !spun ? (
           <Wheel rows={candidates} winnerId={draw.winner_restaurant_id}
-            onDone={() => { setSpun(true); setSpinning(false) }} />
+            onDone={() => setSpun(true)} />
         ) : (
           <ResultCard draw={draw} candidates={candidates} me={me} />
         )
