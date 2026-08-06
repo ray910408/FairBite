@@ -1577,6 +1577,8 @@ git add -A && git commit -m "feat(server): seeded weighted draw with replay and 
 
 預估 90–120 分鐘。
 
+> **實作註記（2026-08-06，commits ae3e3ad → 2dbce2f → 498d37b）**：實際入庫版本相對本節程式碼有五處修正 — ① handlers.go 不需 `"context"` import（編譯錯誤）；② 所有對外 `"db error"` 改繁中「資料庫錯誤，請稍後再試」（Global Constraints 優先）；③ 回應的 `kept`/`excluded` 以空 slice 初始化（避免 JSON `null`）；④ `loadHostRoom` 僅 `pgx.ErrNoRows` 回 404、其餘 500；⑤ 測試的 `defer pool.Close()` 改為先註冊的 `t.Cleanup`（LIFO 保證清理先於關閉，integration 可重複執行）。以 git 為準。
+
 **Files:**
 - Create: `server/db.go`
 - Create: `server/handlers.go`
