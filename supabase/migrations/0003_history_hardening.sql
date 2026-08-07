@@ -64,6 +64,7 @@ returns uuid language plpgsql security definer set search_path = public as $$
 declare v_room_id uuid;
 begin
   if auth.uid() is null then raise exception '未登入'; end if;
+  perform pg_advisory_xact_lock(hashtext('join_room:' || auth.uid()::text));
   -- ponytail: 每次呼叫順手清 10 分鐘前的舊列；join 頻率極低，全表 delete 夠用
   delete from join_attempts where attempted_at < now() - interval '10 minutes';
   if (select count(*) from join_attempts

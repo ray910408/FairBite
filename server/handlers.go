@@ -164,6 +164,7 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 		Kind         string `json:"kind"`
 		Op           string `json:"op"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
 		(req.Kind != "up" && req.Kind != "veto") ||
 		(req.Op != "cast" && req.Op != "retract") {
@@ -356,6 +357,11 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 			jsonError(w, http.StatusConflict, "房間狀態已變更")
 			return
 		}
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	// exploration 在 lobby 仍可變，鎖定後重讀；center_* 由 guard 永凍毋需重讀
+	if err := tx.QueryRow(ctx, `select exploration from rooms where id = $1`, room.ID).Scan(&room.Exploration); err != nil {
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}

@@ -465,6 +465,11 @@ func TestVotingFlow(t *testing.T) {
 	if w := do(hostID, "/api/rooms/"+roomID+"/start-voting", ""); w.Code != http.StatusConflict {
 		t.Fatalf("重複 start-voting: want 409 got %d", w.Code)
 	}
+	if w := do(memberID, "/api/rooms/"+roomID+"/vote", fmt.Sprintf(
+		`{"restaurant_id":%q,"kind":"up","op":"cast","padding":%q}`,
+		cands[0], strings.Repeat("x", 1<<10))); w.Code < 400 || w.Code >= 500 {
+		t.Fatalf("超過 1KB 的 vote body: want 4xx got %d", w.Code)
+	}
 
 	// cast up：成功 + 冪等（重複 cast 不變）；trace 出現投票因素
 	if w := vote(memberID, cands[0], "up", "cast"); w.Code != http.StatusOK {

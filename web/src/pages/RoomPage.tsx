@@ -46,6 +46,7 @@ export default function RoomPage() {
   const [actionError, setActionError] = useState('')
   const [copied, setCopied] = useState(false)
   const voteInFlight = useRef(false)
+  const startVotingInFlight = useRef(false)
   if (!room) return notFound ? (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
       <Logo className="h-12 w-12 opacity-60" />
@@ -218,9 +219,12 @@ export default function RoomPage() {
             {isHost && (
               <button className="btn btn-primary w-full"
                 onClick={async () => {
+                  if (startVotingInFlight.current) return
+                  startVotingInFlight.current = true
                   setActionError('')
                   const msg = await startVoting(room.id)
                     .catch(() => '開始投票失敗：無法連線到伺服器')
+                  startVotingInFlight.current = false
                   if (msg) setActionError(msg)
                 }}>
                 開始投票
