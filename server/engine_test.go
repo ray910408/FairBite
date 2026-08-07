@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -15,15 +16,6 @@ func member(over func(*Member)) Member {
 		over(&m)
 	}
 	return m
-}
-
-func hasKind(ks []string, want string) bool {
-	for _, k := range ks {
-		if k == want {
-			return true
-		}
-	}
-	return false
 }
 
 func rest(over func(*Restaurant)) Restaurant {
@@ -114,8 +106,8 @@ func TestScoringFactors(t *testing.T) {
 	var sum float64
 	for _, c := range res.Kept {
 		sum += c.Probability
-		if len(c.Trace) != 3 {
-			t.Errorf("%s trace 應有 3 個因素，got %d", c.PlaceID, len(c.Trace))
+		if len(c.Trace) != 5 {
+			t.Errorf("%s trace 應有 5 個因素，got %d", c.PlaceID, len(c.Trace))
 		}
 		for _, e := range c.Trace {
 			if e.Reason == "" || e.Mult <= 0 {
@@ -141,6 +133,32 @@ func TestDistFactorClamp(t *testing.T) {
 	}
 }
 
+func TestDistOverheadAndSlowest(t *testing.T) {
+	// 兩位成員：步行 vs 大眾運輸。距離 ~1500m：
+	// 步行 0 + 1500/75 = 20 分；大眾運輸 8 + 1500/200 = 15.5 分 → 最慢是步行
+	in := EngineInput{
+		Members: []Member{
+			member(nil), // walking
+			member(func(m *Member) { m.UserID = "u2"; m.Transport = "transit" }),
+		},
+		CenterLat: 25.0478, CenterLng: 121.5170,
+	}
+	r := rest(func(r *Restaurant) { r.Lat = 25.0478; r.Lng = 121.5319 }) // 東移 ~1500m
+	e := distFactor(r, in)
+	if !strings.Contains(e.Reason, "最慢") || !strings.Contains(e.Reason, "步行") {
+		t.Errorf("reason 應標示最慢成員與交通方式：%q", e.Reason)
+	}
+	// transit 的 overhead 生效：純除法是 7.5 分，加 8 分 overhead 後 >15 分
+	solo := EngineInput{
+		Members:   []Member{member(func(m *Member) { m.Transport = "transit" })},
+		CenterLat: 25.0478, CenterLng: 121.5170,
+	}
+	e2 := distFactor(r, solo)
+	if !strings.Contains(e2.Reason, "16 分鐘") && !strings.Contains(e2.Reason, "15 分鐘") {
+		t.Errorf("transit overhead 應計入估時：%q", e2.Reason)
+	}
+}
+
 func TestClosingSoonDemoted(t *testing.T) {
 	soon := rest(func(r *Restaurant) { r.PlaceID = "soon"; r.Hours = daily([2]int{0, 750}) }) // 12:30 打烊
 	late := rest(func(r *Restaurant) { r.PlaceID = "late"; r.Hours = daily([2]int{0, 1440}) })
@@ -155,4 +173,130 @@ func TestClosingSoonDemoted(t *testing.T) {
 	if got < want-0.0001 || got > want+0.0001 {
 		t.Errorf("即將打烊應 ×%.1f：got %f want %f", ClosingSoonMult, got, want)
 	}
+}
+
+func TestVoteFactor(t *testing.T) {
+	rA := rest(func(r *Restaurant) { r.PlaceID = "a" })
+	rB := rest(func(r *Restaurant) { r.PlaceID = "b" })
+	res := Evaluate(EngineInput{
+		Restaurants: []Restaurant{rA, rB},
+		Members:     []Member{member(nil)},
+		Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+		Votes: map[string]VoteInfo{"a": {Ups: 2}},
+	})
+	byID := map[string]Candidate{}
+	for _, c := range res.Kept {
+		byID[c.PlaceID] = c
+	}
+	// 每張贊成票 +10%（spec §5）：兩票 → ×1.2
+	want := byID["b"].Score * (1 + 2*VoteBoostPerUp)
+	got := byID["a"].Score
+	if got < want-0.0001 || got > want+0.0001 {
+		t.Errorf("2 張贊成票應 ×%.1f：got %f want %f", 1+2*VoteBoostPerUp, got, want)
+	}
+	for _, c := range res.Kept {
+		if len(c.Trace) != 5 {
+			t.Errorf("%s trace 應有 5 個因素，got %d", c.PlaceID, len(c.Trace))
+		}
+	}
+}
+
+func TestVetoExcludes(t *testing.T) {
+	rA := rest(func(r *Restaurant) { r.PlaceID = "a" })
+	rB := rest(func(r *Restaurant) { r.PlaceID = "b" })
+	res := Evaluate(EngineInput{
+		Restaurants: []Restaurant{rA, rB},
+		Members:     []Member{member(nil)},
+		Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+		Votes: map[string]VoteInfo{"a": {Vetoers: []string{"小明", "小華"}}},
+	})
+	if len(res.Kept) != 1 || res.Kept[0].PlaceID != "b" {
+		t.Fatalf("被否決者應移出轉盤，kept=%+v", res.Kept)
+	}
+	e := res.Excluded[0]
+	if !hasKind(e.Kinds, "veto") {
+		t.Errorf("kind 應含 veto，got %v", e.Kinds)
+	}
+	if e.Reason != "遭 小明、小華 否決（可收回）" {
+		t.Errorf("reason 格式不符：%q", e.Reason)
+	}
+	// 唯一候選機率應為 1
+	if p := res.Kept[0].Probability; p < 0.9999 || p > 1.0001 {
+		t.Errorf("唯一候選機率應為 1，got %f", p)
+	}
+}
+
+func TestNilVotesNeutral(t *testing.T) {
+	res := Evaluate(EngineInput{Restaurants: []Restaurant{rest(nil)},
+		Members: []Member{member(nil)}, Now: lunchMonday,
+		CenterLat: 25.0478, CenterLng: 121.5170})
+	if len(res.Kept) != 1 {
+		t.Fatalf("nil Votes 不應影響保留，got %+v", res.Excluded)
+	}
+}
+
+func recencyIn(rc RecencyCount, exploration string, nMembers int) EngineInput {
+	ms := make([]Member, nMembers)
+	for i := range ms {
+		ms[i] = member(func(m *Member) { m.UserID = fmt.Sprintf("u%d", i) })
+	}
+	return EngineInput{Restaurants: []Restaurant{rest(nil)}, Members: ms,
+		Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+		Recency:     map[string]RecencyCount{"p1": rc},
+		Exploration: exploration}
+}
+
+func recencyMult(t *testing.T, in EngineInput) float64 {
+	t.Helper()
+	res := Evaluate(in)
+	if len(res.Kept) != 1 {
+		t.Fatalf("應保留，got %+v", res.Excluded)
+	}
+	for _, e := range res.Kept[0].Trace {
+		if e.Factor == "recency" {
+			return e.Mult
+		}
+	}
+	t.Fatal("trace 缺 recency 因素")
+	return 0
+}
+
+func TestRecencyFactor(t *testing.T) {
+	// spec §5：全員 14 天內 → ×0.3；比例線性；15–30 天減半計
+	cases := []struct {
+		name string
+		rc   RecencyCount
+		expl string
+		n    int
+		want float64
+	}{
+		{"全員 14 天內", RecencyCount{Fresh: 4}, "balanced", 4, 0.3},
+		{"半數 14 天內（線性內插）", RecencyCount{Fresh: 2}, "balanced", 4, 0.65},
+		{"15-30 天減半計", RecencyCount{Fading: 4}, "balanced", 4, 0.65},
+		{"無紀錄中性", RecencyCount{}, "balanced", 4, 1.0},
+		{"熟悉檔懲罰減半", RecencyCount{Fresh: 4}, "familiar", 4, 0.65},
+		{"探索檔加重", RecencyCount{Fresh: 4}, "explore", 4, 0.125},
+		{"空字串視為 balanced", RecencyCount{Fresh: 4}, "", 4, 0.3},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := recencyMult(t, recencyIn(c.rc, c.expl, c.n))
+			if got < c.want-0.0001 || got > c.want+0.0001 {
+				t.Errorf("want %f got %f", c.want, got)
+			}
+		})
+	}
+}
+
+func TestRecencyReason(t *testing.T) {
+	res := Evaluate(recencyIn(RecencyCount{Fresh: 1, Fading: 2}, "balanced", 4))
+	for _, e := range res.Kept[0].Trace {
+		if e.Factor == "recency" {
+			if e.Reason != "1 位成員 14 天內造訪過；2 位成員 15–30 天前造訪過" {
+				t.Errorf("reason 格式不符：%q", e.Reason)
+			}
+			return
+		}
+	}
+	t.Fatal("trace 缺 recency")
 }

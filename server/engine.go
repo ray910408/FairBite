@@ -16,6 +16,16 @@ type Member struct {
 	Transport    string
 }
 
+type VoteInfo struct {
+	Ups     int
+	Vetoers []string
+}
+
+type RecencyCount struct {
+	Fresh  int
+	Fading int
+}
+
 type TraceEntry struct {
 	Factor string  `json:"factor"`
 	Mult   float64 `json:"mult"`
@@ -31,8 +41,17 @@ type Candidate struct {
 
 type Excluded struct {
 	Restaurant
-	Kinds  []string // 全部命中的排除類別（dietary/budget/closed），供統計不受檢查順序污染
+	Kinds  []string // 全部命中的排除類別（dietary/budget/closed/veto），供統計不受檢查順序污染
 	Reason string   // 全部原因以「；」串接，含成員歸因
+}
+
+func hasKind(ks []string, want string) bool {
+	for _, k := range ks {
+		if k == want {
+			return true
+		}
+	}
+	return false
 }
 
 type EngineInput struct {
@@ -40,6 +59,9 @@ type EngineInput struct {
 	Members              []Member
 	Now                  time.Time
 	CenterLat, CenterLng float64
+	Votes                map[string]VoteInfo     // key = rkey(r)；nil = 無投票資料（P1 相容）
+	Recency              map[string]RecencyCount // key = rkey(r)；nil = 無紀錄
+	Exploration          string                  // familiar/balanced/explore；"" 視為 balanced
 }
 
 type EngineResult struct {
@@ -54,6 +76,14 @@ func hasTag(tags []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// rkey：真實流程一律有 DB uuid；引擎測試無 DB 用 PlaceID
+func rkey(r Restaurant) string {
+	if r.ID != "" {
+		return r.ID
+	}
+	return r.PlaceID
 }
 
 // hardExclude 收集「全部」違反的硬性條件（不是只記第一個）：
@@ -122,9 +152,10 @@ func prefFactor(r Restaurant, in EngineInput) TraceEntry {
 
 func distFactor(r Restaurant, in EngineInput) TraceEntry {
 	dist := Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng)
-	var sumMult, sumMin float64
+	var sumMult, sumMin, worstMin float64
+	worstTransport := in.Members[0].Transport
 	for _, m := range in.Members {
-		minutes := dist / TransportMetersPerMin[m.Transport]
+		minutes := TransportOverheadMin[m.Transport] + dist/TransportMetersPerMin[m.Transport]
 		frac := (minutes - DistBestMin) / (DistWorstMin - DistBestMin)
 		if frac < 0 {
 			frac = 0
@@ -134,10 +165,14 @@ func distFactor(r Restaurant, in EngineInput) TraceEntry {
 		}
 		sumMult += DistMultBest + (DistMultWorst-DistMultBest)*frac
 		sumMin += minutes
+		if minutes > worstMin {
+			worstMin, worstTransport = minutes, m.Transport
+		}
 	}
 	n := float64(len(in.Members))
 	return TraceEntry{"distance", sumMult / n,
-		fmt.Sprintf("平均交通約 %.0f 分鐘", sumMin/n)}
+		fmt.Sprintf("平均交通約 %.0f 分鐘（最慢 %.0f 分鐘，%s）",
+			sumMin/n, worstMin, TransportLabels[worstTransport])}
 }
 
 func closingFactor(r Restaurant, in EngineInput) TraceEntry {
@@ -149,13 +184,51 @@ func closingFactor(r Restaurant, in EngineInput) TraceEntry {
 	return TraceEntry{"closing_soon", 1.0, "營業時間充裕"}
 }
 
-var factors = []factorFn{prefFactor, distFactor, closingFactor}
+func voteFactor(r Restaurant, in EngineInput) TraceEntry {
+	ups := in.Votes[rkey(r)].Ups
+	if ups == 0 {
+		return TraceEntry{"votes", 1.0, "尚無贊成票"}
+	}
+	return TraceEntry{"votes", 1 + VoteBoostPerUp*float64(ups),
+		fmt.Sprintf("%d 張贊成票", ups)}
+}
+
+func recencyFactor(r Restaurant, in EngineInput) TraceEntry {
+	c := in.Recency[rkey(r)]
+	if c.Fresh == 0 && c.Fading == 0 {
+		return TraceEntry{"recency", 1.0, "近 30 天無成員造訪"}
+	}
+	eff := (float64(c.Fresh) + RecencyFadingWeight*float64(c.Fading)) / float64(len(in.Members))
+	scale, ok := RecencyPenaltyScale[in.Exploration]
+	if !ok {
+		scale = RecencyPenaltyScale["balanced"]
+	}
+	mult := 1 - (1-RecencyFloorMult)*eff*scale
+	if mult < RecencyMinMult {
+		mult = RecencyMinMult
+	}
+	var parts []string
+	if c.Fresh > 0 {
+		parts = append(parts, fmt.Sprintf("%d 位成員 14 天內造訪過", c.Fresh))
+	}
+	if c.Fading > 0 {
+		parts = append(parts, fmt.Sprintf("%d 位成員 15–30 天前造訪過", c.Fading))
+	}
+	return TraceEntry{"recency", mult, strings.Join(parts, "；")}
+}
+
+var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor}
 
 func Evaluate(in EngineInput) EngineResult {
 	var res EngineResult
 	for _, r := range in.Restaurants {
 		if kinds, reasons := hardExclude(r, in.Members, in.Now); len(kinds) > 0 {
 			res.Excluded = append(res.Excluded, Excluded{r, kinds, strings.Join(reasons, "；")})
+			continue
+		}
+		if v := in.Votes[rkey(r)]; len(v.Vetoers) > 0 {
+			res.Excluded = append(res.Excluded, Excluded{r, []string{"veto"},
+				fmt.Sprintf("遭 %s 否決（可收回）", strings.Join(v.Vetoers, "、"))})
 			continue
 		}
 		c := Candidate{Restaurant: r, Score: 1.0}

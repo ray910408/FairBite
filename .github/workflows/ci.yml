@@ -45,3 +45,21 @@ jobs:
       - run: go vet ./...
       # 需要 DB 的整合測試在沒有 TEST_DATABASE_URL 時會自動 skip
       - run: go test ./...
+
+  db:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - run: supabase start
+      - run: supabase test db
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - run: go test ./...
+        working-directory: server
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres

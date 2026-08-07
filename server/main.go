@@ -52,5 +52,6 @@ func main() {
 		port = "8787"
 	}
 	log.Printf("listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, buildRoutes(verifier, pool, NewMockProvider())))
+	log.Fatal(http.ListenAndServe(":"+port,
+		buildRoutes(verifier, pool, NewMockProvider(), newLimiterStore(RateLimitPerSec, RateLimitBurst))))
 }

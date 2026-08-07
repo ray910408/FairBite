@@ -1,4 +1,4 @@
-import type { MemberRow } from './types'
+import type { MemberRow, Room } from './types'
 
 export const TRANSPORT_LABELS: Record<MemberRow['transport'], string> = {
   walking: '步行', driving: '開車', transit: '大眾運輸',
@@ -12,4 +12,10 @@ export const CUISINE_OPTIONS: [string, string][] = [
 
 export const DIETARY_OPTIONS: [string, string][] = [
   ['vegetarian', '素食'], ['no_beef', '不吃牛'], ['no_pork', '不吃豬'], ['halal', '清真'],
+]
+
+export const EXPLORATION_OPTIONS: [Room['exploration'], string, string][] = [
+  ['familiar', '熟悉', '常去的店優先，最近去過的降權減半'],
+  ['balanced', '平均', '預設的平衡配置'],
+  ['explore', '探索', '最近去過的店降更多，鼓勵換口味'],
 ]

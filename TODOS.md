@@ -1,5 +1,36 @@
 # TODOS
 
+## P2 eng review 新增（2026-08-06）
+
+- **dining_history 刪除語意：** `dining_history.room_id` 目前 `on delete cascade`（0003 migration），與 ADR-0002「紀錄跟人」矛盾——未來做房間清理/保留政策時改為 nullable + `on delete set null`，避免刪房抹掉成員同席紀錄。
+
+### limiter map TTL 清理（hosted 前）
+
+- **What:** `server/handlers.go` 的 `limiterStore` per-user map 加 TTL 清理（程式內 ponytail 註解已標「P2 部署時加」）。
+- **Why:** 長時間運行的 hosted 部署下，每個曾出現的 user id 永久佔一個 limiter → 緩慢記憶體洩漏。本機/demo 無感。
+- **Pros:** 上線前 checklist 自動浮現；修法簡單（last-seen 時間戳 + lazy 清理）。
+- **Cons:** 純預防性，當下量測不出差異。
+- **Context:** 起點 `server/handlers.go:15-30`；與 Places budget alert 同屬「hosted 上線前」群。
+- **Depends on:** hosted 部署計畫（目前無時程）。
+
+### E2E 降級快取情境（provider 斷線編排）
+
+- **What:** Playwright 補「Places 失敗 → 30 天快取 fallback → 降級橫幅」的自動化情境。
+- **Why:** 伺服器端降級鏈已有 Go 測試，但「使用者看到橫幅」這最後一哩只有手動驗證（2026-08-06 eng review D10 認定值得自動化、成本高於當批範圍）。
+- **Pros:** 降級鏈全程進回歸網。
+- **Cons:** 需讓 Go server 的 provider 中途失效——測試旗標（如 `PLACES_FORCE_FAIL=1`）或雙 server 編排，基建成本高。
+- **Context:** 起點：`server/main.go` provider 切換處加測試旗標；E2E 前置腳本以該旗標啟動第二個 port。
+- **Depends on:** P2 Task 13 完成；與既有「E2E 接 CI」註記可合併評估。
+
+### Places 花費防線：budget alert + cache-first 評估（hosted 前）
+
+- **What:** GCP 帳務預算警報（純 ops）；並評估 cache-first 搜尋策略（快取夠新鮮夠密時跳過 API 呼叫）。
+- **Why:** 每次 search 是一次 Nearby Search Pro SKU 計費呼叫（FieldMask 含 regularOpeningHours/rating）。個人規模趨近零成本，hosted 開放他人用後無任何花費防線（2026-08-06 outside voice #8）。
+- **Pros:** 第一層（alert）零程式碼。
+- **Cons:** cache-first 涉及「快取是否涵蓋該區域」判定與營業時間新鮮度取捨，屬產品決策——當批已明確拒絕立即重設計。
+- **Context:** search 每房僅一次且被狀態機閘住，濫用面已小。
+- **Depends on:** hosted 部署；與 limiter TTL 同群。
+
 ## P2 候選
 
 ### Playwright 多客戶端 E2E（完整閉環自動化）
@@ -24,7 +55,7 @@ feat/phase-1 全分支 final review 的 DEFER-P2 批次。前三項優先（安�
 其餘：
 
 4. `NewVerifier` 的 `len(secret) < 32` 拒啟動分支無測試。
-5. `guard_room_columns` 無 `set search_path`（不可利用，linter 會唸）。
+5. `guard_room_columns` 無 `set search_path`（不可利用，linter 會唸）。（P2 計畫已吸收：Task 2 重寫該函式時順手補，2026-08-06 eng review D5）
 6. `handle_new_user` 保留預設 `EXECUTE TO PUBLIC`（returns trigger 不可直呼，僅不一致）。
 7. grant 矩陣 pin 只盯 `grantee='authenticated'`，grant to PUBLIC 的放寬不會觸發。
 8. `MinutesUntilClose` 的 `-1`（未營業）路徑無測試。

@@ -43,8 +43,11 @@ export default function HomePage() {
     setBusy(true)
     try {
       const { data, error } = await supabase.rpc('join_room', { p_code: code })
-      if (error) setError('房間不存在或已開始')
-      else nav(`/room/${data}`)
+      if (error || !data) {
+        setError(error?.message?.includes('頻繁')
+          ? '嘗試過於頻繁，請稍後再試'
+          : '房間不存在或已開始')
+      } else nav(`/room/${data}`)
     } finally {
       setBusy(false)
     }

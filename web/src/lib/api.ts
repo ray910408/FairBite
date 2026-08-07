@@ -1,12 +1,24 @@
 import { supabase } from './supabase'
 
-async function post(path: string): Promise<Response> {
+async function post(path: string, body?: unknown): Promise<Response> {
   const { data } = await supabase.auth.getSession()
   const token = data.session?.access_token ?? ''
   return fetch(`${import.meta.env.VITE_API_URL}${path}`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
   })
+}
+
+// 共用錯誤萃取：伺服器 body.error 優先，沒有才用 fallback + 狀態碼
+async function postAction(path: string, fallback: string, body?: unknown): Promise<string | null> {
+  const res = await post(path, body)
+  if (res.ok) return null
+  const msg = await res.json().then(b => b.error as string).catch(() => null)
+  return msg || `${fallback}（${res.status}）`
 }
 
 // 回傳給呼叫端顯示的錯誤訊息，成功則 null
@@ -29,6 +41,16 @@ export async function searchRoom(roomId: string): Promise<string | null> {
 }
 
 export async function drawRoom(roomId: string): Promise<string | null> {
-  const res = await post(`/api/rooms/${roomId}/draw`)
-  return res.ok ? null : `抽選失敗（${res.status}）`
+  return postAction(`/api/rooms/${roomId}/draw`, '抽選失敗')
+}
+
+export async function startVoting(roomId: string): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/start-voting`, '開始投票失敗')
+}
+
+// 投票/否決/收回的唯一入口（D15）：Go 單一交易寫票 + 權威重算，Realtime 推回全員
+export async function voteRoom(roomId: string, restaurantId: string,
+  kind: 'up' | 'veto', op: 'cast' | 'retract'): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/vote`, '投票失敗',
+    { restaurant_id: restaurantId, kind, op })
 }

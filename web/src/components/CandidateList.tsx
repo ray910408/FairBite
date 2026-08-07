@@ -1,17 +1,34 @@
-import type { CandidateRow } from '../lib/types'
+import type { CandidateRow, VoteRow } from '../lib/types'
 import { chipLabel, formatPercents, sortExcluded, sortKept } from '../lib/probability'
 import { Chevron } from './icons'
 
-export default function CandidateList({ rows }: { rows: CandidateRow[] }) {
+type VotingProps = {
+  votes: VoteRow[]
+  myUserId: string
+  onToggle: (restaurantId: string, kind: 'up' | 'veto') => void
+}
+
+const VETO_QUOTA = 2 // UI 顯示常數，與 Go VetoQuota 一致
+
+export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; voting?: VotingProps }) {
   const kept = sortKept(rows)
   const percents = formatPercents(kept.map(c => c.probability ?? 0))
   const excluded = sortExcluded(rows)
-  // 條長度相對於最高機率，差距才看得出來；精確數字就在旁邊
   const max = Math.max(...kept.map(c => c.probability ?? 0), 0.0001)
+
+  const ups = (rid: string) => voting!.votes.filter(v => v.restaurant_id === rid && v.kind === 'up').length
+  const mine = (rid: string, kind: VoteRow['kind']) =>
+    voting!.votes.some(v => v.restaurant_id === rid && v.user_id === voting!.myUserId && v.kind === kind)
+  const myVetoes = voting ? voting.votes.filter(v => v.user_id === voting.myUserId && v.kind === 'veto').length : 0
 
   return (
     <div className="space-y-3">
-      <h2 className="text-base font-semibold">候選餐廳（{kept.length}）</h2>
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-base font-semibold">候選餐廳（{kept.length}）</h2>
+        {voting && (
+          <span className="text-xs text-fg-muted">否決額度 {VETO_QUOTA - myVetoes}/{VETO_QUOTA}（可收回）</span>
+        )}
+      </div>
       {kept.map((c, ci) => (
         <div key={c.restaurant_id} className="card animate-rise space-y-2 p-3">
           <div className="flex items-baseline gap-2">
@@ -35,19 +52,40 @@ export default function CandidateList({ rows }: { rows: CandidateRow[] }) {
               </span>
             ))}
           </div>
+          {voting && (
+            <div className="flex gap-2 border-t border-border pt-2">
+              <button type="button" aria-pressed={mine(c.restaurant_id, 'up')}
+                className={`btn flex-1 text-sm ${mine(c.restaurant_id, 'up') ? 'btn-primary' : 'btn-quiet'}`}
+                onClick={() => voting.onToggle(c.restaurant_id, 'up')}>
+                👍 贊成{ups(c.restaurant_id) > 0 ? `（${ups(c.restaurant_id)}）` : ''}
+              </button>
+              <button type="button" aria-pressed={mine(c.restaurant_id, 'veto')}
+                disabled={!mine(c.restaurant_id, 'veto') && myVetoes >= VETO_QUOTA}
+                className="btn btn-quiet flex-1 text-sm text-danger disabled:opacity-40"
+                onClick={() => voting.onToggle(c.restaurant_id, 'veto')}>
+                否決
+              </button>
+            </div>
+          )}
         </div>
       ))}
       {excluded.length > 0 && (
-        <details className="card p-3">
+        <details className="card p-3" open={voting != null}>
           <summary className="flex list-none items-center gap-2 text-sm text-fg-muted [&::-webkit-details-marker]:hidden">
             <Chevron className="disclosure-chevron h-4 w-4" />
             被排除的 {excluded.length} 家
           </summary>
           <ul className="mt-3 space-y-2 border-t border-border pt-3">
             {excluded.map(c => (
-              <li key={c.restaurant_id} className="flex gap-2 text-sm text-fg-muted">
+              <li key={c.restaurant_id} className="flex items-center gap-2 text-sm text-fg-muted">
                 <span className="flex-1 line-through">{c.restaurants.name}</span>
                 <span className="text-xs">{c.exclusion_reason}</span>
+                {voting && mine(c.restaurant_id, 'veto') && (
+                  <button type="button" className="btn btn-quiet shrink-0 px-2 py-1 text-xs"
+                    onClick={() => voting.onToggle(c.restaurant_id, 'veto')}>
+                    收回否決
+                  </button>
+                )}
               </li>
             ))}
           </ul>
