@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(21);
+select plan(24);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -164,6 +164,18 @@ insert into public.dining_history (user_id, restaurant_id, room_id) values
 set local role authenticated;
 set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}';
 select is((select count(*) from public.dining_history)::int, 1, '只看得到自己的同席紀錄');
+
+-- ============ 0004：profiles 可見性收緊 + 邀請碼 12 碼 ============
+-- B 與 A 同房、C 無共同房。B 的可見集合精確等於 {自己, A}——同房互查保住
+-- （RoomPage 的 room_members embed 路徑），無共同房的 C 不可見。
+select results_eq(
+  $$select id from public.profiles order by id$$,
+  $$values ('00000000-0000-0000-0000-0000000000a1'::uuid),
+           ('00000000-0000-0000-0000-0000000000b2'::uuid)$$,
+  'B 看得到自己與同房的 A，看不到無共同房的 C');
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated"}';
+select is((select count(*) from public.profiles)::int, 1, '無共同房間者只看得到自己的 profile');
+select is(length((select code from ctx)), 12, '新房邀請碼為 12 碼');
 
 select * from finish();
 rollback;

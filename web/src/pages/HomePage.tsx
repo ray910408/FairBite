@@ -82,8 +82,8 @@ export default function HomePage() {
           <h2 className="text-base font-semibold">已經有邀請碼？</h2>
           <form onSubmit={joinRoom} className="flex gap-2">
             <input className="field flex-1 font-mono text-lg tracking-[0.3em] uppercase"
-              aria-label="邀請碼" placeholder="ABC123" autoCapitalize="characters"
-              value={code} onChange={e => setCode(e.target.value)} required maxLength={6} />
+              aria-label="邀請碼" placeholder="A1B2C3D4E5F6" autoCapitalize="characters"
+              value={code} onChange={e => setCode(e.target.value)} required maxLength={12} />
             <button className="btn btn-quiet px-5" type="submit" disabled={busy}>加入</button>
           </form>
         </section>
