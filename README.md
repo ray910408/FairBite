@@ -35,6 +35,10 @@ go run .
 新版 supabase CLI local stack 簽發 ES256 token，一律用 JWKS；`SUPABASE_JWT_SECRET`
 僅適用仍在 legacy 對稱簽章的舊專案（HS256，2026 年底棄用）。
 
+| Go 環境變數 | 必填 | 說明 |
+| --- | --- | --- |
+| `GOOGLE_PLACES_API_KEY` | 否 | 未設定時使用 mock provider；僅供 Go server 使用，絕不放入 web bundle。 |
+
 ## 測試
 
 Git Bash（每行獨立執行，皆從 repo 根目錄開始）：

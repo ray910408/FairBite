@@ -51,7 +51,14 @@ func main() {
 	if port == "" {
 		port = "8787"
 	}
+	provider := NewMockProvider()
+	if key := os.Getenv("GOOGLE_PLACES_API_KEY"); key != "" {
+		provider = NewGooglePlacesProvider(key, "")
+		log.Print("places provider: google")
+	} else {
+		log.Print("places provider: mock（設 GOOGLE_PLACES_API_KEY 切換真 API）")
+	}
 	log.Printf("listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port,
-		buildRoutes(verifier, pool, NewMockProvider(), newLimiterStore(RateLimitPerSec, RateLimitBurst))))
+		buildRoutes(verifier, pool, provider, newLimiterStore(RateLimitPerSec, RateLimitBurst))))
 }
