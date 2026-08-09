@@ -63,4 +63,16 @@ Push-Location web; npm run lint; Pop-Location
 Push-Location web; npm run build; Pop-Location
 ```
 
+## E2E 測試
+
+雙客戶端完整閉環 E2E 執行前，需先依「本地啟動」讓三個服務保持運行：Supabase local、使用 mock provider 與 local JWKS 的 Go API，以及 Vite dev server。另開一個 PowerShell 終端執行：
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = "0"
+cd web
+npm run e2e
+```
+
+E2E 尚未接入 CI，因為 CI 需額外編排整套 local stack；`TODOS.md` 保留後續 CI 編排評估。
+
 Phase 1 使用 mock 餐廳資料（台北車站周邊 13 家）；真實 Google Places 於 Phase 2 切換。
