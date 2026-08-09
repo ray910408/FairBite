@@ -38,11 +38,13 @@ func LoadRoom(ctx context.Context, pool *pgxpool.Pool, roomID string) (RoomRow, 
 }
 
 func LoadMembers(ctx context.Context, q querier, roomID string) ([]Member, error) {
+	// 固定成員順序，讓後續 exposure_stats upsert 依 user_id 鎖列，避免跨房並行搜尋死鎖。
 	rows, err := q.Query(ctx,
 		`select rm.user_id, coalesce(nullif(p.display_name, ''), '成員'), rm.budget_max,
 		        rm.cuisines, rm.dietary, rm.max_distance_m, rm.transport
 		 from room_members rm join profiles p on p.id = rm.user_id
-		 where rm.room_id = $1`, roomID)
+		 where rm.room_id = $1
+		 order by rm.user_id`, roomID)
 	if err != nil {
 		return nil, err
 	}
@@ -181,6 +183,37 @@ func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant) error {
 		}
 	}
 	return nil
+}
+
+// LoadCachedRestaurants：快取 fallback（spec §8）。只取 30 天內（快取條款：fetched_at 為準）。
+// ponytail: 全量掃 + Go 端 haversine 過濾；快取量級小，夠用，量大再改 SQL bounding box
+func LoadCachedRestaurants(ctx context.Context, pool *pgxpool.Pool, lat, lng float64, radiusM int) ([]Restaurant, error) {
+	rows, err := pool.Query(ctx, `
+		select id, place_id, name, cuisine_tags, price_level, lat, lng, address, opening_hours, coalesce(rating, 0)
+		from restaurants where fetched_at > now() - interval '30 days'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Restaurant
+	for rows.Next() {
+		var r Restaurant
+		var tags, hours []byte
+		if err := rows.Scan(&r.ID, &r.PlaceID, &r.Name, &tags, &r.PriceLevel,
+			&r.Lat, &r.Lng, &r.Address, &hours, &r.Rating); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(tags, &r.CuisineTags); err != nil {
+			return nil, fmt.Errorf("restaurant %s tags: %w", r.PlaceID, err)
+		}
+		if err := json.Unmarshal(hours, &r.Hours); err != nil {
+			return nil, fmt.Errorf("restaurant %s hours: %w", r.PlaceID, err)
+		}
+		if Haversine(lat, lng, r.Lat, r.Lng) <= float64(radiusM) {
+			out = append(out, r)
+		}
+	}
+	return out, rows.Err()
 }
 
 func ReplaceCandidates(ctx context.Context, tx pgx.Tx, roomID string, res EngineResult) error {

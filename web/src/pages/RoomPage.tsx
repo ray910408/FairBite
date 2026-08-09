@@ -44,6 +44,7 @@ export default function RoomPage() {
   const { room, members, candidates, draw, votes, setVotes, myUserId, connected, notFound } = useRoom(id)
   const [spun, setSpun] = useState(false)
   const [actionError, setActionError] = useState('')
+  const [actionWarning, setActionWarning] = useState('')
   const [copied, setCopied] = useState(false)
   const voteInFlight = useRef(false)
   const startVotingInFlight = useRef(false)
@@ -133,6 +134,12 @@ export default function RoomPage() {
             <span>{actionError}</span>
           </p>
         )}
+        {actionWarning && (
+          <p role="status" className="banner bg-warn-soft text-warn">
+            <Alert className="h-5 w-5 shrink-0" />
+            <span>{actionWarning}</span>
+          </p>
+        )}
 
         <section className="card animate-rise">
           <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-fg-muted">
@@ -208,7 +215,7 @@ export default function RoomPage() {
                 !confirm(`還有 ${notReady} 位成員未按準備，開始後條件將凍結。確定開始搜尋？`)) return
               setActionError('')
               import('../lib/api').then(m => m.searchRoom(room.id))
-                .then(msg => setActionError(msg ?? ''))
+                .then(o => { setActionError(o.error ?? ''); setActionWarning(o.warning ?? '') })
                 .catch(() => setActionError('搜尋失敗：無法連線到伺服器'))
             }}>
             開始搜尋餐廳

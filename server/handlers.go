@@ -70,11 +70,24 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, rl *lim
 	return cors(mux)
 }
 
+func roomIDFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
+	roomID := r.PathValue("id")
+	var parsed pgtype.UUID
+	if err := parsed.Scan(roomID); err != nil {
+		jsonError(w, http.StatusNotFound, "房間不存在")
+		return "", false
+	}
+	return roomID, true
+}
+
 // loadHostRoom 驗證房主身分並回房間；非房主回 403、找不到回 404、DB 故障回 500
 func loadHostRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (RoomRow, bool) {
-	room, err := LoadRoom(r.Context(), pool, r.PathValue("id"))
+	roomID, ok := roomIDFromPath(w, r)
+	if !ok {
+		return RoomRow{}, false
+	}
+	room, err := LoadRoom(r.Context(), pool, roomID)
 	if err != nil {
-		// 非法 uuid 文字會是 pgtype 解析錯誤（非 ErrNoRows）而落 500；route 只會帶 uuid，可接受
 		if errors.Is(err, pgx.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "房間不存在")
 		} else {
@@ -91,7 +104,11 @@ func loadHostRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (R
 
 // loadMemberRoom：任一成員可用的操作（vote）用這個；房主限定仍走 loadHostRoom
 func loadMemberRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (RoomRow, bool) {
-	room, err := LoadRoom(r.Context(), pool, r.PathValue("id"))
+	roomID, ok := roomIDFromPath(w, r)
+	if !ok {
+		return RoomRow{}, false
+	}
+	room, err := LoadRoom(r.Context(), pool, roomID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "房間不存在")
@@ -331,9 +348,15 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		}
 	}
 	found, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, radius)
+	degraded := false
 	if err != nil {
-		jsonError(w, http.StatusBadGateway, "餐廳搜尋失敗")
-		return
+		// provider 內已重試一次（spec §8）；此處 fallback 30 天內快取
+		found, err = LoadCachedRestaurants(ctx, pool, room.CenterLat, room.CenterLng, radius)
+		if err != nil || len(found) == 0 {
+			jsonError(w, http.StatusBadGateway, "餐廳搜尋失敗，且沒有可用的快取資料，請稍後再試")
+			return
+		}
+		degraded = true
 	}
 	// 「附近根本沒資料」和「有資料但全被條件排除」是兩種不同的死路，
 	// 混成同一個 422 會叫使用者去放寬條件卻永遠沒用 — 分流才誠實
@@ -345,6 +368,24 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 			"message": "此位置附近沒有餐廳資料（Phase 1 mock 資料僅涵蓋台北車站周邊），請靠近示範區域或縮小距離再試",
 		})
 		return
+	}
+	// 快取寫入獨立交易先 commit：即使零候選 rollback，真 API 的呼叫成果仍留作快取。
+	// fallback 的 found 已含 DB uuid 且本來就出自快取，因此跳過重寫。
+	if !degraded {
+		txCache, err := pool.Begin(ctx)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+			return
+		}
+		defer txCache.Rollback(ctx)
+		if err := UpsertRestaurants(ctx, txCache, found); err != nil {
+			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
+			return
+		}
+		if err := txCache.Commit(ctx); err != nil {
+			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+			return
+		}
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -365,10 +406,6 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
-	if err := UpsertRestaurants(ctx, tx, found); err != nil {
-		jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
-		return
-	}
 	recency, err := LoadRecency(ctx, tx, memberIDs(members), restaurantIDs(found))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "讀取同席紀錄失敗")
@@ -378,8 +415,6 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		Now: time.Now(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
 		Recency: recency, Exploration: room.Exploration})
 
-	// ponytail: 零候選時 rollback 連餐廳快取一併丟棄 — mock 無感；P2 接真 Places 時
-	// 拆成兩個交易（快取先 commit），才不會浪費 API 呼叫且快取可當 fallback（spec §8）
 	if len(result.Kept) == 0 {
 		byKind := map[string]int{}
 		ex := []excludedJSON{}
@@ -410,7 +445,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
-	jsonOK(w, resultJSON(result))
+	resp := resultJSON(result)
+	resp["degraded"] = degraded
+	jsonOK(w, resp)
 }
 
 func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {

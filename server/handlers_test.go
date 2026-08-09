@@ -24,6 +24,12 @@ func newTestApp(t *testing.T, pool *pgxpool.Pool) http.Handler {
 	return buildRoutes(v, pool, NewMockProvider(), newLimiterStore(1000, 1000))
 }
 
+type failingProvider struct{}
+
+func (failingProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
+	return nil, fmt.Errorf("simulated outage")
+}
+
 func TestSearchRequiresAuth(t *testing.T) {
 	h := newTestApp(t, nil)
 	r := httptest.NewRequest("POST", "/api/rooms/00000000-0000-0000-0000-000000000001/search", nil)
@@ -49,7 +55,7 @@ func TestSearchAndDrawHappyPath(t *testing.T) {
 	t.Cleanup(func() { pool.Close() })
 
 	hostID := "11111111-1111-1111-1111-111111111111"
-	roomID := "22222222-2222-2222-2222-222222222222"
+	roomID := "25252525-2525-2525-2525-252525252525"
 	_, err = pool.Exec(ctx, `
 		insert into auth.users (id, email) values ($1, 'host@test.dev') on conflict do nothing;
 		`, hostID)
@@ -188,6 +194,9 @@ func TestSearchEdgeCases(t *testing.T) {
 	if w := do(strangerTok, "/api/rooms/66666666-6666-6666-6666-666666666666/search"); w.Code != http.StatusNotFound {
 		t.Fatalf("不存在的房: want 404 got %d", w.Code)
 	}
+	if w := do(hostTok, "/api/rooms/not-a-uuid/search"); w.Code != http.StatusNotFound {
+		t.Fatalf("非法 room id: want 404 got %d body %s", w.Code, w.Body.String())
+	}
 	w := do(hostTok, "/api/rooms/"+roomID+"/search")
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("全排除: want 422 got %d body %s", w.Code, w.Body.String())
@@ -202,6 +211,122 @@ func TestSearchEdgeCases(t *testing.T) {
 	if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).
 		Scan(&status); err != nil || status != "lobby" {
 		t.Fatalf("零候選後房間應停留在 lobby，got %q err %v", status, err)
+	}
+}
+
+func TestSearchFallsBackToCache(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	hostID := "21212121-2121-2121-2121-212121212121"
+	roomID := "22222222-2222-2222-2222-222222222222"
+	if _, err = pool.Exec(ctx,
+		`insert into auth.users (id, email) values ($1, 'fb@test.dev') on conflict do nothing`,
+		hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx,
+		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
+		 values ($1, $2, 'lobby', 25.0478, 121.5170)
+		 on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx,
+		`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		 values ($1, $2, 500, '["japanese"]', 2000, 'walking') on conflict do nothing`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	// 先種一筆 30 天內的快取（mock 資料座標圈內）
+	if _, err = pool.Exec(ctx, `
+		insert into public.restaurants (place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, fetched_at)
+		values ('cached-1', '快取餐廳', '["japanese"]', 1, 25.0478, 121.5172,
+		        '{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}',
+		        now())
+		on conflict (place_id) do update set fetched_at = now()`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+	})
+
+	t.Setenv("SUPABASE_JWT_SECRET", "test-secret-test-secret-test-secret!")
+	t.Setenv("SUPABASE_JWKS_URL", "")
+	v, err := NewVerifier()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := buildRoutes(v, pool, failingProvider{}, newLimiterStore(1000, 1000))
+	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("有快取時應降級成功：want 200 got %d body %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Degraded bool `json:"degraded"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || !body.Degraded {
+		t.Fatalf("降級回應應含 degraded=true：%s", w.Body.String())
+	}
+}
+
+func TestSearchNoCacheReturns502(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	hostID := "23232323-2323-2323-2323-232323232323"
+	roomID := "24242424-2424-2424-2424-242424242424"
+	if _, err = pool.Exec(ctx,
+		`insert into auth.users (id, email) values ($1, 'nc@test.dev') on conflict do nothing`,
+		hostID); err != nil {
+		t.Fatal(err)
+	}
+	// 快取圈外的座標（高雄）→ 30 天內快取為空
+	if _, err = pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 22.6273, 120.3014)
+		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx,
+		`insert into public.room_members (room_id, user_id) values ($1, $2) on conflict do nothing`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID) })
+
+	t.Setenv("SUPABASE_JWT_SECRET", "test-secret-test-secret-test-secret!")
+	t.Setenv("SUPABASE_JWKS_URL", "")
+	v, err := NewVerifier()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := buildRoutes(v, pool, failingProvider{}, newLimiterStore(1000, 1000))
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("無快取時 want 502 got %d body %s", w.Code, w.Body.String())
 	}
 }
 

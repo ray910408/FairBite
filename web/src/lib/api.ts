@@ -21,23 +21,31 @@ async function postAction(path: string, fallback: string, body?: unknown): Promi
   return msg || `${fallback}（${res.status}）`
 }
 
-// 回傳給呼叫端顯示的錯誤訊息，成功則 null
-export async function searchRoom(roomId: string): Promise<string | null> {
+export type SearchOutcome = { error: string | null; warning: string | null }
+
+export async function searchRoom(roomId: string): Promise<SearchOutcome> {
   const res = await post(`/api/rooms/${roomId}/search`)
   if (res.status === 422) {
     const body = await res.json()
     // 附近沒餐廳 ≠ 條件太嚴：後者叫人放寬條件才有用，前者要叫人換地點
-    if (body.error === 'no_restaurants_in_range') return body.message
+    if (body.error === 'no_restaurants_in_range') return { error: body.message, warning: null }
     const by = Object.entries((body.excluded_by ?? {}) as Record<string, number>)
       .sort((a, b) => b[1] - a[1])
     const label: Record<string, string> = { budget: '預算', dietary: '飲食禁忌', closed: '營業時間' }
     // excluded_by 缺席/空物件時別把 undefined 插進字串
-    return by.length === 0
-      ? '找不到符合條件的餐廳，請放寬條件'
-      : `找不到符合所有條件的餐廳。\n最主要原因：${label[by[0][0]] ?? by[0][0]}（排除 ${by[0][1]} 家）。\n請放寬條件後再試。`
+    return {
+      error: by.length === 0
+        ? '找不到符合條件的餐廳，請放寬條件'
+        : `找不到符合所有條件的餐廳。\n最主要原因：${label[by[0][0]] ?? by[0][0]}（排除 ${by[0][1]} 家）。\n請放寬條件後再試。`,
+      warning: null,
+    }
   }
-  if (!res.ok) return `搜尋失敗（${res.status}）`
-  return null
+  if (!res.ok) return { error: `搜尋失敗（${res.status}）`, warning: null }
+  const body = await res.json()
+  return {
+    error: null,
+    warning: body.degraded ? '外部搜尋暫時失敗，本次使用 30 天內的快取資料' : null,
+  }
 }
 
 export async function drawRoom(roomId: string): Promise<string | null> {
