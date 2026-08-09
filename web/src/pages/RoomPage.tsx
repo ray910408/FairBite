@@ -103,13 +103,14 @@ export default function RoomPage() {
             className="-ml-1.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl">
             <Logo className="h-8 w-8" />
           </Link>
+          {/* 12 碼在 320px 塞不下 text-lg + 0.25em 字距，小螢幕縮小、sm 以上維持原樣 */}
           <button onClick={copyCode}
-            className="btn btn-quiet min-h-11 gap-2 px-3 font-mono text-lg tracking-[0.25em]">
+            className="btn btn-quiet min-h-11 gap-2 px-2 font-mono text-sm sm:px-3 sm:text-lg sm:tracking-[0.25em]">
             {room.code}
             {copied ? <Check className="h-4 w-4 text-ok" /> : <Copy className="h-4 w-4 text-fg-muted" />}
           </button>
           <span className="sr-only" aria-live="polite">{copied ? '邀請碼已複製' : ''}</span>
-          <span className="ml-auto rounded-full bg-brand-soft px-3 py-1 text-xs font-semibold text-brand-strong">
+          <span className="ml-auto whitespace-nowrap rounded-full bg-brand-soft px-3 py-1 text-xs font-semibold text-brand-strong">
             {{ lobby: '等待中', candidates: '候選已出爐', voting: '投票中', decided: '已定案' }[room.status]}
           </span>
         </div>
