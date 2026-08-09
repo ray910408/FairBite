@@ -134,6 +134,7 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
       .getByRole('button', { name: '👍 贊成', exact: true }).click()
     await expect(votingCard(a, upName)
       .getByRole('button', { name: '👍 贊成（1）', exact: true })).toBeVisible()
+    await expect(votingCard(a, upName).getByText(/1 張贊成票/)).toBeVisible()
 
     // B 否決第二家；若執行時僅一間開店，誠實改用唯一候選完成同一循環。
     const cycleName = restaurantNames[1] ?? restaurantNames[0]

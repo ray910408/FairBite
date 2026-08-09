@@ -70,6 +70,7 @@ Push-Location web; npm run build; Pop-Location
 ```powershell
 $env:PLAYWRIGHT_BROWSERS_PATH = "0"
 cd web
+npx playwright install chromium # 首次執行需下載瀏覽器
 npm run e2e
 ```
 
