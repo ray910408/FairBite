@@ -23,12 +23,15 @@ async function postAction(path: string, fallback: string, body?: unknown): Promi
 
 export type SearchOutcome = { error: string | null; warning: string | null }
 
+const degradedWarning = '外部搜尋暫時失敗，本次使用 30 天內的快取資料'
+
 export async function searchRoom(roomId: string): Promise<SearchOutcome> {
   const res = await post(`/api/rooms/${roomId}/search`)
   if (res.status === 422) {
     const body = await res.json()
+    const warning = body.degraded ? degradedWarning : null
     // 附近沒餐廳 ≠ 條件太嚴：後者叫人放寬條件才有用，前者要叫人換地點
-    if (body.error === 'no_restaurants_in_range') return { error: body.message, warning: null }
+    if (body.error === 'no_restaurants_in_range') return { error: body.message, warning }
     const by = Object.entries((body.excluded_by ?? {}) as Record<string, number>)
       .sort((a, b) => b[1] - a[1])
     const label: Record<string, string> = { budget: '預算', dietary: '飲食禁忌', closed: '營業時間' }
@@ -37,7 +40,7 @@ export async function searchRoom(roomId: string): Promise<SearchOutcome> {
       error: by.length === 0
         ? '找不到符合條件的餐廳，請放寬條件'
         : `找不到符合所有條件的餐廳。\n最主要原因：${label[by[0][0]] ?? by[0][0]}（排除 ${by[0][1]} 家）。\n請放寬條件後再試。`,
-      warning: null,
+      warning,
     }
   }
   if (!res.ok) {
@@ -47,7 +50,7 @@ export async function searchRoom(roomId: string): Promise<SearchOutcome> {
   const body = await res.json()
   return {
     error: null,
-    warning: body.degraded ? '外部搜尋暫時失敗，本次使用 30 天內的快取資料' : null,
+    warning: body.degraded ? degradedWarning : null,
   }
 }
 

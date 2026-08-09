@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	_ "time/tzdata"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )

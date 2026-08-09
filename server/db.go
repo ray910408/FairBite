@@ -187,10 +187,16 @@ func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant) error {
 
 // LoadCachedRestaurants：快取 fallback（spec §8）。只取 30 天內（快取條款：fetched_at 為準）。
 // ponytail: 全量掃 + Go 端 haversine 過濾；快取量級小，夠用，量大再改 SQL bounding box
-func LoadCachedRestaurants(ctx context.Context, pool *pgxpool.Pool, lat, lng float64, radiusM int) ([]Restaurant, error) {
-	rows, err := pool.Query(ctx, `
+func LoadCachedRestaurants(ctx context.Context, pool *pgxpool.Pool, lat, lng float64, radiusM int, excludeMock bool) ([]Restaurant, error) {
+	query := `
 		select id, place_id, name, cuisine_tags, price_level, lat, lng, address, opening_hours, coalesce(rating, 0)
-		from restaurants where fetched_at > now() - interval '30 days'`)
+		from restaurants where fetched_at > now() - interval '30 days'`
+	if excludeMock {
+		query += ` and place_id not like 'mock-%'`
+	}
+	// Deterministic order pins exposure upsert lock order, matching the fresh-path sort.
+	query += ` order by place_id`
+	rows, err := pool.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}

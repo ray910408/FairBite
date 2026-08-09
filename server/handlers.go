@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -283,7 +282,7 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 		return
 	}
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
-		Now: time.Now(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
+		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
 		Votes: votes, Recency: recency, Exploration: room.Exploration})
 	if err := ReplaceCandidates(ctx, tx, room.ID, result); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
@@ -354,7 +353,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	if err != nil {
 		log.Printf("places provider failed, falling back to cache: %v", err)
 		// provider 內已重試一次（spec §8）；此處 fallback 30 天內快取
-		found, err = LoadCachedRestaurants(ctx, pool, room.CenterLat, room.CenterLng, radius)
+		// Google fallback 不可混入先前 mock provider 寫入的罐頭資料。
+		_, isGoogle := places.(*googleProvider)
+		found, err = LoadCachedRestaurants(ctx, pool, room.CenterLat, room.CenterLng, radius, isGoogle)
 		if err != nil || len(found) == 0 {
 			jsonError(w, http.StatusBadGateway, "餐廳搜尋失敗，且沒有可用的快取資料，請稍後再試")
 			return
@@ -377,8 +378,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		jsonOK(w, map[string]any{
-			"error":   "no_restaurants_in_range",
-			"message": "此位置附近沒有餐廳資料，請調整位置或縮小距離再試",
+			"error":    "no_restaurants_in_range",
+			"message":  "此位置附近沒有餐廳資料，請調整位置或縮小距離再試",
+			"degraded": degraded,
 		})
 		return
 	}
@@ -425,7 +427,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	result := Evaluate(EngineInput{Restaurants: found, Members: members,
-		Now: time.Now(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
+		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
 		Recency: recency, Exploration: room.Exploration})
 
 	if len(result.Kept) == 0 {
@@ -439,7 +441,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
-		jsonOK(w, map[string]any{"error": "no_candidates", "excluded": ex, "excluded_by": byKind})
+		jsonOK(w, map[string]any{
+			"error": "no_candidates", "excluded": ex, "excluded_by": byKind, "degraded": degraded,
+		})
 		return
 	}
 	if err := ReplaceCandidates(ctx, tx, room.ID, result); err != nil {
@@ -509,7 +513,7 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 	}
 	// spec §5.5：抽選前權威重算；pre-tx center_* 永遠、exploration 在 lobby 外由 guard_room_columns 凍結
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
-		Now: time.Now(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
+		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
 		Votes: votes, Recency: recency, Exploration: room.Exploration})
 	if len(result.Kept) == 0 {
 		for _, e := range result.Excluded {
