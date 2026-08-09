@@ -40,7 +40,10 @@ export async function searchRoom(roomId: string): Promise<SearchOutcome> {
       warning: null,
     }
   }
-  if (!res.ok) return { error: `搜尋失敗（${res.status}）`, warning: null }
+  if (!res.ok) {
+    const msg = await res.json().then(b => b.error as string).catch(() => null)
+    return { error: msg || `搜尋失敗（${res.status}）`, warning: null }
+  }
   const body = await res.json()
   return {
     error: null,

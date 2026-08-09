@@ -76,4 +76,4 @@ npm run e2e
 
 E2E 尚未接入 CI，因為 CI 需額外編排整套 local stack；`TODOS.md` 保留後續 CI 編排評估。
 
-Phase 1 使用 mock 餐廳資料（台北車站周邊 13 家）；真實 Google Places 於 Phase 2 切換。
+未設定 `GOOGLE_PLACES_API_KEY` 時使用台北車站周邊 13 家 mock 餐廳；設定後即切換至 Google Places provider。

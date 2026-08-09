@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -350,6 +352,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	found, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, radius)
 	degraded := false
 	if err != nil {
+		log.Printf("places provider failed, falling back to cache: %v", err)
 		// provider 內已重試一次（spec §8）；此處 fallback 30 天內快取
 		found, err = LoadCachedRestaurants(ctx, pool, room.CenterLat, room.CenterLng, radius)
 		if err != nil || len(found) == 0 {
@@ -357,6 +360,16 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 			return
 		}
 		degraded = true
+	} else {
+		// 去重並固定 upsert 順序，避免重複候選與跨房 restaurants row-lock deadlock。
+		sort.Slice(found, func(i, j int) bool { return found[i].PlaceID < found[j].PlaceID })
+		deduped := found[:0]
+		for _, restaurant := range found {
+			if len(deduped) == 0 || restaurant.PlaceID != deduped[len(deduped)-1].PlaceID {
+				deduped = append(deduped, restaurant)
+			}
+		}
+		found = deduped
 	}
 	// 「附近根本沒資料」和「有資料但全被條件排除」是兩種不同的死路，
 	// 混成同一個 422 會叫使用者去放寬條件卻永遠沒用 — 分流才誠實
@@ -365,7 +378,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		jsonOK(w, map[string]any{
 			"error":   "no_restaurants_in_range",
-			"message": "此位置附近沒有餐廳資料（Phase 1 mock 資料僅涵蓋台北車站周邊），請靠近示範區域或縮小距離再試",
+			"message": "此位置附近沒有餐廳資料，請調整位置或縮小距離再試",
 		})
 		return
 	}

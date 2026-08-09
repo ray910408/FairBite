@@ -15,19 +15,29 @@ import (
 )
 
 func newTestApp(t *testing.T, pool *pgxpool.Pool) http.Handler {
+	return newTestAppWithProvider(t, pool, NewMockProvider())
+}
+
+func newTestAppWithProvider(t *testing.T, pool *pgxpool.Pool, places PlacesProvider) http.Handler {
 	t.Setenv("SUPABASE_JWT_SECRET", "test-secret-test-secret-test-secret!")
 	t.Setenv("SUPABASE_JWKS_URL", "") // 外部環境設了就會誤走 JWKS 路徑，HS256 測試必失敗
 	v, err := NewVerifier()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return buildRoutes(v, pool, NewMockProvider(), newLimiterStore(1000, 1000))
+	return buildRoutes(v, pool, places, newLimiterStore(1000, 1000))
 }
 
 type failingProvider struct{}
 
 func (failingProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
 	return nil, fmt.Errorf("simulated outage")
+}
+
+type fixedProvider []Restaurant
+
+func (p fixedProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
+	return p, nil
 }
 
 func TestSearchRequiresAuth(t *testing.T) {
@@ -177,7 +187,16 @@ func TestSearchEdgeCases(t *testing.T) {
 	}
 	t.Cleanup(func() { pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID) })
 
-	h := newTestApp(t, pool)
+	persistedPlaceID := "mock-cache-persistence-422"
+	strictRestaurant := Restaurant{
+		PlaceID: persistedPlaceID, Name: "零候選快取測試", PriceLevel: 0,
+		Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
+	}
+	if _, err := pool.Exec(ctx, `delete from restaurants where place_id = $1`, persistedPlaceID); err != nil {
+		t.Fatal(err)
+	}
+	// 重複 place_id 同時鎖住 provider seam 去重；否則 budget 統計會變成 2。
+	h := newTestAppWithProvider(t, pool, fixedProvider{strictRestaurant, strictRestaurant})
 	do := func(token, path string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", path, nil)
 		r.Header.Set("Authorization", "Bearer "+token)
@@ -204,8 +223,16 @@ func TestSearchEdgeCases(t *testing.T) {
 	var body struct {
 		ExcludedBy map[string]int `json:"excluded_by"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.ExcludedBy["budget"] == 0 {
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.ExcludedBy["budget"] != 1 {
 		t.Fatalf("422 應含 excluded_by.budget 統計：%s", w.Body.String())
+	}
+	var cached int
+	if err := pool.QueryRow(ctx, `select count(*) from restaurants where place_id like 'mock-%'`).Scan(&cached); err != nil || cached == 0 {
+		t.Fatalf("零候選 rollback 後 provider 結果仍應留在快取，got %d err %v", cached, err)
+	}
+	var persisted bool
+	if err := pool.QueryRow(ctx, `select exists (select 1 from restaurants where place_id = $1)`, persistedPlaceID).Scan(&persisted); err != nil || !persisted {
+		t.Fatalf("422 後專用 provider row 應留在快取，got %v err %v", persisted, err)
 	}
 	var status string
 	if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).

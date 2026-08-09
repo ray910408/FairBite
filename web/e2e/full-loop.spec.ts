@@ -30,9 +30,25 @@ async function signup(page: Page, name: string) {
   await expect(page.getByRole('button', { name: '建立房間' })).toBeVisible()
 }
 
-async function setMaximumsAndReady(page: Page) {
-  await page.getByRole('slider', { name: /每人預算上限/ }).fill('1600')
-  await expect(page.getByText('NT$1600', { exact: true })).toBeVisible()
+async function createAndJoinRoom(a: Page, b: Page) {
+  const aRealtimeReady = waitForRoomRealtime(a)
+  await a.getByRole('button', { name: '建立房間' }).click()
+  await expect(a.getByText('成員（1）')).toBeVisible()
+  await aRealtimeReady
+  const code = (await a.locator('header button.font-mono').innerText()).trim()
+  expect(code).toMatch(/^[A-Z0-9]{12}$/)
+
+  const bRealtimeReady = waitForRoomRealtime(b)
+  await b.getByLabel('邀請碼').fill(code)
+  await b.getByRole('button', { name: '加入', exact: true }).click()
+  await expect(b.getByText('成員（2）')).toBeVisible()
+  await bRealtimeReady
+  await expect(a.getByText('成員（2）')).toBeVisible()
+}
+
+async function setConditionsAndReady(page: Page, budget: number) {
+  await page.getByRole('slider', { name: /每人預算上限/ }).fill(String(budget))
+  await expect(page.getByText(`NT$${budget}`, { exact: true })).toBeVisible()
   await page.getByRole('slider', { name: /可接受距離/ }).fill('3000')
   await expect(page.getByText('3000 公尺', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '我準備好了' }).click()
@@ -78,21 +94,8 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await signup(a, 'hostA')
     await signup(b, 'memberB')
 
-    // A 建房、取十二碼邀請碼（header 上等寬字按鈕）
-    const aRealtimeReady = waitForRoomRealtime(a)
-    await a.getByRole('button', { name: '建立房間' }).click()
-    await expect(a.getByText('成員（1）')).toBeVisible()
-    await aRealtimeReady
-    const code = (await a.locator('header button.font-mono').innerText()).trim()
-    expect(code).toMatch(/^[A-Z0-9]{12}$/)
-
-    // B 以邀請碼加入；雙方都看到 2 位成員
-    const bRealtimeReady = waitForRoomRealtime(b)
-    await b.getByLabel('邀請碼').fill(code)
-    await b.getByRole('button', { name: '加入', exact: true }).click()
-    await expect(b.getByText('成員（2）')).toBeVisible()
-    await bRealtimeReady
-    await expect(a.getByText('成員（2）')).toBeVisible()
+    // A 建房、B 以十二碼邀請碼加入；雙方都看到 2 位成員。
+    await createAndJoinRoom(a, b)
 
     // D10 #3：房主切到探索；成員同步看到狀態與說明，且不能更改。
     await a.getByRole('button', { name: '探索', exact: true }).click()
@@ -104,8 +107,8 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     }
 
     // 開店時段會隨測試執行時間改變；兩人皆將預算與距離拉到最大。
-    await setMaximumsAndReady(a)
-    await setMaximumsAndReady(b)
+    await setConditionsAndReady(a, 1600)
+    await setConditionsAndReady(b, 1600)
     await expect(a.getByText('已準備', { exact: true })).toHaveCount(2)
 
     // A 搜尋 → 兩邊同步看到候選；先記住餐廳名，後續投票定位不依賴排序。
@@ -195,9 +198,12 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
       await expect(a.getByRole('button', { name: '啟動轉盤' })).toBeEnabled()
       allVetoVariant = 'full-all-veto-block-and-retract'
     } else {
-      for (const name of restaurantNames.slice(0, 2)) await castVeto(b, name, 'memberB')
-      for (const name of restaurantNames.slice(2, 4)) await castVeto(a, name, 'hostA')
+      for (const name of restaurantNames.slice(0, 2)) await castVeto(a, name, 'hostA')
+      const remoteVetoes = restaurantNames.slice(2, 4)
+      for (const name of remoteVetoes) await castVeto(b, name, 'memberB')
 
+      // 先確認最後一票已透過 Realtime 傳到 A，再驗證穩態 UI，避免在傳播前假通過。
+      await expect(excludedRow(a, remoteVetoes[remoteVetoes.length - 1])).toBeVisible()
       await expect(a.getByText(allVetoBanner, { exact: true })).toHaveCount(0)
       await expect(b.getByText(allVetoBanner, { exact: true })).toHaveCount(0)
       await expect(a.getByRole('button', { name: '啟動轉盤' })).toBeEnabled()
@@ -210,6 +216,74 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     const navigationName = /^用 Google Maps 導航（.+）$/
     await expect(a.getByRole('link', { name: navigationName })).toBeVisible({ timeout: 30_000 })
     await expect(b.getByRole('link', { name: navigationName })).toBeVisible({ timeout: 30_000 })
+  } finally {
+    await ctxA.close()
+    await ctxB.close()
+  }
+})
+
+test('全否決擋抽選（嚴格條件房）', async ({ browser }) => {
+  const ctxA = await browser.newContext({ permissions: [] })
+  const ctxB = await browser.newContext({ permissions: [] })
+  const a = await ctxA.newPage()
+  const b = await ctxB.newPage()
+
+  try {
+    await signup(a, 'strictHostA')
+    await signup(b, 'strictMemberB')
+    await createAndJoinRoom(a, b)
+
+    await setConditionsAndReady(a, 1600)
+    // Slider minimum NT$100 only admits price level 0 (PriceLevelMaxTWD[0] == 100).
+    await setConditionsAndReady(b, 100)
+    await expect(a.getByText('已準備', { exact: true })).toHaveCount(2)
+
+    const searchResponsePromise = a.waitForResponse(response =>
+      response.request().method() === 'POST' && response.url().endsWith('/search'))
+    await a.getByRole('button', { name: '開始搜尋餐廳' }).click()
+    const searchResponse = await searchResponsePromise
+    if (searchResponse.status() === 422) {
+      const body = await searchResponse.json().catch(() => null) as { error?: string } | null
+      if (body?.error === 'no_candidates') {
+        const reason = '嚴格條件房在目前時段沒有營業中的平價候選'
+        console.log(`[task-13-strict] ${reason}; runtime search returned 422 no_candidates`)
+        test.skip(true, reason)
+      }
+    }
+    expect(searchResponse.status()).toBe(200)
+
+    const candidateHeadingA = a.getByText(/候選餐廳（\d+）/)
+    const candidateHeadingB = b.getByText(/候選餐廳（\d+）/)
+    await expect(candidateHeadingA).toBeVisible()
+    await expect(candidateHeadingB).toBeVisible()
+    const restaurantNames = await b
+      .locator('div.card.animate-rise.space-y-2.p-3 span.flex-1.font-semibold')
+      .allInnerTexts()
+    const keptCount = restaurantNames.length
+    expect(keptCount).toBeGreaterThan(0)
+    expect(keptCount).toBeLessThanOrEqual(4)
+    await expect(candidateHeadingA).toHaveText(`候選餐廳（${keptCount}）`)
+    await expect(candidateHeadingB).toHaveText(`候選餐廳（${keptCount}）`)
+    console.log(`[task-13-strict] runtime kept count: ${keptCount}`)
+
+    await a.getByRole('button', { name: '開始投票' }).click()
+    await expect(votingCard(b, restaurantNames[0])
+      .getByRole('button', { name: '否決', exact: true })).toBeVisible()
+
+    const bNames = restaurantNames.slice(0, Math.min(2, keptCount))
+    const aNames = restaurantNames.slice(bNames.length)
+    for (const name of bNames) await castVeto(b, name, 'strictMemberB')
+    for (const name of aNames) await castVeto(a, name, 'strictHostA')
+
+    const allVetoBanner = '候選已全數被否決，需有人收回否決才能抽選'
+    await expect(a.getByText(allVetoBanner, { exact: true })).toBeVisible()
+    await expect(b.getByText(allVetoBanner, { exact: true })).toBeVisible()
+    await expect(a.getByRole('button', { name: '啟動轉盤' })).toBeDisabled()
+
+    await retractVeto(b, bNames[0])
+    await expect(a.getByText(allVetoBanner, { exact: true })).toHaveCount(0)
+    await expect(b.getByText(allVetoBanner, { exact: true })).toHaveCount(0)
+    await expect(a.getByRole('button', { name: '啟動轉盤' })).toBeEnabled()
   } finally {
     await ctxA.close()
     await ctxB.close()

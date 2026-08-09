@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -97,5 +98,18 @@ func TestGoogleProviderRetries(t *testing.T) {
 	rs, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000)
 	if err != nil || len(rs) == 0 {
 		t.Fatalf("第一次 500 應重試成功：err %v", err)
+	}
+}
+
+func TestGoogleProviderErrorIncludesBodySnippet(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"message":"quota exceeded for this key"}}`))
+	}))
+	defer srv.Close()
+	p := NewGooglePlacesProvider("test-key", srv.URL)
+	_, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000)
+	if err == nil || !strings.Contains(err.Error(), "quota exceeded for this key") {
+		t.Fatalf("non-200 error 應含 response body snippet，got %v", err)
 	}
 }

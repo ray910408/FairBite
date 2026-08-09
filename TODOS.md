@@ -49,7 +49,7 @@ feat/phase-1 全分支 final review 的 DEFER-P2 批次。前三項優先（安�
 優先：
 
 1. **join_room 走 PostgREST，不受應用層限流** — Go 的 rate limiter 只護 `/api/*`；join_room 是 RPC 直打 PostgREST，邀請碼有列舉面。要在 DB 層或 gateway 補限流。
-2. **react-router RSC CVE（GHSA-qwww-vcr4-c8h2）為 production dep** — P1 純 SPA 用不到 RSC 路徑，hosted/SSR 上線前必須重評並升版。
+2. ~~**react-router RSC CVE（GHSA-qwww-vcr4-c8h2）為 production dep**~~ — 已解決：升級至 7.18.2，2026-08-09 驗證 `npm audit` clean。
 3. **rooms 欄級 grant + 平台預設 TRUNCATE revoke** — 現行 UPDATE grant 比意圖粗（可改 created_at）；anon/authenticated 持有平台預設 TRUNCATE（NOLOGIN + PostgREST 不發，目前不可達）。
 
 其餘：
