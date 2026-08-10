@@ -43,7 +43,12 @@
 
 ## P2 候選
 
-### Playwright 多客戶端 E2E（完整閉環自動化）
+### ~~Playwright 多客戶端 E2E（完整閉環自動化）~~
+
+已完成（PR #3，2026-08-10）：`web/e2e/full-loop.spec.ts` 走完雙 browser context 的
+註冊 → 建房/加入 → 探索檔位 → 條件 → 搜尋 → 投票（贊成/否決/收回/額度/全否決防線）
+→ 抽選 → 結果同步 → Maps 導航，執行方式見 `README.md` 的「E2E 測試」。
+殘留：尚未接 CI（需編排整套 local stack），與下方「E2E 降級快取情境」合併評估。原始評估：
 
 - **What:** 自動化雙瀏覽器完整閉環測試：建房 → 邀請碼加入 → 雙人條件 → 搜尋 → 候選同步 → 抽選 → 結果同步 → Maps 連結。
 - **Why:** P1 閉環驗證只有手動 demo script（spec §9 明定 P1 手動）。每次改動手動跑 3 分鐘 × N 次的隱性成本，長期會超過寫一次 E2E 的成本。auth + realtime + 多客戶端同步正是 E2E 決策矩陣建議自動化的類型。
@@ -76,6 +81,6 @@ feat/phase-1 全分支 final review 的 DEFER-P2 批次。前三項優先（安�
 13. createRoom 錯誤訊息透傳 raw message，與 join 不對稱。
 14. 條件表單輸入框無 label，僅 placeholder。（/qa 2026-08-06 已處理：slider 原本就有 label 包裹；toggle 群補 aria-pressed（1be41dd）、auth/home 文字框補 aria-label（f204a5a）。殘留：料理/禁忌群組標題與按鈕群無 role="group" 程式化關聯，留待完整 a11y pass。）
 15. unmount 未清 debounce timer。
-16. 搜尋鈕無 in-flight guard（可連按）。
-17. 首次掛載期的暫時性讀取失敗會閃「找不到房間」頁 — 應三態化（loading / notFound / ok）。
+16. ~~搜尋鈕無 in-flight guard（可連按）~~ — 已解決：`RoomPage.tsx` 的 `searchInFlight` ref 擋連按（7e322c4），伺服器端另有 per-room single-flight（`TestSearchSingleFlightPerRoom`），E2E 斷言快速連點只送一次 request。
+17. ~~首次掛載期的暫時性讀取失敗會閃「找不到房間」頁 — 應三態化（loading / notFound / ok）~~ — 已解決：`useRoom.ts` 回傳 `notFound`，`RoomPage.tsx:53` 僅在 `notFound` 為真時顯示該頁。
 18. `Wheel` 的 `!s` 分支是 dead-end（實務不可達）。
