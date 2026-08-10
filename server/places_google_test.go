@@ -65,12 +65,17 @@ const gSample = `{"places":[
    "regularOpeningHours":{"periods":[
      {"open":{"day":5,"hour":10,"minute":0},"close":{"day":6,"hour":12,"minute":0}}]}},
   {"id":"gp-5","displayName":{"text":"跨週末餐廳"},
-   "types":["restaurant"],
-   "priceLevel":"PRICE_LEVEL_INEXPENSIVE",
-   "location":{"latitude":25.0474,"longitude":121.5164},
-   "formattedAddress":"台北市中正區某路5號","rating":4.2,
-   "regularOpeningHours":{"periods":[
-     {"open":{"day":5,"hour":17,"minute":0},"close":{"day":0,"hour":2,"minute":0}}]}}
+    "types":["restaurant"],
+    "priceLevel":"PRICE_LEVEL_INEXPENSIVE",
+    "location":{"latitude":25.0474,"longitude":121.5164},
+    "formattedAddress":"台北市中正區某路5號","rating":4.2,
+    "regularOpeningHours":{"periods":[
+      {"open":{"day":5,"hour":17,"minute":0},"close":{"day":0,"hour":2,"minute":0}}]}},
+  {"id":"gp-6","displayName":{"text":"營業時間未知餐廳"},
+    "types":["restaurant"],
+    "priceLevel":"PRICE_LEVEL_INEXPENSIVE",
+    "location":{"latitude":25.0476,"longitude":121.5166},
+    "formattedAddress":"台北市中正區某路6號","rating":4.0}
 ]}`
 
 func gServer(t *testing.T, fail1st bool) *httptest.Server {
@@ -97,8 +102,8 @@ func TestGoogleProviderMapping(t *testing.T) {
 	defer srv.Close()
 	p := NewGooglePlacesProvider("test-key", srv.URL)
 	rs, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000)
-	if err != nil || len(rs) != 5 {
-		t.Fatalf("want 5 restaurants, got %d err %v", len(rs), err)
+	if err != nil || len(rs) != 6 {
+		t.Fatalf("want 6 restaurants, got %d err %v", len(rs), err)
 	}
 	byPID := map[string]Restaurant{}
 	for _, r := range rs {
@@ -163,6 +168,10 @@ func TestGoogleProviderMapping(t *testing.T) {
 				t.Errorf("IsOpenAt() = %v, want %v；hours=%v", got, tc.open, weekend.Hours)
 			}
 		})
+	}
+	unknown := byPID["gp-6"]
+	if len(unknown.Hours) != 0 {
+		t.Errorf("缺 regularOpeningHours 應保留為未知（empty map），got %v", unknown.Hours)
 	}
 }
 

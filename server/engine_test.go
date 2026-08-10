@@ -114,6 +114,42 @@ func TestUnknownPriceDoesNotBudgetExclude(t *testing.T) {
 	}
 }
 
+func TestUnknownHoursNeverExcludeOrApplyClosingFactor(t *testing.T) {
+	unknown := rest(func(r *Restaurant) {
+		r.PlaceID = "unknown-hours"
+		r.Hours = OpeningHours{}
+	})
+	closed := rest(func(r *Restaurant) {
+		r.PlaceID = "closed-control"
+		r.Hours = daily([2]int{330, 660})
+	})
+	for day := time.Sunday; day <= time.Saturday; day++ {
+		for _, clock := range [][2]int{{0, 0}, {12, 0}, {23, 59}} {
+			now := at(day, clock[0], clock[1])
+			t.Run(fmt.Sprintf("%s-%02d:%02d", day, clock[0], clock[1]), func(t *testing.T) {
+				res := Evaluate(EngineInput{
+					Restaurants: []Restaurant{unknown, closed},
+					Members:     []Member{member(nil)},
+					Now:         now, CenterLat: 25.0478, CenterLng: 121.5170,
+				})
+				if len(res.Kept) != 1 || res.Kept[0].PlaceID != unknown.PlaceID {
+					t.Fatalf("未知營業時間應保留，got kept=%+v excluded=%+v", res.Kept, res.Excluded)
+				}
+				for _, entry := range res.Kept[0].Trace {
+					if entry.Factor == "closing_soon" || strings.Contains(entry.Reason, "打烊") {
+						t.Errorf("未知營業時間不應有 closing-soon factor：%+v", entry)
+					}
+				}
+				if len(res.Excluded) != 1 || res.Excluded[0].PlaceID != closed.PlaceID ||
+					!hasKind(res.Excluded[0].Kinds, "closed") ||
+					!strings.Contains(res.Excluded[0].Reason, "目前未營業") {
+					t.Fatalf("已知未營業控制組應排除，got %+v", res.Excluded)
+				}
+			})
+		}
+	}
+}
+
 func TestScoringFactors(t *testing.T) {
 	rJP := rest(func(r *Restaurant) { r.PlaceID = "jp"; r.CuisineTags = []string{"japanese"} })
 	rKR := rest(func(r *Restaurant) { r.PlaceID = "kr"; r.CuisineTags = []string{"korean"} })

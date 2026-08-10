@@ -1,6 +1,5 @@
 import type { CandidateRow, DrawRow, MemberRow } from '../lib/types'
 import { buildMapsUrl } from '../lib/maps'
-import { isGoogleSourced } from '../lib/placesSource'
 import { formatPercent } from '../lib/probability'
 import { TRANSPORT_LABELS } from '../lib/labels'
 import { MapPin } from './icons'
@@ -27,9 +26,6 @@ export default function ResultCard({ draw, candidates, me }: {
         <MapPin className="h-5 w-5" />
         用 Google Maps 導航（{TRANSPORT_LABELS[me?.transport ?? 'walking']}）
       </a>
-      {isGoogleSourced(r.place_id) && (
-        <p className="text-xs text-fg-muted">餐廳資料 Powered by Google</p>
-      )}
     </div>
   )
 }
