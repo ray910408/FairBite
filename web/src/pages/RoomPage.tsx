@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
 import { startVoting, voteRoom } from '../lib/api'
 import { EXPLORATION_OPTIONS } from '../lib/labels'
+import { isGoogleSourced } from '../lib/placesSource'
 import { supabase } from '../lib/supabase'
 import type { Room } from '../lib/types'
 import ConditionsForm from '../components/ConditionsForm'
@@ -44,8 +45,10 @@ export default function RoomPage() {
   const { room, members, candidates, draw, votes, setVotes, myUserId, connected, notFound } = useRoom(id)
   const [spun, setSpun] = useState(false)
   const [actionError, setActionError] = useState('')
+  const [actionWarning, setActionWarning] = useState('')
   const [copied, setCopied] = useState(false)
   const voteInFlight = useRef(false)
+  const searchInFlight = useRef(false)
   const startVotingInFlight = useRef(false)
   if (!room) return notFound ? (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
@@ -133,6 +136,12 @@ export default function RoomPage() {
             <span>{actionError}</span>
           </p>
         )}
+        {actionWarning && (
+          <p role="status" className="banner bg-warn-soft text-warn">
+            <Alert className="h-5 w-5 shrink-0" />
+            <span>{actionWarning}</span>
+          </p>
+        )}
 
         <section className="card animate-rise">
           <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-fg-muted">
@@ -206,10 +215,13 @@ export default function RoomPage() {
               const notReady = members.filter(m => !m.ready).length
               if (notReady > 0 &&
                 !confirm(`還有 ${notReady} 位成員未按準備，開始後條件將凍結。確定開始搜尋？`)) return
+              if (searchInFlight.current) return
+              searchInFlight.current = true
               setActionError('')
               import('../lib/api').then(m => m.searchRoom(room.id))
-                .then(msg => setActionError(msg ?? ''))
+                .then(o => { setActionError(o.error ?? ''); setActionWarning(o.warning ?? '') })
                 .catch(() => setActionError('搜尋失敗：無法連線到伺服器'))
+                .finally(() => { searchInFlight.current = false })
             }}>
             開始搜尋餐廳
           </button>
@@ -261,12 +273,17 @@ export default function RoomPage() {
           </>
         )}
         {room.status === 'decided' && draw && (
-          !spun ? (
-            <Wheel rows={candidates} winnerId={draw.winner_restaurant_id}
-              onDone={() => setSpun(true)} />
-          ) : (
-            <ResultCard draw={draw} candidates={candidates} me={me} />
-          )
+          <div className="space-y-4">
+            {!spun ? (
+              <Wheel rows={candidates} winnerId={draw.winner_restaurant_id}
+                onDone={() => setSpun(true)} />
+            ) : (
+              <ResultCard draw={draw} candidates={candidates} me={me} />
+            )}
+            {candidates.some(c => c.status === 'kept' && isGoogleSourced(c.restaurants.place_id)) && (
+              <p className="text-xs text-fg-muted">餐廳資料 Powered by Google</p>
+            )}
+          </div>
         )}
       </main>
     </div>

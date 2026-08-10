@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(24);
+select plan(26);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -87,6 +87,8 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000c3', 'c@test.dev');
 insert into public.restaurants (id, place_id, name, lat, lng) values
   ('99999999-9999-9999-9999-999999999901', 'pg-1', '測試餐廳一', 25.04, 121.51);
+insert into public.room_candidates (room_id, restaurant_id, status, probability) values
+  ((select id from ctx), '99999999-9999-9999-9999-999999999901', 'kept', 1);
 -- 模擬 Go service role 寫入的一張票
 insert into public.votes (room_id, user_id, restaurant_id, kind) values
   ((select id from ctx), '00000000-0000-0000-0000-0000000000a1',
@@ -94,6 +96,10 @@ insert into public.votes (room_id, user_id, restaurant_id, kind) values
 
 set local role authenticated;
 set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}';
+select is(
+  (select count(*) from public.restaurants
+    where id in (select restaurant_id from public.room_candidates))::int,
+  1, '房間成員看得到本房候選引用的餐廳');
 select is((select count(*) from public.votes)::int, 1, '成員看得到全房的票');
 
 select throws_like(format(
@@ -106,7 +112,13 @@ select throws_like(
   '%permission denied%', 'authenticated 無 DELETE grant（收回也走 Go）');
 
 -- 非成員（C）看不到任何票（D9：policy 否定面）
+reset role;
+set local role authenticated;
 set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated"}';
+select is(
+  (select count(*) from public.restaurants
+    where id = '99999999-9999-9999-9999-999999999901')::int,
+  0, '非成員看不到其他房間候選引用的餐廳');
 select is((select count(*) from public.votes)::int, 0, '非成員看不到任何票');
 
 -- ============ P2：欄級 grant、探索檔位、join 限流、同席紀錄 ============

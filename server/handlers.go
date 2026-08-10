@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
+	"sort"
 	"sync"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -21,6 +22,8 @@ type limiterStore struct {
 	perSec rate.Limit
 	burst  int
 }
+
+var searchInFlight sync.Map
 
 func newLimiterStore(perSec rate.Limit, burst int) *limiterStore {
 	return &limiterStore{m: map[string]*rate.Limiter{}, perSec: perSec, burst: burst}
@@ -70,11 +73,24 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, rl *lim
 	return cors(mux)
 }
 
+func roomIDFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
+	roomID := r.PathValue("id")
+	var parsed pgtype.UUID
+	if err := parsed.Scan(roomID); err != nil {
+		jsonError(w, http.StatusNotFound, "房間不存在")
+		return "", false
+	}
+	return roomID, true
+}
+
 // loadHostRoom 驗證房主身分並回房間；非房主回 403、找不到回 404、DB 故障回 500
 func loadHostRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (RoomRow, bool) {
-	room, err := LoadRoom(r.Context(), pool, r.PathValue("id"))
+	roomID, ok := roomIDFromPath(w, r)
+	if !ok {
+		return RoomRow{}, false
+	}
+	room, err := LoadRoom(r.Context(), pool, roomID)
 	if err != nil {
-		// 非法 uuid 文字會是 pgtype 解析錯誤（非 ErrNoRows）而落 500；route 只會帶 uuid，可接受
 		if errors.Is(err, pgx.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "房間不存在")
 		} else {
@@ -91,7 +107,11 @@ func loadHostRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (R
 
 // loadMemberRoom：任一成員可用的操作（vote）用這個；房主限定仍走 loadHostRoom
 func loadMemberRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (RoomRow, bool) {
-	room, err := LoadRoom(r.Context(), pool, r.PathValue("id"))
+	roomID, ok := roomIDFromPath(w, r)
+	if !ok {
+		return RoomRow{}, false
+	}
+	room, err := LoadRoom(r.Context(), pool, roomID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			jsonError(w, http.StatusNotFound, "房間不存在")
@@ -264,7 +284,7 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 		return
 	}
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
-		Now: time.Now(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
+		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
 		Votes: votes, Recency: recency, Exploration: room.Exploration})
 	if err := ReplaceCandidates(ctx, tx, room.ID, result); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
@@ -309,6 +329,16 @@ func restaurantIDs(rs []Restaurant) []string {
 	return ids
 }
 
+func minimumMemberRadius(members []Member) int {
+	radius := members[0].MaxDistanceM
+	for _, member := range members[1:] {
+		if member.MaxDistanceM < radius {
+			radius = member.MaxDistanceM
+		}
+	}
+	return radius
+}
+
 func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, places PlacesProvider) {
 	ctx := r.Context()
 	room, ok := loadHostRoom(w, r, pool)
@@ -319,21 +349,75 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusConflict, "房間狀態已變更")
 		return
 	}
+	// Places 呼叫付費，同房並發搜尋只放行一個。
+	if _, loaded := searchInFlight.LoadOrStore(room.ID, struct{}{}); loaded {
+		jsonError(w, http.StatusConflict, "房間狀態已變更")
+		return
+	}
+	defer searchInFlight.Delete(room.ID)
 	members, err := LoadMembers(ctx, pool, room.ID)
 	if err != nil || len(members) == 0 {
 		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
 		return
 	}
-	radius := members[0].MaxDistanceM
-	for _, m := range members[1:] {
-		if m.MaxDistanceM < radius {
-			radius = m.MaxDistanceM
-		}
-	}
-	found, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, radius)
+	fetchedRadius := minimumMemberRadius(members)
+	// Provider fetch envelope 採 call-time 成員最小距離；tx 內重讀若縮小，會在 Evaluate 前重濾。
+	// 若期間放寬，既有 fetch envelope 只會 under-fetch，不會錯誤納入更遠餐廳。
+	found, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, fetchedRadius)
+	degraded := false
+	var closedIDs []string
 	if err != nil {
-		jsonError(w, http.StatusBadGateway, "餐廳搜尋失敗")
-		return
+		log.Printf("places provider failed, falling back to cache: %v", err)
+		// provider 內已重試一次（spec §8）；此處 fallback 30 天內快取
+		// Google fallback 不可混入先前 mock provider 寫入的罐頭資料。
+		_, isGoogle := places.(*googleProvider)
+		found, err = LoadCachedRestaurants(ctx, pool, room.CenterLat, room.CenterLng, fetchedRadius, isGoogle)
+		if err != nil || len(found) == 0 {
+			jsonError(w, http.StatusBadGateway, "餐廳搜尋失敗，且沒有可用的快取資料，請稍後再試")
+			return
+		}
+		degraded = true
+	} else {
+		open := found[:0]
+		for _, restaurant := range found {
+			if restaurant.Closed {
+				closedIDs = append(closedIDs, restaurant.PlaceID)
+				continue
+			}
+			open = append(open, restaurant)
+		}
+		found = open
+		// 去重並固定 upsert 順序，避免重複候選與跨房 restaurants row-lock deadlock。
+		sort.Slice(found, func(i, j int) bool { return found[i].PlaceID < found[j].PlaceID })
+		deduped := found[:0]
+		for _, restaurant := range found {
+			if len(deduped) == 0 || restaurant.PlaceID != deduped[len(deduped)-1].PlaceID {
+				deduped = append(deduped, restaurant)
+			}
+		}
+		found = deduped
+	}
+	// 快取寫入獨立交易先 commit：即使零候選 rollback，真 API 的呼叫成果仍留作快取。
+	// fallback 的 found 已含 DB uuid 且本來就出自快取，因此跳過重寫。
+	if !degraded && (len(found) > 0 || len(closedIDs) > 0) {
+		txCache, err := pool.Begin(ctx)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+			return
+		}
+		defer txCache.Rollback(ctx)
+		if err := StaleOutRestaurants(ctx, txCache, closedIDs); err != nil {
+			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
+			return
+		}
+		if err := UpsertRestaurants(ctx, txCache, found); err != nil {
+			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
+			return
+		}
+		if err := txCache.Commit(ctx); err != nil {
+			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+			return
+		}
 	}
 	// 「附近根本沒資料」和「有資料但全被條件排除」是兩種不同的死路，
 	// 混成同一個 422 會叫使用者去放寬條件卻永遠沒用 — 分流才誠實
@@ -341,8 +425,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		jsonOK(w, map[string]any{
-			"error":   "no_restaurants_in_range",
-			"message": "此位置附近沒有餐廳資料（Phase 1 mock 資料僅涵蓋台北車站周邊），請靠近示範區域或縮小距離再試",
+			"error":    "no_restaurants_in_range",
+			"message":  "此位置附近沒有餐廳資料，請調整位置或縮小距離再試",
+			"degraded": degraded,
 		})
 		return
 	}
@@ -365,9 +450,26 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
-	if err := UpsertRestaurants(ctx, tx, found); err != nil {
-		jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
+	members, err = LoadMembersForUpdate(ctx, tx, room.ID)
+	if err != nil || len(members) == 0 {
+		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
 		return
+	}
+	reloadedRadius := minimumMemberRadius(members)
+	// tx 內重讀的「全員最小距離」有三種情況：縮小則重濾、相等則直接繼續；
+	// 放大代表先前的 fetch envelope under-fetch，回 409 並由 deferred rollback 留在 lobby，讓 host 重搜。
+	if reloadedRadius > fetchedRadius {
+		jsonError(w, http.StatusConflict, "成員條件已於搜尋期間變更，請再按一次開始搜尋")
+		return
+	}
+	if reloadedRadius < fetchedRadius {
+		withinReloadedRadius := found[:0]
+		for _, restaurant := range found {
+			if Haversine(room.CenterLat, room.CenterLng, restaurant.Lat, restaurant.Lng) <= float64(reloadedRadius) {
+				withinReloadedRadius = append(withinReloadedRadius, restaurant)
+			}
+		}
+		found = withinReloadedRadius
 	}
 	recency, err := LoadRecency(ctx, tx, memberIDs(members), restaurantIDs(found))
 	if err != nil {
@@ -375,11 +477,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	result := Evaluate(EngineInput{Restaurants: found, Members: members,
-		Now: time.Now(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
+		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
 		Recency: recency, Exploration: room.Exploration})
 
-	// ponytail: 零候選時 rollback 連餐廳快取一併丟棄 — mock 無感；P2 接真 Places 時
-	// 拆成兩個交易（快取先 commit），才不會浪費 API 呼叫且快取可當 fallback（spec §8）
 	if len(result.Kept) == 0 {
 		byKind := map[string]int{}
 		ex := []excludedJSON{}
@@ -391,7 +491,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
-		jsonOK(w, map[string]any{"error": "no_candidates", "excluded": ex, "excluded_by": byKind})
+		jsonOK(w, map[string]any{
+			"error": "no_candidates", "excluded": ex, "excluded_by": byKind, "degraded": degraded,
+		})
 		return
 	}
 	if err := ReplaceCandidates(ctx, tx, room.ID, result); err != nil {
@@ -410,7 +512,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
-	jsonOK(w, resultJSON(result))
+	resp := resultJSON(result)
+	resp["degraded"] = degraded
+	jsonOK(w, resp)
 }
 
 func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
@@ -459,7 +563,7 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 	}
 	// spec §5.5：抽選前權威重算；pre-tx center_* 永遠、exploration 在 lobby 外由 guard_room_columns 凍結
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
-		Now: time.Now(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
+		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
 		Votes: votes, Recency: recency, Exploration: room.Exploration})
 	if len(result.Kept) == 0 {
 		for _, e := range result.Excluded {

@@ -2,7 +2,17 @@
 
 ## P2 eng review 新增（2026-08-06）
 
+- 舊房間（>30 天）重開時仍顯示過期的 Google 快取內容 — 與快取條款衝突；需要產品決策（過期房顯示什麼：以 place_id 重刷或改為僅顯示店名+導航連結），留待 P3。
+
+- Google currentOpeningHours（假日/特別時段）與 30 天快取條款結構性衝突 — date-specific 時段需要獨立的短效快取語意，留待 P3 設計（regularOpeningHours 的假日誤差為本期接受的限制）。
+
 - **dining_history 刪除語意：** `dining_history.room_id` 目前 `on delete cascade`（0003 migration），與 ADR-0002「紀錄跟人」矛盾——未來做房間清理/保留政策時改為 nullable + `on delete set null`，避免刪房抹掉成員同席紀錄。
+
+### Google Places attribution logo 確認（正式上線前）
+
+- **What:** 依當時最新版 Google 品牌指南確認「Powered by Google」logo 資產與使用方式；目前 UI 已依 `place_id` 自動為 Google 來源資料顯示文字歸因。
+- **Why:** 品牌資產與規範可能更新，正式上線前需以當時版本做最後確認。
+- **Depends on:** hosted 正式上線計畫。
 
 ### limiter map TTL 清理（hosted 前）
 
@@ -49,7 +59,7 @@ feat/phase-1 全分支 final review 的 DEFER-P2 批次。前三項優先（安�
 優先：
 
 1. **join_room 走 PostgREST，不受應用層限流** — Go 的 rate limiter 只護 `/api/*`；join_room 是 RPC 直打 PostgREST，邀請碼有列舉面。要在 DB 層或 gateway 補限流。
-2. **react-router RSC CVE（GHSA-qwww-vcr4-c8h2）為 production dep** — P1 純 SPA 用不到 RSC 路徑，hosted/SSR 上線前必須重評並升版。
+2. ~~**react-router RSC CVE（GHSA-qwww-vcr4-c8h2）為 production dep**~~ — 已解決：升級至 7.18.2，2026-08-09 驗證 `npm audit` clean。
 3. **rooms 欄級 grant + 平台預設 TRUNCATE revoke** — 現行 UPDATE grant 比意圖粗（可改 created_at）；anon/authenticated 持有平台預設 TRUNCATE（NOLOGIN + PostgREST 不發，目前不可達）。
 
 其餘：

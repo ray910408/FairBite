@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -15,6 +16,7 @@ var ErrConflict = errors.New("status conflict")
 // D2/D15：讀取函式吃 querier（*pgxpool.Pool 與 pgx.Tx 皆滿足），
 // vote 交易才能在 room row lock 之後於 tx 內讀，杜絕 stale 讀寫競態
 type querier interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
@@ -37,12 +39,25 @@ func LoadRoom(ctx context.Context, pool *pgxpool.Pool, roomID string) (RoomRow, 
 	return r, err
 }
 
+// user_id 排序是鎖順序 pin：room_members FOR UPDATE 與後續 exposure_stats upsert 都沿用。
+const loadMembersSQL = `select rm.user_id, coalesce(nullif(p.display_name, ''), '成員'), rm.budget_max,
+       rm.cuisines, rm.dietary, rm.max_distance_m, rm.transport
+from room_members rm join profiles p on p.id = rm.user_id
+where rm.room_id = $1
+order by rm.user_id`
+
 func LoadMembers(ctx context.Context, q querier, roomID string) ([]Member, error) {
-	rows, err := q.Query(ctx,
-		`select rm.user_id, coalesce(nullif(p.display_name, ''), '成員'), rm.budget_max,
-		        rm.cuisines, rm.dietary, rm.max_distance_m, rm.transport
-		 from room_members rm join profiles p on p.id = rm.user_id
-		 where rm.room_id = $1`, roomID)
+	return loadMembers(ctx, q, roomID, loadMembersSQL)
+}
+
+func LoadMembersForUpdate(ctx context.Context, q querier, roomID string) ([]Member, error) {
+	// TransitionRoom 已先鎖 rooms；再依 user_id 固定順序鎖 room_members，
+	// 保證凍結快照與並發條件更新的原子性。
+	return loadMembers(ctx, q, roomID, loadMembersSQL+"\nfor update of rm")
+}
+
+func loadMembers(ctx context.Context, q querier, roomID, query string) ([]Member, error) {
+	rows, err := q.Query(ctx, query, roomID)
 	if err != nil {
 		return nil, err
 	}
@@ -181,6 +196,52 @@ func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant) error {
 		}
 	}
 	return nil
+}
+
+// StaleOutRestaurants：歇業訊號只將既有 row 推出快取窗；不可 DELETE：舊房的 room_candidates 仍有 FK 參照。
+func StaleOutRestaurants(ctx context.Context, q querier, placeIDs []string) error {
+	if len(placeIDs) == 0 {
+		return nil
+	}
+	_, err := q.Exec(ctx, `update restaurants set fetched_at = now() - interval '31 days' where place_id = any($1)`, placeIDs)
+	return err
+}
+
+// LoadCachedRestaurants：快取 fallback（spec §8）。只取 30 天內（快取條款：fetched_at 為準）。
+// ponytail: 全量掃 + Go 端 haversine 過濾；快取量級小，夠用，量大再改 SQL bounding box
+func LoadCachedRestaurants(ctx context.Context, pool *pgxpool.Pool, lat, lng float64, radiusM int, excludeMock bool) ([]Restaurant, error) {
+	query := `
+		select id, place_id, name, cuisine_tags, price_level, lat, lng, address, opening_hours, coalesce(rating, 0)
+		from restaurants where fetched_at > now() - interval '30 days'`
+	if excludeMock {
+		query += ` and place_id not like 'mock-%'`
+	}
+	// Deterministic order pins exposure upsert lock order, matching the fresh-path sort.
+	query += ` order by place_id`
+	rows, err := pool.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Restaurant
+	for rows.Next() {
+		var r Restaurant
+		var tags, hours []byte
+		if err := rows.Scan(&r.ID, &r.PlaceID, &r.Name, &tags, &r.PriceLevel,
+			&r.Lat, &r.Lng, &r.Address, &hours, &r.Rating); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(tags, &r.CuisineTags); err != nil {
+			return nil, fmt.Errorf("restaurant %s tags: %w", r.PlaceID, err)
+		}
+		if err := json.Unmarshal(hours, &r.Hours); err != nil {
+			return nil, fmt.Errorf("restaurant %s hours: %w", r.PlaceID, err)
+		}
+		if Haversine(lat, lng, r.Lat, r.Lng) <= float64(radiusM) {
+			out = append(out, r)
+		}
+	}
+	return out, rows.Err()
 }
 
 func ReplaceCandidates(ctx context.Context, tx pgx.Tx, roomID string, res EngineResult) error {

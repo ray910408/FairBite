@@ -121,11 +121,14 @@ func hardExclude(r Restaurant, ms []Member, now time.Time) (kinds, reasons []str
 			minBudget, minName = m.BudgetMax, m.DisplayName
 		}
 	}
-	if price := PriceLevelMaxTWD[r.PriceLevel]; price > minBudget {
-		addKind("budget")
-		reasons = append(reasons, fmt.Sprintf("價位約 NT$%d，超過 %s 的預算上限 NT$%d", price, minName, minBudget))
+	if r.PriceLevel >= 0 {
+		if price := PriceLevelMaxTWD[r.PriceLevel]; price > minBudget {
+			addKind("budget")
+			reasons = append(reasons, fmt.Sprintf("價位約 NT$%d，超過 %s 的預算上限 NT$%d", price, minName, minBudget))
+		}
 	}
-	if !r.Hours.IsOpenAt(now) {
+	// 比照未知價位先例：未知不排除，不能把缺少時段當成目前未營業。
+	if len(r.Hours) > 0 && !r.Hours.IsOpenAt(now) {
 		addKind("closed")
 		reasons = append(reasons, "目前未營業")
 	}
@@ -176,6 +179,10 @@ func distFactor(r Restaurant, in EngineInput) TraceEntry {
 }
 
 func closingFactor(r Restaurant, in EngineInput) TraceEntry {
+	// 比照未知價位先例：未知不排除，也不臆測即將打烊。
+	if len(r.Hours) == 0 {
+		return TraceEntry{Mult: 1.0}
+	}
 	left := r.Hours.MinutesUntilClose(in.Now)
 	if left >= 0 && left < ClosingSoonMinutes {
 		return TraceEntry{"closing_soon", ClosingSoonMult,
@@ -234,6 +241,9 @@ func Evaluate(in EngineInput) EngineResult {
 		c := Candidate{Restaurant: r, Score: 1.0}
 		for _, f := range factors {
 			e := f(r, in)
+			if e.Factor == "" { // 未知資料可保持 neutral，且不產生虛構 trace。
+				continue
+			}
 			c.Score *= e.Mult
 			c.Trace = append(c.Trace, e)
 		}

@@ -37,6 +37,30 @@ func (oh OpeningHours) MinutesUntilClose(t time.Time) int {
 	for _, span := range oh[weekdayKeys[t.Weekday()]] {
 		open, close := span[0], span[1]
 		if close > open && m >= open && m < close {
+			if close == 1440 {
+				minutes := 1440 - m
+				for offset := 1; offset <= len(weekdayKeys); offset++ {
+					nextSpans := oh[weekdayKeys[(int(t.Weekday())+offset)%len(weekdayKeys)]]
+					var next [2]int
+					found := false
+					for _, span := range nextSpans {
+						if span[0] == 0 {
+							next = span
+							found = true
+							break
+						}
+					}
+					if !found {
+						return minutes
+					}
+					minutes += next[1] - next[0]
+					if next != [2]int{0, 1440} {
+						return minutes
+					}
+				}
+				// 七天都連續為 [0,1440]：視為不會打烊，回傳大值避免 closing-soon penalty。
+				return minutes
+			}
 			return close - m
 		}
 		if close <= open && m >= open {
@@ -62,6 +86,8 @@ type Restaurant struct {
 	Address     string
 	Hours       OpeningHours
 	Rating      float64
+	// Closed 是 transient provider 訊號；UpsertRestaurants 不會持久化。
+	Closed bool
 }
 
 type PlacesProvider interface {

@@ -35,6 +35,11 @@ go run .
 新版 supabase CLI local stack 簽發 ES256 token，一律用 JWKS；`SUPABASE_JWT_SECRET`
 僅適用仍在 legacy 對稱簽章的舊專案（HS256，2026 年底棄用）。
 
+| Go 環境變數 | 必填 | 說明 |
+| --- | --- | --- |
+| `GOOGLE_PLACES_API_KEY` | 否 | 未設定時使用 mock provider；僅供 Go server 使用，絕不放入 web bundle。Google 來源資料會自動顯示「餐廳資料 Powered by Google」歸因；正式上線前的 logo 資產版本檢查見 `TODOS.md`。 |
+| `APP_TZ` | 否（選填） | 預設 `Asia/Taipei`；營業時間一律以此時區評估；per-place 時區留待未來。 |
+
 ## 測試
 
 Git Bash（每行獨立執行，皆從 repo 根目錄開始）：
@@ -59,4 +64,17 @@ Push-Location web; npm run lint; Pop-Location
 Push-Location web; npm run build; Pop-Location
 ```
 
-Phase 1 使用 mock 餐廳資料（台北車站周邊 13 家）；真實 Google Places 於 Phase 2 切換。
+## E2E 測試
+
+雙客戶端完整閉環 E2E 執行前，需先依「本地啟動」讓三個服務保持運行：Supabase local、使用 mock provider 與 local JWKS 的 Go API，以及 Vite dev server。另開一個 PowerShell 終端執行：
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = "0"
+cd web
+npx playwright install chromium # 首次執行需下載瀏覽器
+npm run e2e
+```
+
+E2E 尚未接入 CI，因為 CI 需額外編排整套 local stack；`TODOS.md` 保留後續 CI 編排評估。
+
+未設定 `GOOGLE_PLACES_API_KEY` 時使用台北車站周邊 13 家 mock 餐廳；設定後即切換至 Google Places provider。
