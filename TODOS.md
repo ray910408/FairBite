@@ -2,6 +2,8 @@
 
 ## P2 eng review 新增（2026-08-06）
 
+- 舊房間（>30 天）重開時仍顯示過期的 Google 快取內容 — 與快取條款衝突；需要產品決策（過期房顯示什麼：以 place_id 重刷或改為僅顯示店名+導航連結），留待 P3。
+
 - Google currentOpeningHours（假日/特別時段）與 30 天快取條款結構性衝突 — date-specific 時段需要獨立的短效快取語意，留待 P3 設計（regularOpeningHours 的假日誤差為本期接受的限制）。
 
 - **dining_history 刪除語意：** `dining_history.room_id` 目前 `on delete cascade`（0003 migration），與 ADR-0002「紀錄跟人」矛盾——未來做房間清理/保留政策時改為 nullable + `on delete set null`，避免刪房抹掉成員同席紀錄。

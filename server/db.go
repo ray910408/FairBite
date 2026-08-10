@@ -37,14 +37,25 @@ func LoadRoom(ctx context.Context, pool *pgxpool.Pool, roomID string) (RoomRow, 
 	return r, err
 }
 
+// user_id 排序是鎖順序 pin：room_members FOR UPDATE 與後續 exposure_stats upsert 都沿用。
+const loadMembersSQL = `select rm.user_id, coalesce(nullif(p.display_name, ''), '成員'), rm.budget_max,
+       rm.cuisines, rm.dietary, rm.max_distance_m, rm.transport
+from room_members rm join profiles p on p.id = rm.user_id
+where rm.room_id = $1
+order by rm.user_id`
+
 func LoadMembers(ctx context.Context, q querier, roomID string) ([]Member, error) {
-	// 固定成員順序，讓後續 exposure_stats upsert 依 user_id 鎖列，避免跨房並行搜尋死鎖。
-	rows, err := q.Query(ctx,
-		`select rm.user_id, coalesce(nullif(p.display_name, ''), '成員'), rm.budget_max,
-		        rm.cuisines, rm.dietary, rm.max_distance_m, rm.transport
-		 from room_members rm join profiles p on p.id = rm.user_id
-		 where rm.room_id = $1
-		 order by rm.user_id`, roomID)
+	return loadMembers(ctx, q, roomID, loadMembersSQL)
+}
+
+func LoadMembersForUpdate(ctx context.Context, q querier, roomID string) ([]Member, error) {
+	// TransitionRoom 已先鎖 rooms；再依 user_id 固定順序鎖 room_members，
+	// 保證凍結快照與並發條件更新的原子性。
+	return loadMembers(ctx, q, roomID, loadMembersSQL+"\nfor update of rm")
+}
+
+func loadMembers(ctx context.Context, q querier, roomID, query string) ([]Member, error) {
+	rows, err := q.Query(ctx, query, roomID)
 	if err != nil {
 		return nil, err
 	}
