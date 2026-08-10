@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -15,6 +16,7 @@ var ErrConflict = errors.New("status conflict")
 // D2/D15：讀取函式吃 querier（*pgxpool.Pool 與 pgx.Tx 皆滿足），
 // vote 交易才能在 room row lock 之後於 tx 內讀，杜絕 stale 讀寫競態
 type querier interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
@@ -194,6 +196,15 @@ func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant) error {
 		}
 	}
 	return nil
+}
+
+// StaleOutRestaurants：歇業訊號只將既有 row 推出快取窗；不可 DELETE：舊房的 room_candidates 仍有 FK 參照。
+func StaleOutRestaurants(ctx context.Context, q querier, placeIDs []string) error {
+	if len(placeIDs) == 0 {
+		return nil
+	}
+	_, err := q.Exec(ctx, `update restaurants set fetched_at = now() - interval '31 days' where place_id = any($1)`, placeIDs)
+	return err
 }
 
 // LoadCachedRestaurants：快取 fallback（spec §8）。只取 30 天內（快取條款：fetched_at 為準）。

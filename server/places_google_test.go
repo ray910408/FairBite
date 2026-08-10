@@ -114,19 +114,23 @@ func TestGoogleProviderMapping(t *testing.T) {
 	defer srv.Close()
 	p := NewGooglePlacesProvider("test-key", srv.URL)
 	rs, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000)
-	if err != nil || len(rs) != 6 {
-		t.Fatalf("want 6 restaurants, got %d err %v", len(rs), err)
+	if err != nil || len(rs) != 7 {
+		t.Fatalf("want 7 restaurants, got %d err %v", len(rs), err)
 	}
 	byPID := map[string]Restaurant{}
 	for _, r := range rs {
 		byPID[r.PlaceID] = r
 	}
-	if _, ok := byPID["gp-7"]; ok {
-		t.Error("CLOSED_PERMANENTLY place must be filtered")
+	closed, ok := byPID["gp-7"]
+	if !ok || !closed.Closed {
+		t.Errorf("CLOSED_PERMANENTLY place must be returned with Closed=true: %+v", closed)
 	}
 	sushi, ok := byPID["gp-1"]
 	if !ok {
 		t.Fatal("OPERATIONAL place gp-1 must be kept")
+	}
+	if sushi.Closed {
+		t.Error("OPERATIONAL place gp-1 must have Closed=false")
 	}
 	if sushi.Name != "山本壽司" || sushi.PriceLevel != 2 || sushi.Rating != 4.3 {
 		t.Errorf("基本欄位對映錯誤：%+v", sushi)
@@ -190,6 +194,9 @@ func TestGoogleProviderMapping(t *testing.T) {
 	unknown, ok := byPID["gp-6"]
 	if !ok {
 		t.Fatal("place without businessStatus gp-6 must be kept")
+	}
+	if unknown.Closed {
+		t.Error("place without businessStatus gp-6 must have Closed=false")
 	}
 	if len(unknown.Hours) != 0 {
 		t.Errorf("缺 regularOpeningHours 應保留為未知（empty map），got %v", unknown.Hours)

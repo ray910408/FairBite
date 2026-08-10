@@ -86,6 +86,8 @@ type Restaurant struct {
 	Address     string
 	Hours       OpeningHours
 	Rating      float64
+	// Closed 是 transient provider 訊號；UpsertRestaurants 不會持久化。
+	Closed bool
 }
 
 type PlacesProvider interface {

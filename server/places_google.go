@@ -131,12 +131,11 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 	}
 	rs := make([]Restaurant, 0, len(out.Places))
 	for _, p := range out.Places {
-		// Absent status is common, so only explicitly closed places are excluded.
-		if p.BusinessStatus == "CLOSED_TEMPORARILY" || p.BusinessStatus == "CLOSED_PERMANENTLY" {
-			continue
-		}
+		// Absent status is common, so only explicit closure carries the tombstone signal.
+		closed := p.BusinessStatus == "CLOSED_TEMPORARILY" || p.BusinessStatus == "CLOSED_PERMANENTLY"
 		rs = append(rs, Restaurant{
 			PlaceID:     p.ID,
+			Closed:      closed,
 			Name:        p.DisplayName.Text,
 			CuisineTags: gTags(p),
 			PriceLevel:  gPrice(p.PriceLevel),

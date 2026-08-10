@@ -365,6 +365,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	// 若期間放寬，既有 fetch envelope 只會 under-fetch，不會錯誤納入更遠餐廳。
 	found, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, fetchedRadius)
 	degraded := false
+	var closedIDs []string
 	if err != nil {
 		log.Printf("places provider failed, falling back to cache: %v", err)
 		// provider 內已重試一次（spec §8）；此處 fallback 30 天內快取
@@ -377,6 +378,15 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		}
 		degraded = true
 	} else {
+		open := found[:0]
+		for _, restaurant := range found {
+			if restaurant.Closed {
+				closedIDs = append(closedIDs, restaurant.PlaceID)
+				continue
+			}
+			open = append(open, restaurant)
+		}
+		found = open
 		// 去重並固定 upsert 順序，避免重複候選與跨房 restaurants row-lock deadlock。
 		sort.Slice(found, func(i, j int) bool { return found[i].PlaceID < found[j].PlaceID })
 		deduped := found[:0]
@@ -386,6 +396,28 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 			}
 		}
 		found = deduped
+	}
+	// 快取寫入獨立交易先 commit：即使零候選 rollback，真 API 的呼叫成果仍留作快取。
+	// fallback 的 found 已含 DB uuid 且本來就出自快取，因此跳過重寫。
+	if !degraded && (len(found) > 0 || len(closedIDs) > 0) {
+		txCache, err := pool.Begin(ctx)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+			return
+		}
+		defer txCache.Rollback(ctx)
+		if err := StaleOutRestaurants(ctx, txCache, closedIDs); err != nil {
+			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
+			return
+		}
+		if err := UpsertRestaurants(ctx, txCache, found); err != nil {
+			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
+			return
+		}
+		if err := txCache.Commit(ctx); err != nil {
+			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+			return
+		}
 	}
 	// 「附近根本沒資料」和「有資料但全被條件排除」是兩種不同的死路，
 	// 混成同一個 422 會叫使用者去放寬條件卻永遠沒用 — 分流才誠實
@@ -398,24 +430,6 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 			"degraded": degraded,
 		})
 		return
-	}
-	// 快取寫入獨立交易先 commit：即使零候選 rollback，真 API 的呼叫成果仍留作快取。
-	// fallback 的 found 已含 DB uuid 且本來就出自快取，因此跳過重寫。
-	if !degraded {
-		txCache, err := pool.Begin(ctx)
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-			return
-		}
-		defer txCache.Rollback(ctx)
-		if err := UpsertRestaurants(ctx, txCache, found); err != nil {
-			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
-			return
-		}
-		if err := txCache.Commit(ctx); err != nil {
-			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-			return
-		}
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
