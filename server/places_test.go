@@ -66,6 +66,30 @@ func TestMinutesUntilCloseContinuesAcrossSplitDays(t *testing.T) {
 	}
 }
 
+func TestMinutesUntilCloseFindsUnorderedMidnightContinuation(t *testing.T) {
+	oh := OpeningHours{
+		"fri": {{1020, 1440}},
+		"sat": {{0, 1440}},
+		"sun": {{600, 1200}, {0, 120}},
+	}
+
+	if got := oh.MinutesUntilClose(at(time.Saturday, 23, 30)); got != 150 {
+		t.Fatalf("週六 23:30 距週日 02:00 應為 150 分鐘，got %d", got)
+	}
+	if !oh.IsOpenAt(at(time.Sunday, 1, 0)) {
+		t.Error("週日 01:00 應為營業中")
+	}
+	if oh.IsOpenAt(at(time.Sunday, 3, 0)) {
+		t.Error("週日 03:00 應為未營業")
+	}
+	if !oh.IsOpenAt(at(time.Sunday, 11, 0)) {
+		t.Error("週日 11:00 應為營業中")
+	}
+	if got := oh.MinutesUntilClose(at(time.Sunday, 11, 0)); got != 540 {
+		t.Fatalf("週日 11:00 距週日 20:00 應為 540 分鐘，got %d", got)
+	}
+}
+
 func TestMinutesUntilCloseTwentyFourSevenIsNotClosingSoon(t *testing.T) {
 	oh := daily([2]int{0, 1440})
 	now := at(time.Monday, 12, 0)

@@ -41,10 +41,18 @@ func (oh OpeningHours) MinutesUntilClose(t time.Time) int {
 				minutes := 1440 - m
 				for offset := 1; offset <= len(weekdayKeys); offset++ {
 					nextSpans := oh[weekdayKeys[(int(t.Weekday())+offset)%len(weekdayKeys)]]
-					if len(nextSpans) == 0 || nextSpans[0][0] != 0 {
+					var next [2]int
+					found := false
+					for _, span := range nextSpans {
+						if span[0] == 0 {
+							next = span
+							found = true
+							break
+						}
+					}
+					if !found {
 						return minutes
 					}
-					next := nextSpans[0]
 					minutes += next[1] - next[0]
 					if next != [2]int{0, 1440} {
 						return minutes
