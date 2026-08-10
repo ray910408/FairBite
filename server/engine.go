@@ -226,8 +226,10 @@ func rainFactor(r Restaurant, in EngineInput) TraceEntry {
 }
 
 func timeSlotOf(t time.Time) string {
-	if h := t.Hour(); h >= 6 && h < 11 {
-		return "morning"
+	for slot, hr := range TimeSlotHours { // slot 區間不重疊，map 迭代順序無關
+		if h := t.Hour(); h >= hr[0] && h < hr[1] {
+			return slot
+		}
 	}
 	return ""
 }

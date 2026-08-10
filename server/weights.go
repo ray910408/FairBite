@@ -72,8 +72,11 @@ var (
 const TimeSlotBoostMult = 1.15
 
 var TimeSlotBoosts = map[string][]string{
-	"morning": {"breakfast"}, // 06:00–10:59；breakfast ← googleTypeTags["breakfast_restaurant"] ✓
+	"morning": {"breakfast"}, // breakfast ← googleTypeTags["breakfast_restaurant"] ✓
 }
+
+// [起, 迄) 小時邊界；slot 區間不重疊（task3 review r1：可調參數集中 weights.go）
+var TimeSlotHours = map[string][2]int{"morning": {6, 11}} // 06:00–10:59
 
 var TimeSlotLabels = map[string]string{"morning": "早餐時段"}
 
