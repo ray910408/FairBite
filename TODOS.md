@@ -2,6 +2,8 @@
 
 ## P2 eng review 新增（2026-08-06）
 
+- Google currentOpeningHours（假日/特別時段）與 30 天快取條款結構性衝突 — date-specific 時段需要獨立的短效快取語意，留待 P3 設計（regularOpeningHours 的假日誤差為本期接受的限制）。
+
 - **dining_history 刪除語意：** `dining_history.room_id` 目前 `on delete cascade`（0003 migration），與 ADR-0002「紀錄跟人」矛盾——未來做房間清理/保留政策時改為 nullable + `on delete set null`，避免刪房抹掉成員同席紀錄。
 
 ### Google Places attribution logo 確認（正式上線前）

@@ -329,6 +329,16 @@ func restaurantIDs(rs []Restaurant) []string {
 	return ids
 }
 
+func minimumMemberRadius(members []Member) int {
+	radius := members[0].MaxDistanceM
+	for _, member := range members[1:] {
+		if member.MaxDistanceM < radius {
+			radius = member.MaxDistanceM
+		}
+	}
+	return radius
+}
+
 func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, places PlacesProvider) {
 	ctx := r.Context()
 	room, ok := loadHostRoom(w, r, pool)
@@ -350,22 +360,17 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
 		return
 	}
-	radius := members[0].MaxDistanceM
-	for _, m := range members[1:] {
-		if m.MaxDistanceM < radius {
-			radius = m.MaxDistanceM
-		}
-	}
-	// 若 member 在 provider call 中放寬距離，fetch envelope 仍採 call-time radius，只會 under-fetch；
-	// 下方 tx 內 fresh members 會供 Evaluate 重套每人距離，不會造成錯誤 inclusion。
-	found, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, radius)
+	fetchedRadius := minimumMemberRadius(members)
+	// Provider fetch envelope 採 call-time 成員最小距離；tx 內重讀若縮小，會在 Evaluate 前重濾。
+	// 若期間放寬，既有 fetch envelope 只會 under-fetch，不會錯誤納入更遠餐廳。
+	found, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, fetchedRadius)
 	degraded := false
 	if err != nil {
 		log.Printf("places provider failed, falling back to cache: %v", err)
 		// provider 內已重試一次（spec §8）；此處 fallback 30 天內快取
 		// Google fallback 不可混入先前 mock provider 寫入的罐頭資料。
 		_, isGoogle := places.(*googleProvider)
-		found, err = LoadCachedRestaurants(ctx, pool, room.CenterLat, room.CenterLng, radius, isGoogle)
+		found, err = LoadCachedRestaurants(ctx, pool, room.CenterLat, room.CenterLng, fetchedRadius, isGoogle)
 		if err != nil || len(found) == 0 {
 			jsonError(w, http.StatusBadGateway, "餐廳搜尋失敗，且沒有可用的快取資料，請稍後再試")
 			return
@@ -435,6 +440,17 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	if err != nil || len(members) == 0 {
 		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
 		return
+	}
+	reloadedRadius := minimumMemberRadius(members)
+	// 收緊後須以相同的「全員最小距離」fetch envelope 重濾；放寬只代表先前 under-fetch，保留既有 found。
+	if reloadedRadius < fetchedRadius {
+		withinReloadedRadius := found[:0]
+		for _, restaurant := range found {
+			if Haversine(room.CenterLat, room.CenterLng, restaurant.Lat, restaurant.Lng) <= float64(reloadedRadius) {
+				withinReloadedRadius = append(withinReloadedRadius, restaurant)
+			}
+		}
+		found = withinReloadedRadius
 	}
 	recency, err := LoadRecency(ctx, tx, memberIDs(members), restaurantIDs(found))
 	if err != nil {

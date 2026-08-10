@@ -200,8 +200,9 @@ func gHours(p gPlace) OpeningHours {
 			day := (openDay + offset) % len(weekdayKeys)
 			oh[weekdayKeys[day]] = append(oh[weekdayKeys[day]], [2]int{0, 1440})
 		}
-		oh[weekdayKeys[closeDay]] = append(oh[weekdayKeys[closeDay]], [2]int{0, closeMin})
-		// 跨越完整日的期間，非最終日 closing-soon 分鐘只會算到午夜；此罕見情況只影響評分細節。
+		if closeMin != 0 {
+			oh[weekdayKeys[closeDay]] = append(oh[weekdayKeys[closeDay]], [2]int{0, closeMin})
+		}
 	}
 	return oh
 }

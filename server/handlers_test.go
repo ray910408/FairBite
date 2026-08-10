@@ -51,7 +51,7 @@ type conditionUpdateProvider struct {
 }
 
 func (p conditionUpdateProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) ([]Restaurant, error) {
-	if _, err := p.pool.Exec(ctx, `update room_members set budget_max = 100
+	if _, err := p.pool.Exec(ctx, `update room_members set budget_max = 100, max_distance_m = 300
 		where room_id = $1 and user_id = $2`, p.roomID, p.userID); err != nil {
 		return nil, err
 	}
@@ -96,9 +96,10 @@ func TestSearchReloadsMemberConditionsAfterProviderCall(t *testing.T) {
 	t.Cleanup(func() { pool.Close() })
 
 	const (
-		hostID  = "51515151-5151-5151-5151-515151515151"
-		roomID  = "52525252-5252-5252-5252-525252525252"
-		placeID = "member-condition-race"
+		hostID     = "51515151-5151-5151-5151-515151515151"
+		roomID     = "52525252-5252-5252-5252-525252525252"
+		placeID    = "member-condition-race"
+		farPlaceID = "member-distance-race-far"
 	)
 	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
 		values ($1, 'member-race@test.dev') on conflict do nothing`, hostID); err != nil {
@@ -113,19 +114,31 @@ func TestSearchReloadsMemberConditionsAfterProviderCall(t *testing.T) {
 	if _, err = pool.Exec(ctx, `insert into public.room_members
 		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
 		values ($1, $2, 500, '[]', '[]', 2000, 'walking')
-		on conflict (room_id, user_id) do update set budget_max = 500, dietary = '[]'`, roomID, hostID); err != nil {
+		on conflict (room_id, user_id) do update
+		set budget_max = 500, dietary = '[]', max_distance_m = 2000`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
 		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
-		pool.Exec(ctx, `delete from public.restaurants where place_id = $1`, placeID)
+		pool.Exec(ctx, `delete from public.restaurants where place_id in ($1, $2)`, placeID, farPlaceID)
 	})
 
-	provider := conditionUpdateProvider{pool: pool, roomID: roomID, userID: hostID, restaurants: []Restaurant{{
-		PlaceID: placeID, Name: "超出更新後預算", PriceLevel: 2,
-		Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
-	}}}
+	const farName = "超出更新後距離"
+	farLat, farLng := 25.0568, 121.5170
+	if distance := Haversine(25.0478, 121.5170, farLat, farLng); distance <= 300 || distance > 2000 {
+		t.Fatalf("far restaurant distance %.1fm must be inside old 2000m and outside new 300m radius", distance)
+	}
+	provider := conditionUpdateProvider{pool: pool, roomID: roomID, userID: hostID, restaurants: []Restaurant{
+		{
+			PlaceID: placeID, Name: "超出更新後預算", PriceLevel: 2,
+			Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
+		},
+		{
+			PlaceID: farPlaceID, Name: farName, PriceLevel: 2,
+			Lat: farLat, Lng: farLng, Hours: daily([2]int{0, 1440}),
+		},
+	}}
 	h := newTestAppWithProvider(t, pool, provider)
 	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
 	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
@@ -135,10 +148,21 @@ func TestSearchReloadsMemberConditionsAfterProviderCall(t *testing.T) {
 	var body struct {
 		Error      string         `json:"error"`
 		ExcludedBy map[string]int `json:"excluded_by"`
+		Kept       []struct {
+			Name string `json:"name"`
+		} `json:"kept"`
+		Excluded []struct {
+			Name string `json:"name"`
+		} `json:"excluded"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil ||
 		w.Code != http.StatusUnprocessableEntity || body.Error != "no_candidates" || body.ExcludedBy["budget"] != 1 {
-		t.Fatalf("搜尋必須套用 provider call 期間更新的預算：status %d body %s", w.Code, w.Body.String())
+		t.Fatalf("搜尋必須套用 provider call 期間更新的預算與距離：status %d body %s", w.Code, w.Body.String())
+	}
+	for _, candidate := range append(body.Kept, body.Excluded...) {
+		if candidate.Name == farName {
+			t.Fatalf("超出更新後 frozen radius 的餐廳不可出現在 kept/excluded：%s", w.Body.String())
+		}
 	}
 }
 

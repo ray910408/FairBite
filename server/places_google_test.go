@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,30 @@ import (
 	"testing"
 	"time"
 )
+
+func TestGoogleHoursMultiDayClosingAtMidnight(t *testing.T) {
+	var place gPlace
+	if err := json.Unmarshal([]byte(`{"regularOpeningHours":{"periods":[{"open":{"day":5,"hour":17,"minute":0},"close":{"day":0,"hour":0,"minute":0}}]}}`), &place); err != nil {
+		t.Fatal(err)
+	}
+	hours := gHours(place)
+	for _, tc := range []struct {
+		name string
+		at   time.Time
+		open bool
+	}{
+		{"週六中午", at(time.Saturday, 12, 0), true},
+		{"週六午夜前", at(time.Saturday, 23, 59), true},
+		{"週日凌晨", at(time.Sunday, 0, 30), false},
+		{"週日中午", at(time.Sunday, 12, 0), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hours.IsOpenAt(tc.at); got != tc.open {
+				t.Fatalf("IsOpenAt() = %v, want %v; hours=%v", got, tc.open, hours)
+			}
+		})
+	}
+}
 
 const gSample = `{"places":[
   {"id":"gp-1","displayName":{"text":"山本壽司"},

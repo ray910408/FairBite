@@ -47,6 +47,36 @@ func TestOpeningHoursOvernight(t *testing.T) {
 	}
 }
 
+func TestMinutesUntilCloseContinuesAcrossSplitDays(t *testing.T) {
+	oh := OpeningHours{
+		"fri": {{600, 1440}}, // 週五 10:00 起
+		"sat": {{0, 720}},    // 週六 12:00 止
+	}
+	if got := oh.MinutesUntilClose(at(time.Friday, 23, 0)); got != 780 {
+		t.Fatalf("週五 23:00 距週六 12:00 應為 780 分鐘，got %d", got)
+	}
+	if factor := closingFactor(Restaurant{Hours: oh}, EngineInput{Now: at(time.Friday, 23, 0)}); factor.Mult != 1.0 {
+		t.Fatalf("跨午夜但仍營業 780 分鐘不應套 closing-soon，got %+v", factor)
+	}
+	if got := oh.MinutesUntilClose(at(time.Saturday, 11, 30)); got != 30 {
+		t.Fatalf("週六 11:30 距打烊應為 30 分鐘，got %d", got)
+	}
+	if factor := closingFactor(Restaurant{Hours: oh}, EngineInput{Now: at(time.Saturday, 11, 30)}); factor.Mult != ClosingSoonMult {
+		t.Fatalf("打烊前 30 分鐘應套 closing-soon，got %+v", factor)
+	}
+}
+
+func TestMinutesUntilCloseTwentyFourSevenIsNotClosingSoon(t *testing.T) {
+	oh := daily([2]int{0, 1440})
+	now := at(time.Monday, 12, 0)
+	if got := oh.MinutesUntilClose(now); got < 7*1440 {
+		t.Fatalf("24/7 應回傳足夠大的距打烊時間，got %d", got)
+	}
+	if factor := closingFactor(Restaurant{Hours: oh}, EngineInput{Now: now}); factor.Mult != 1.0 {
+		t.Fatalf("24/7 不應套 closing-soon，got %+v", factor)
+	}
+}
+
 func TestMockProviderRadius(t *testing.T) {
 	p := NewMockProvider()
 	all, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 2000)
