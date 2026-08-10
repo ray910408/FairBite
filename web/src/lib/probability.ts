@@ -6,6 +6,9 @@ export const FACTOR_LABELS: Record<string, string> = {
   closing_soon: '打烊',
   votes: '投票',
   recency: '最近去過',
+  exposure: '曝光/新店',
+  weather: '天氣',
+  timeslot: '時段',
 }
 
 export function formatPercent(p: number): string {

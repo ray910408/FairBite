@@ -22,13 +22,17 @@ func newTestApp(t *testing.T, pool *pgxpool.Pool) http.Handler {
 }
 
 func newTestAppWithProvider(t *testing.T, pool *pgxpool.Pool, places PlacesProvider) http.Handler {
+	return newTestAppWithWeather(t, pool, places, nil)
+}
+
+func newTestAppWithWeather(t *testing.T, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider) http.Handler {
 	t.Setenv("SUPABASE_JWT_SECRET", "test-secret-test-secret-test-secret!")
 	t.Setenv("SUPABASE_JWKS_URL", "") // 外部環境設了就會誤走 JWKS 路徑，HS256 測試必失敗
 	v, err := NewVerifier()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return buildRoutes(v, pool, places, newLimiterStore(1000, 1000))
+	return buildRoutes(v, pool, places, weather, newLimiterStore(1000, 1000))
 }
 
 type failingProvider struct{}
@@ -36,6 +40,13 @@ type failingProvider struct{}
 func (failingProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
 	return nil, fmt.Errorf("simulated outage")
 }
+
+type failingWeather struct{}
+
+func (failingWeather) Current(context.Context, float64, float64) (Weather, error) {
+	return Weather{}, fmt.Errorf("simulated weather outage")
+}
+func (failingWeather) CurrentCached(float64, float64) (Weather, bool) { return Weather{}, false }
 
 type fixedProvider []Restaurant
 
@@ -349,7 +360,7 @@ func TestSearchSingleFlightPerRoom(t *testing.T) {
 	}
 }
 
-func TestSearchAndDrawHappyPath(t *testing.T) {
+func TestSearchAndDrawHappyPathExposureBaseline(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
@@ -371,6 +382,9 @@ func TestSearchAndDrawHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = pool.Exec(ctx,
 		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		 values ($1, $2, 'lobby', 25.0478, 121.5170)
@@ -384,6 +398,7 @@ func TestSearchAndDrawHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
 		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
 	})
 
@@ -408,8 +423,15 @@ func TestSearchAndDrawHappyPath(t *testing.T) {
 			Trace        []TraceEntry `json:"trace"`
 		} `json:"kept"`
 	}
-	if err := json.Unmarshal(w1.Body.Bytes(), &sr); err != nil || len(sr.Kept) == 0 {
-		t.Fatalf("search 應回非空 kept：%v %s", err, w1.Body.String())
+	if err := json.Unmarshal(w1.Body.Bytes(), &sr); err != nil || len(sr.Kept) < 2 {
+		t.Fatalf("baseline 行為測試至少需要 2 家 kept：%v %s", err, w1.Body.String())
+	}
+	oldID, newID := sr.Kept[0].RestaurantID, sr.Kept[1].RestaurantID
+	// 在本房 search 寫入的 +1 之外，替 oldID 再加一次既有曝光；其餘候選仍只有本房的 +1。
+	if _, err := pool.Exec(ctx, `update public.exposure_stats
+		set recommended_count = recommended_count + 1
+		where user_id = $1 and restaurant_id = $2`, hostID, oldID); err != nil {
+		t.Fatal(err)
 	}
 
 	if w := do(fmt.Sprintf("/api/rooms/%s/search", roomID)); w.Code != http.StatusConflict {
@@ -417,6 +439,47 @@ func TestSearchAndDrawHappyPath(t *testing.T) {
 	}
 	if w := do("/api/rooms/" + roomID + "/start-voting"); w.Code != http.StatusOK {
 		t.Fatalf("start-voting: want 200 got %d body %s", w.Code, w.Body.String())
+	}
+	vote := func(kind, op, restaurantID string) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"restaurant_id":%q,"kind":%q,"op":%q}`, restaurantID, kind, op)
+		req := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/vote", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+	// 第一次 rescore 將 search-kept 的新店暫時排除，迫使 room_candidates.status 改寫為 excluded。
+	if w := vote("veto", "cast", newID); w.Code != http.StatusOK {
+		t.Fatalf("first vote: want 200 got %d body %s", w.Code, w.Body.String())
+	}
+	// 第二次 rescore 收回否決、重新保留新店；baseline 必須仍記得它在 search 時確實計入曝光。
+	voteW := vote("veto", "retract", newID)
+	if voteW.Code != http.StatusOK {
+		t.Fatalf("second vote: want 200 got %d body %s", voteW.Code, voteW.Body.String())
+	}
+	var vr struct {
+		Kept []struct {
+			RestaurantID string       `json:"restaurant_id"`
+			Trace        []TraceEntry `json:"trace"`
+		} `json:"kept"`
+	}
+	if err := json.Unmarshal(voteW.Body.Bytes(), &vr); err != nil {
+		t.Fatalf("vote 回應無法解析：%v %s", err, voteW.Body.String())
+	}
+	var newStoreTrace TraceEntry
+	foundNewStoreTrace := false
+	for _, candidate := range vr.Kept {
+		if candidate.RestaurantID != newID {
+			continue
+		}
+		for _, entry := range candidate.Trace {
+			if entry.Factor == "exposure" {
+				newStoreTrace, foundNewStoreTrace = entry, true
+			}
+		}
+	}
+	if !foundNewStoreTrace || newStoreTrace.Mult != 1.1 || !strings.Contains(newStoreTrace.Reason, "新出現") {
+		t.Fatalf("vote 應扣除本房 search +1 並保留新店加成，got %+v found=%v", newStoreTrace, foundNewStoreTrace)
 	}
 
 	w2 := do(fmt.Sprintf("/api/rooms/%s/draw", roomID))
@@ -432,6 +495,128 @@ func TestSearchAndDrawHappyPath(t *testing.T) {
 	}
 	if w := do(fmt.Sprintf("/api/rooms/%s/draw", roomID)); w.Code != http.StatusConflict {
 		t.Fatalf("重複 draw: want 409 got %d", w.Code)
+	}
+}
+
+func TestVotePreservesExcludedAtSearchExposureBaseline(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const (
+		hostID   = "14141414-1414-4141-8141-141414141414"
+		roomID   = "15151515-1515-4151-8151-151515151515"
+		targetID = "16161616-1616-4161-8161-161616161616"
+		anchorID = "17171717-1717-4171-8171-171717171717"
+	)
+	if _, err := pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `delete from auth.users where id = $1`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `delete from public.restaurants where id in ($1, $2)`, targetID, anchorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
+		values ($1, 'baseline-r2@test.dev')`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.rooms
+		(id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'voting', 25.0478, 121.5170)`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		values ($1, $2, 500, '["japanese"]', 2000, 'walking')`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.restaurants
+		(id, place_id, name, cuisine_tags, price_level, lat, lng, opening_hours)
+		values
+			($1, 'baseline-r2-target', '搜尋時排除餐廳', '["japanese"]', 1, 25.0478, 121.5171,
+			 '{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}'),
+			($2, 'baseline-r2-anchor', '歷史餐廳', '["japanese"]', 1, 25.0478, 121.5172,
+			 '{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}')`, targetID, anchorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.room_candidates
+		(room_id, restaurant_id, status, probability, exclusion_reason, exposure_counted)
+		values
+			($1, $2, 'excluded', null, '搜尋時尚未符合條件', false),
+			($1, $3, 'kept', 1, null, true)`, roomID, targetID, anchorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.exposure_stats
+		(user_id, restaurant_id, recommended_count)
+		values ($1, $2, 1), ($1, $3, 3)`, hostID, targetID, anchorID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+		pool.Exec(ctx, `delete from auth.users where id = $1`, hostID)
+		pool.Exec(ctx, `delete from public.restaurants where id in ($1, $2)`, targetID, anchorID)
+	})
+
+	h := newTestApp(t, pool)
+	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
+	vote := func(op string) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"restaurant_id":%q,"kind":"up","op":%q}`, targetID, op)
+		req := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/vote", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+	// 第一次 rescore 讓原本 excluded 的候選變 kept；第二次必須仍保留 exposure_counted=false。
+	if w := vote("cast"); w.Code != http.StatusOK {
+		t.Fatalf("first vote: want 200 got %d body %s", w.Code, w.Body.String())
+	}
+	second := vote("retract")
+	if second.Code != http.StatusOK {
+		t.Fatalf("second vote: want 200 got %d body %s", second.Code, second.Body.String())
+	}
+	var response struct {
+		Kept []struct {
+			RestaurantID string       `json:"restaurant_id"`
+			Trace        []TraceEntry `json:"trace"`
+		} `json:"kept"`
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &response); err != nil {
+		t.Fatalf("second vote 回應無法解析：%v %s", err, second.Body.String())
+	}
+	found := false
+	for _, candidate := range response.Kept {
+		if candidate.RestaurantID != targetID {
+			continue
+		}
+		for _, entry := range candidate.Trace {
+			if entry.Factor == "exposure" {
+				found = true
+				if entry.Mult != 1.0 || strings.Contains(entry.Reason, "新出現") {
+					t.Fatalf("未在 search 計入曝光的候選不可扣 baseline：got %+v", entry)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("target candidate 缺少 exposure trace")
+	}
+	var counted bool
+	if err := pool.QueryRow(ctx, `select exposure_counted from public.room_candidates
+		where room_id = $1 and restaurant_id = $2`, roomID, targetID).Scan(&counted); err != nil {
+		t.Fatal(err)
+	}
+	if counted {
+		t.Fatal("兩次 rescore 後 exposure_counted 不可由 false 變 true")
 	}
 }
 
@@ -609,7 +794,7 @@ func TestSearchFallsBackToCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := buildRoutes(v, pool, failingProvider{}, newLimiterStore(1000, 1000))
+	h := buildRoutes(v, pool, failingProvider{}, nil, newLimiterStore(1000, 1000))
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
 	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
 	r.Header.Set("Authorization", "Bearer "+token)
@@ -830,7 +1015,7 @@ func TestSearchNoCacheReturns502(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := buildRoutes(v, pool, failingProvider{}, newLimiterStore(1000, 1000))
+	h := buildRoutes(v, pool, failingProvider{}, nil, newLimiterStore(1000, 1000))
 	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
 	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
 	w := httptest.NewRecorder()
@@ -1336,5 +1521,141 @@ func TestDrawAllVetoed(t *testing.T) {
 	var status string
 	if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).Scan(&status); err != nil || status != "voting" {
 		t.Fatalf("全否決後房間應停留在 voting，got %q err %v", status, err)
+	}
+}
+
+func TestSearchExposureOrderingNewStoreBonus(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	hostID := "31313131-3131-3131-3131-313131313131"
+	roomA := "32323232-3232-3232-3232-323232323232"
+	roomB := "34343434-3434-3434-3434-343434343434"
+	if _, err := pool.Exec(ctx,
+		`insert into auth.users (id, email) values ($1, 'exposure@test.dev') on conflict do nothing`,
+		hostID); err != nil {
+		t.Fatal(err)
+	}
+	for _, rid := range []string{roomA, roomB} {
+		if _, err := pool.Exec(ctx,
+			`insert into public.rooms (id, host_id, status, center_lat, center_lng)
+			 values ($1, $2, 'lobby', 25.0478, 121.5170)
+			 on conflict (id) do update set status = 'lobby'`, rid, hostID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx,
+			`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+			 values ($1, $2, 1600, '["japanese"]', 2000, 'walking') on conflict do nothing`,
+			rid, hostID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.rooms where id = any($1::uuid[])`, []string{roomA, roomB})
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+	})
+
+	h := newTestApp(t, pool)
+	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
+	exposureTrace := func(roomID string) (TraceEntry, bool) {
+		r := httptest.NewRequest("POST", fmt.Sprintf("/api/rooms/%s/search", roomID), nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("search %s: want 200 got %d body %s", roomID, w.Code, w.Body.String())
+		}
+		var sr struct {
+			Kept []struct {
+				Trace []TraceEntry `json:"trace"`
+			} `json:"kept"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &sr); err != nil || len(sr.Kept) == 0 {
+			t.Fatalf("kept 不可為空：%v %s", err, w.Body.String())
+		}
+		for _, e := range sr.Kept[0].Trace {
+			if e.Factor == "exposure" {
+				return e, true
+			}
+		}
+		return TraceEntry{}, false
+	}
+
+	// 房 A 首搜：全場皆新 → 中性、無 exposure chip（D21）。
+	// 順序證明：若 RecordExposure 誤移到 Evaluate 之前，房 A 就會看到「推薦過」trace。
+	if e, ok := exposureTrace(roomA); ok {
+		t.Fatalf("房 A 首搜全場皆新，不應有 exposure trace（若出現「推薦過」= 順序被打破），got %+v", e)
+	}
+	// 房 B：同批餐廳已在房 A 被推薦 → 「推薦過但尚未中選」具名中性 trace
+	if e, ok := exposureTrace(roomB); !ok || e.Mult != 1.0 || !strings.Contains(e.Reason, "推薦過") {
+		t.Fatalf("房 B 應為「推薦過但尚未中選」中性，got %+v ok=%v", e, ok)
+	}
+}
+
+func TestSearchSurvivesWeatherOutage(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	hostID := "35353535-3535-3535-3535-353535353535"
+	roomID := "36363636-3636-3636-3636-363636363636"
+	if _, err := pool.Exec(ctx,
+		`insert into auth.users (id, email) values ($1, 'weather@test.dev') on conflict do nothing`,
+		hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
+		 values ($1, $2, 'lobby', 25.0478, 121.5170)
+		 on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		 values ($1, $2, 1600, '["japanese"]', 2000, 'walking') on conflict do nothing`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+	})
+
+	h := newTestAppWithWeather(t, pool, NewMockProvider(), failingWeather{})
+	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
+	r := httptest.NewRequest("POST", fmt.Sprintf("/api/rooms/%s/search", roomID), nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("天氣故障不得阻斷 search：want 200 got %d body %s", w.Code, w.Body.String())
+	}
+	var sr struct {
+		Kept []struct {
+			Trace []TraceEntry `json:"trace"`
+		} `json:"kept"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &sr); err != nil || len(sr.Kept) == 0 {
+		t.Fatalf("kept 不可為空：%v %s", err, w.Body.String())
+	}
+	for _, e := range sr.Kept[0].Trace {
+		if e.Factor == "weather" {
+			t.Fatalf("天氣失敗時不得產生 weather trace：%+v", e)
+		}
 	}
 }

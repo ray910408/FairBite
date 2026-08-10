@@ -341,7 +341,7 @@ func TestRecencyFactor(t *testing.T) {
 		{"15-30 天減半計", RecencyCount{Fading: 4}, "balanced", 4, 0.65},
 		{"無紀錄中性", RecencyCount{}, "balanced", 4, 1.0},
 		{"熟悉檔懲罰減半", RecencyCount{Fresh: 4}, "familiar", 4, 0.65},
-		{"探索檔加重", RecencyCount{Fresh: 4}, "explore", 4, 0.125},
+		{"explore 的 recency 與 balanced 等價（探索語意改由 exposure 因素承擔）", RecencyCount{Fresh: 4}, "explore", 4, 0.3},
 		{"空字串視為 balanced", RecencyCount{Fresh: 4}, "", 4, 0.3},
 	}
 	for _, c := range cases {
@@ -365,4 +365,230 @@ func TestRecencyReason(t *testing.T) {
 		}
 	}
 	t.Fatal("trace 缺 recency")
+}
+
+// 場上固定放一家「舊店」（Recommended>0）：新店加成只在混合場景有相對意義，
+// 全場皆新時會被正規化抵銷、應為中性（D21）——單獨測 p1 時需要這個對照組。
+func exposureIn(c ExposureCount, exploration string) EngineInput {
+	old := rest(func(r *Restaurant) { r.PlaceID = "p-old" })
+	return EngineInput{Restaurants: []Restaurant{rest(nil), old}, Members: []Member{member(nil)},
+		Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+		Exposure:    map[string]ExposureCount{"p1": c, "p-old": {Recommended: 3}},
+		Exploration: exploration}
+}
+
+func exposureMult(t *testing.T, in EngineInput) (float64, bool) {
+	t.Helper()
+	res := Evaluate(in)
+	if len(res.Kept) == 0 {
+		t.Fatalf("應保留，got %+v", res.Excluded)
+	}
+	for _, e := range res.Kept[0].Trace { // Kept[0] = p1（輸入順序）
+		if e.Factor == "exposure" {
+			return e.Mult, true
+		}
+	}
+	return 1.0, false
+}
+
+func TestExposureFactor(t *testing.T) {
+	cases := []struct {
+		name        string
+		c           ExposureCount
+		exploration string
+		want        float64
+		wantTrace   bool
+	}{
+		{"新店_balanced", ExposureCount{}, "balanced", 1.1, true},
+		{"新店_explore加倍", ExposureCount{}, "explore", 1.2, true},
+		{"新店_familiar關閉", ExposureCount{}, "familiar", 1.0, false},
+		{"推薦過未中選_中性", ExposureCount{Recommended: 3}, "balanced", 1.0, true},
+		{"熟店_內插", ExposureCount{Recommended: 9, Chosen: 2}, "balanced", 0.96, true}, // 單人房：2/(5*1)=0.4
+		{"熟店_達門檻", ExposureCount{Recommended: 9, Chosen: 5}, "balanced", 0.9, true},
+		{"熟店_explore加重", ExposureCount{Recommended: 9, Chosen: 5}, "explore", 0.85, true},
+		{"熟店_familiar關閉", ExposureCount{Recommended: 9, Chosen: 5}, "familiar", 1.0, false},
+		{"未知檔位當balanced", ExposureCount{}, "", 1.1, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, hasTrace := exposureMult(t, exposureIn(c.c, c.exploration))
+			if hasTrace != c.wantTrace {
+				t.Fatalf("trace presence = %v, want %v", hasTrace, c.wantTrace)
+			}
+			if diff := got - c.want; diff > 1e-9 || diff < -1e-9 {
+				t.Errorf("mult = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestNilExposureNeutral(t *testing.T) {
+	in := exposureIn(ExposureCount{}, "balanced")
+	in.Exposure = nil
+	if _, hasTrace := exposureMult(t, in); hasTrace {
+		t.Fatal("Exposure nil 不應產生 exposure trace")
+	}
+}
+
+// D21/OV#7：全場皆新（區域首搜）時一致加成會被正規化抵銷 → 必須中性、不出虛構 chip
+func TestAllNewCandidatesNeutral(t *testing.T) {
+	in := exposureIn(ExposureCount{}, "balanced")
+	in.Exposure["p-old"] = ExposureCount{} // 對照組也歸零 → 全場皆新
+	if _, hasTrace := exposureMult(t, in); hasTrace {
+		t.Fatal("全場皆新不應產生 exposure trace（加成會被 normalize 抵銷）")
+	}
+}
+
+func TestExposureAllNewSurvivorsNeutralWhenOldCandidateExcluded(t *testing.T) {
+	in := exposureIn(ExposureCount{}, "balanced")
+	in.Restaurants[1].PriceLevel = 4 // p-old 超過成員預算，會在 factor pipeline 前被排除
+	if _, hasTrace := exposureMult(t, in); hasTrace {
+		t.Fatal("所有存活候選皆新時不應讓已排除舊店觸發 exposure trace")
+	}
+}
+
+func TestExposureBaselineTreatsOwnSearchAsNew(t *testing.T) {
+	in := exposureIn(ExposureCount{Recommended: 2}, "balanced")
+	in.Members = append(in.Members, member(func(m *Member) { m.UserID = "u2" }))
+	in.ExposureBaseline = map[string]int{"p1": len(in.Members)}
+	got, hasTrace := exposureMult(t, in)
+	if !hasTrace || got != 1.1 {
+		t.Fatalf("Recommended 等於本房 baseline 應視為新店：got %v trace=%v", got, hasTrace)
+	}
+}
+
+func TestExposureBaselineDoesNotSubtractCandidateExcludedAtSearch(t *testing.T) {
+	in := exposureIn(ExposureCount{Recommended: 2}, "balanced")
+	in.Members = append(in.Members, member(func(m *Member) { m.UserID = "u2" }))
+	// p1 搜尋時遭排除，沒有收到本房曝光 +1，因此不在 baseline map。
+	in.ExposureBaseline = map[string]int{"p-old": len(in.Members)}
+
+	entry := exposureFactor(in.Restaurants[0], in)
+	if entry.Mult != 1.0 || strings.Contains(entry.Reason, "新出現") {
+		t.Fatalf("搜尋時被排除的候選不可扣 baseline 或取得新店加成：got %+v", entry)
+	}
+}
+
+// 五人房吃過一次 ≠ 吃滿懲罰（D21/OV#5：人均門檻）
+func TestChosenPenaltyIsPerCapita(t *testing.T) {
+	in := exposureIn(ExposureCount{Recommended: 9, Chosen: 1}, "balanced")
+	for i := 2; i <= 5; i++ {
+		in.Members = append(in.Members, member(func(m *Member) { m.UserID = fmt.Sprintf("u%d", i) }))
+	}
+	got, hasTrace := exposureMult(t, in)
+	want := 1 - 0.1*(1.0/25.0) // 1/(5*5) = 0.04 → 0.996
+	if !hasTrace || got < want-1e-9 || got > want+1e-9 {
+		t.Fatalf("五人房 Chosen=1 應僅極輕降權：got %v want %v", got, want)
+	}
+	if entry := exposureFactor(in.Restaurants[0], in); entry.Reason != "房內累計中選 1 人次，稍作降權" {
+		t.Fatalf("中選 trace 應使用人次：got %q", entry.Reason)
+	}
+}
+
+func rainIn(w *Weather, transport string, lat float64) EngineInput {
+	return EngineInput{
+		Restaurants: []Restaurant{rest(func(r *Restaurant) { r.Lat = lat })},
+		Members:     []Member{member(func(m *Member) { m.Transport = transport })},
+		Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+		Weather: w,
+	}
+}
+
+func weatherMult(t *testing.T, in EngineInput) (float64, bool) {
+	t.Helper()
+	res := Evaluate(in)
+	if len(res.Kept) != 1 {
+		t.Fatalf("應保留，got %+v", res.Excluded)
+	}
+	for _, e := range res.Kept[0].Trace {
+		if e.Factor == "weather" {
+			return e.Mult, true
+		}
+	}
+	return 1.0, false
+}
+
+func TestRainFactor(t *testing.T) {
+	rain := &Weather{RainMM: 2.0}
+	cases := []struct {
+		name      string
+		in        EngineInput
+		want      float64
+		wantTrace bool
+	}{
+		{"無資料中性", rainIn(nil, "walking", 25.0586), 1.0, false},
+		{"沒下雨中性", rainIn(&Weather{RainMM: 0}, "walking", 25.0586), 1.0, false},
+		{"雨天步行遠_降權", rainIn(rain, "walking", 25.0586), 0.78, true},
+		{"雨天開車_中性無trace", rainIn(rain, "driving", 25.0586), 1.0, false},
+		{"雨天步行近_中性有trace", rainIn(rain, "walking", 25.0480), 1.0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, hasTrace := weatherMult(t, c.in)
+			if hasTrace != c.wantTrace {
+				t.Fatalf("trace presence = %v, want %v", hasTrace, c.wantTrace)
+			}
+			if diff := got - c.want; diff > 0.01 || diff < -0.01 {
+				t.Errorf("mult = %v, want %v", got, c.want)
+			}
+		})
+	}
+
+	t.Run("混合交通取平均", func(t *testing.T) {
+		rain := &Weather{RainMM: 2.0}
+		in := rainIn(rain, "walking", 25.0586)
+		in.Members = append(in.Members, member(func(m *Member) { m.UserID = "u2"; m.Transport = "driving" }))
+		got, hasTrace := weatherMult(t, in)
+		if !hasTrace || got < 0.88 || got > 0.90 { // (0.78 + 1.0) / 2 ≈ 0.89
+			t.Fatalf("got %v trace=%v, want ≈0.89", got, hasTrace)
+		}
+	})
+}
+
+func TestTimeSlotFactor(t *testing.T) {
+	slotMult := func(now time.Time, tags []string) (float64, bool) {
+		res := Evaluate(EngineInput{
+			Restaurants: []Restaurant{rest(func(r *Restaurant) { r.CuisineTags = tags })},
+			Members:     []Member{member(nil)},
+			Now:         now, CenterLat: 25.0478, CenterLng: 121.5170})
+		if len(res.Kept) != 1 {
+			t.Fatalf("應保留，got %+v", res.Excluded)
+		}
+		for _, e := range res.Kept[0].Trace {
+			if e.Factor == "timeslot" {
+				return e.Mult, true
+			}
+		}
+		return 1.0, false
+	}
+	morning := at(time.Monday, 8, 0)
+	if m, ok := slotMult(morning, []string{"breakfast", "taiwanese"}); !ok || m != TimeSlotBoostMult {
+		t.Errorf("早餐時段 breakfast 應加成，got %v %v", m, ok)
+	}
+	if _, ok := slotMult(lunchMonday, []string{"breakfast"}); ok {
+		t.Error("午餐時段不在任何 slot，不應有 timeslot trace")
+	}
+	if _, ok := slotMult(morning, []string{"japanese"}); ok {
+		t.Error("早餐時段未命中 tag 不應有 trace")
+	}
+	// D23：晚餐 slot 不存在（hotpot 無真實 tag 來源），晚上不得有任何 timeslot trace
+	if _, ok := slotMult(at(time.Monday, 19, 0), []string{"hotpot"}); ok {
+		t.Error("晚餐時段已移除，不應有 trace")
+	}
+	// 時段邊界（2026-08-10 eng review Test Review）
+	for _, c := range []struct {
+		name string
+		now  time.Time
+		tags []string
+		want bool
+	}{
+		{"05:59 不在早餐時段", at(time.Monday, 5, 59), []string{"breakfast"}, false},
+		{"06:00 起算", at(time.Monday, 6, 0), []string{"breakfast"}, true},
+		{"10:59 仍算", at(time.Monday, 10, 59), []string{"breakfast"}, true},
+		{"11:00 結束", at(time.Monday, 11, 0), []string{"breakfast"}, false},
+	} {
+		if _, ok := slotMult(c.now, c.tags); ok != c.want {
+			t.Errorf("%s: trace presence = %v, want %v", c.name, ok, c.want)
+		}
+	}
 }

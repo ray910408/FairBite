@@ -26,6 +26,11 @@ type RecencyCount struct {
 	Fading int
 }
 
+type ExposureCount struct {
+	Recommended int // 房內成員 recommended_count 總和
+	Chosen      int // 房內成員 chosen_count 總和
+}
+
 type TraceEntry struct {
 	Factor string  `json:"factor"`
 	Mult   float64 `json:"mult"`
@@ -59,9 +64,12 @@ type EngineInput struct {
 	Members              []Member
 	Now                  time.Time
 	CenterLat, CenterLng float64
-	Votes                map[string]VoteInfo     // key = rkey(r)；nil = 無投票資料（P1 相容）
-	Recency              map[string]RecencyCount // key = rkey(r)；nil = 無紀錄
-	Exploration          string                  // familiar/balanced/explore；"" 視為 balanced
+	Weather              *Weather                 // nil = 無資料（provider 失敗或未接），中性
+	Votes                map[string]VoteInfo      // key = rkey(r)；nil = 無投票資料（P1 相容）
+	Recency              map[string]RecencyCount  // key = rkey(r)；nil = 無紀錄
+	Exposure             map[string]ExposureCount // key = rkey(r)；nil = 無統計（相容舊測試）
+	ExposureBaseline     map[string]int           // vote/draw 僅為 search 時 kept（收到本房 +1）的候選填 len(members)；nil = 不扣
+	Exploration          string                   // familiar/balanced/explore；"" 視為 balanced
 }
 
 type EngineResult struct {
@@ -153,12 +161,18 @@ func prefFactor(r Restaurant, in EngineInput) TraceEntry {
 		fmt.Sprintf("%d/%d 位成員偏好命中", hits, len(in.Members))}
 }
 
+// travelMinutes：單一成員到某距離的通勤分鐘數（overhead + 距離/速度）。
+// distFactor 與 rainFactor 共用——兩個因素對「通勤時間」的定義不許分岔（OV#23）。
+func travelMinutes(m Member, distM float64) float64 {
+	return TransportOverheadMin[m.Transport] + distM/TransportMetersPerMin[m.Transport]
+}
+
 func distFactor(r Restaurant, in EngineInput) TraceEntry {
 	dist := Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng)
 	var sumMult, sumMin, worstMin float64
 	worstTransport := in.Members[0].Transport
 	for _, m := range in.Members {
-		minutes := TransportOverheadMin[m.Transport] + dist/TransportMetersPerMin[m.Transport]
+		minutes := travelMinutes(m, dist)
 		frac := (minutes - DistBestMin) / (DistWorstMin - DistBestMin)
 		if frac < 0 {
 			frac = 0
@@ -176,6 +190,61 @@ func distFactor(r Restaurant, in EngineInput) TraceEntry {
 	return TraceEntry{"distance", sumMult / n,
 		fmt.Sprintf("平均交通約 %.0f 分鐘（最慢 %.0f 分鐘，%s）",
 			sumMin/n, worstMin, TransportLabels[worstTransport])}
+}
+
+func rainFactor(r Restaurant, in EngineInput) TraceEntry {
+	if in.Weather == nil || in.Weather.RainMM < RainThresholdMM {
+		return TraceEntry{Mult: 1.0}
+	}
+	dist := Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng)
+	var sum float64
+	walkers := 0
+	for _, m := range in.Members {
+		if m.Transport != "walking" {
+			sum += 1.0
+			continue
+		}
+		walkers++
+		minutes := travelMinutes(m, dist)
+		frac := (minutes - RainWalkFreeMin) / (RainWalkWorstMin - RainWalkFreeMin)
+		if frac < 0 {
+			frac = 0
+		}
+		if frac > 1 {
+			frac = 1
+		}
+		sum += 1 - (1-RainWalkPenaltyMult)*frac
+	}
+	if walkers == 0 {
+		return TraceEntry{Mult: 1.0}
+	}
+	mult := sum / float64(len(in.Members))
+	if mult > 0.999 {
+		return TraceEntry{"weather", 1.0, "雨天，但步行距離近"}
+	}
+	return TraceEntry{"weather", mult, fmt.Sprintf("雨天，%d 位步行成員路程較遠", walkers)}
+}
+
+func timeSlotOf(t time.Time) string {
+	for slot, hr := range TimeSlotHours { // slot 區間不重疊，map 迭代順序無關
+		if h := t.Hour(); h >= hr[0] && h < hr[1] {
+			return slot
+		}
+	}
+	return ""
+}
+
+func timeSlotFactor(r Restaurant, in EngineInput) TraceEntry {
+	slot := timeSlotOf(in.Now)
+	if slot == "" {
+		return TraceEntry{Mult: 1.0}
+	}
+	for _, tag := range TimeSlotBoosts[slot] {
+		if hasTag(r.CuisineTags, tag) {
+			return TraceEntry{"timeslot", TimeSlotBoostMult, TimeSlotLabels[slot] + "加成"}
+		}
+	}
+	return TraceEntry{Mult: 1.0}
 }
 
 func closingFactor(r Restaurant, in EngineInput) TraceEntry {
@@ -200,16 +269,73 @@ func voteFactor(r Restaurant, in EngineInput) TraceEntry {
 		fmt.Sprintf("%d 張贊成票", ups)}
 }
 
+func gearScale(scales map[string]float64, exploration string) float64 {
+	if s, ok := scales[exploration]; ok {
+		return s
+	}
+	return scales["balanced"]
+}
+
+// effectiveRecommended：扣掉該候選在本房 search 收到的自房 +1 後推薦次數（clamp 0）。
+func effectiveRecommended(r Restaurant, c ExposureCount, in EngineInput) int {
+	n := c.Recommended - in.ExposureBaseline[rkey(r)]
+	if n < 0 {
+		n = 0
+	}
+	return n
+}
+
+// allCandidatesNew：全場存活候選皆未被推薦過（區域首搜的常態）。
+// ponytail: O(n²)（每家候選掃一次全場），n ≤ 數十，夠用
+func allCandidatesNew(in EngineInput) bool {
+	for _, r := range in.Restaurants {
+		if effectiveRecommended(r, in.Exposure[rkey(r)], in) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func exposureFactor(r Restaurant, in EngineInput) TraceEntry {
+	if in.Exposure == nil {
+		return TraceEntry{Mult: 1.0} // 無統計資料：中性且不產生 trace（比照 closingFactor 先例）
+	}
+	c := in.Exposure[rkey(r)]
+	if effectiveRecommended(r, c, in) == 0 {
+		scale := gearScale(NewStoreBonusScale, in.Exploration)
+		if scale == 0 {
+			return TraceEntry{Mult: 1.0} // 熟悉檔：新店加成關閉，不出 chip
+		}
+		// 全場皆新（區域首搜常態）：一致加成會在正規化後抵銷 → 中性且不出 chip，
+		// 不產生虛構 trace（eng review D21/OV#7）。只有「舊場景中新出現的店」有相對加成。
+		if allCandidatesNew(in) {
+			return TraceEntry{Mult: 1.0}
+		}
+		return TraceEntry{"exposure", 1 + (NewStoreBonusMult-1)*scale, "新出現的店家"}
+	}
+	if c.Chosen == 0 {
+		return TraceEntry{"exposure", 1.0, "推薦過但尚未中選"}
+	}
+	penaltyScale := gearScale(ChosenPenaltyScale, in.Exploration)
+	if penaltyScale == 0 {
+		return TraceEntry{Mult: 1.0} // 熟悉檔：熟店降權關閉（eng review D8），不出誤導性 chip
+	}
+	// 人均中選次數（D21/OV#5）：Chosen 是跨成員總和，不除人數會隨房間人數暴衝
+	frac := float64(c.Chosen) / (float64(ChosenPenaltyAtCount) * float64(len(in.Members)))
+	if frac > 1 {
+		frac = 1
+	}
+	mult := 1 - (1-ChosenPenaltyMult)*frac*penaltyScale
+	return TraceEntry{"exposure", mult, fmt.Sprintf("房內累計中選 %d 人次，稍作降權", c.Chosen)}
+}
+
 func recencyFactor(r Restaurant, in EngineInput) TraceEntry {
 	c := in.Recency[rkey(r)]
 	if c.Fresh == 0 && c.Fading == 0 {
 		return TraceEntry{"recency", 1.0, "近 30 天無成員造訪"}
 	}
 	eff := (float64(c.Fresh) + RecencyFadingWeight*float64(c.Fading)) / float64(len(in.Members))
-	scale, ok := RecencyPenaltyScale[in.Exploration]
-	if !ok {
-		scale = RecencyPenaltyScale["balanced"]
-	}
+	scale := gearScale(RecencyPenaltyScale, in.Exploration)
 	mult := 1 - (1-RecencyFloorMult)*eff*scale
 	if mult < RecencyMinMult {
 		mult = RecencyMinMult
@@ -224,10 +350,11 @@ func recencyFactor(r Restaurant, in EngineInput) TraceEntry {
 	return TraceEntry{"recency", mult, strings.Join(parts, "；")}
 }
 
-var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor}
+var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor, exposureFactor, rainFactor, timeSlotFactor}
 
 func Evaluate(in EngineInput) EngineResult {
 	var res EngineResult
+	survivors := make([]Restaurant, 0, len(in.Restaurants))
 	for _, r := range in.Restaurants {
 		if kinds, reasons := hardExclude(r, in.Members, in.Now); len(kinds) > 0 {
 			res.Excluded = append(res.Excluded, Excluded{r, kinds, strings.Join(reasons, "；")})
@@ -238,6 +365,10 @@ func Evaluate(in EngineInput) EngineResult {
 				fmt.Sprintf("遭 %s 否決（可收回）", strings.Join(v.Vetoers, "、"))})
 			continue
 		}
+		survivors = append(survivors, r)
+	}
+	in.Restaurants = survivors
+	for _, r := range survivors {
 		c := Candidate{Restaurant: r, Score: 1.0}
 		for _, f := range factors {
 			e := f(r, in)
