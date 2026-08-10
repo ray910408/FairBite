@@ -442,7 +442,12 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	reloadedRadius := minimumMemberRadius(members)
-	// 收緊後須以相同的「全員最小距離」fetch envelope 重濾；放寬只代表先前 under-fetch，保留既有 found。
+	// tx 內重讀的「全員最小距離」有三種情況：縮小則重濾、相等則直接繼續；
+	// 放大代表先前的 fetch envelope under-fetch，回 409 並由 deferred rollback 留在 lobby，讓 host 重搜。
+	if reloadedRadius > fetchedRadius {
+		jsonError(w, http.StatusConflict, "成員條件已於搜尋期間變更，請再按一次開始搜尋")
+		return
+	}
 	if reloadedRadius < fetchedRadius {
 		withinReloadedRadius := found[:0]
 		for _, restaurant := range found {

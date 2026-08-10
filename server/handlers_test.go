@@ -58,6 +58,21 @@ func (p conditionUpdateProvider) SearchNearby(ctx context.Context, _ float64, _ 
 	return append([]Restaurant(nil), p.restaurants...), nil
 }
 
+type radiusGrowthProvider struct {
+	pool        *pgxpool.Pool
+	roomID      string
+	userID      string
+	restaurants []Restaurant
+}
+
+func (p radiusGrowthProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) ([]Restaurant, error) {
+	if _, err := p.pool.Exec(ctx, `update room_members set max_distance_m = 2000
+		where room_id = $1 and user_id = $2`, p.roomID, p.userID); err != nil {
+		return nil, err
+	}
+	return append([]Restaurant(nil), p.restaurants...), nil
+}
+
 type blockingProvider struct {
 	calls        atomic.Int32
 	firstStarted chan struct{}
@@ -163,6 +178,71 @@ func TestSearchReloadsMemberConditionsAfterProviderCall(t *testing.T) {
 		if candidate.Name == farName {
 			t.Fatalf("超出更新後 frozen radius 的餐廳不可出現在 kept/excluded：%s", w.Body.String())
 		}
+	}
+}
+
+func TestSearchBouncesWhenRadiusGrowsDuringProviderCall(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const (
+		hostID  = "61616161-6161-6161-6161-616161616161"
+		roomID  = "62626262-6262-6262-6262-626262626262"
+		placeID = "radius-growth-race"
+		message = "成員條件已於搜尋期間變更，請再按一次開始搜尋"
+	)
+	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+		values ($1, 'radius-growth@test.dev') on conflict do nothing`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `insert into public.rooms
+		(id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 25.0478, 121.5170)
+		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
+		values ($1, $2, 500, '[]', '[]', 300, 'walking')
+		on conflict (room_id, user_id) do update set max_distance_m = 300`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+		pool.Exec(ctx, `delete from public.restaurants where place_id = $1`, placeID)
+	})
+
+	provider := radiusGrowthProvider{pool: pool, roomID: roomID, userID: hostID, restaurants: []Restaurant{{
+		PlaceID: placeID, Name: "搜尋半徑擴大測試餐廳", PriceLevel: 1,
+		Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
+	}}}
+	h := newTestAppWithProvider(t, pool, provider)
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusConflict || body.Error != message || status != "lobby" {
+		t.Fatalf("搜尋半徑變大時應回 409 並 rollback 回 lobby：status %d body %s room.status %q", w.Code, w.Body.String(), status)
 	}
 }
 
