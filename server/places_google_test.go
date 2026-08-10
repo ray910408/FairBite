@@ -38,7 +38,14 @@ const gSample = `{"places":[
    "location":{"latitude":25.0472,"longitude":121.5162},
    "formattedAddress":"台北市中正區某路4號","rating":4.1,
    "regularOpeningHours":{"periods":[
-     {"open":{"day":5,"hour":10,"minute":0},"close":{"day":6,"hour":12,"minute":0}}]}}
+     {"open":{"day":5,"hour":10,"minute":0},"close":{"day":6,"hour":12,"minute":0}}]}},
+  {"id":"gp-5","displayName":{"text":"跨週末餐廳"},
+   "types":["restaurant"],
+   "priceLevel":"PRICE_LEVEL_INEXPENSIVE",
+   "location":{"latitude":25.0474,"longitude":121.5164},
+   "formattedAddress":"台北市中正區某路5號","rating":4.2,
+   "regularOpeningHours":{"periods":[
+     {"open":{"day":5,"hour":17,"minute":0},"close":{"day":0,"hour":2,"minute":0}}]}}
 ]}`
 
 func gServer(t *testing.T, fail1st bool) *httptest.Server {
@@ -65,8 +72,8 @@ func TestGoogleProviderMapping(t *testing.T) {
 	defer srv.Close()
 	p := NewGooglePlacesProvider("test-key", srv.URL)
 	rs, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000)
-	if err != nil || len(rs) != 4 {
-		t.Fatalf("want 4 restaurants, got %d err %v", len(rs), err)
+	if err != nil || len(rs) != 5 {
+		t.Fatalf("want 5 restaurants, got %d err %v", len(rs), err)
 	}
 	byPID := map[string]Restaurant{}
 	for _, r := range rs {
@@ -111,6 +118,24 @@ func TestGoogleProviderMapping(t *testing.T) {
 		t.Run("multi-day/"+tc.name, func(t *testing.T) {
 			if got := long.Hours.IsOpenAt(tc.at); got != tc.open {
 				t.Errorf("IsOpenAt() = %v, want %v；hours=%v", got, tc.open, long.Hours)
+			}
+		})
+	}
+	weekend := byPID["gp-5"]
+	for _, tc := range []struct {
+		name string
+		at   time.Time
+		open bool
+	}{
+		{"週五開門前", at(time.Friday, 16, 0), false},
+		{"週六中午", at(time.Saturday, 12, 0), true},
+		{"週六深夜", at(time.Saturday, 23, 30), true},
+		{"週日凌晨", at(time.Sunday, 1, 0), true},
+		{"週日關門後", at(time.Sunday, 3, 0), false},
+	} {
+		t.Run("multi-day-close-before-open/"+tc.name, func(t *testing.T) {
+			if got := weekend.Hours.IsOpenAt(tc.at); got != tc.open {
+				t.Errorf("IsOpenAt() = %v, want %v；hours=%v", got, tc.open, weekend.Hours)
 			}
 		})
 	}

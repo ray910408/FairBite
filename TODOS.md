@@ -4,6 +4,12 @@
 
 - **dining_history 刪除語意：** `dining_history.room_id` 目前 `on delete cascade`（0003 migration），與 ADR-0002「紀錄跟人」矛盾——未來做房間清理/保留政策時改為 nullable + `on delete set null`，避免刪房抹掉成員同席紀錄。
 
+### Google Places attribution logo 確認（正式上線前）
+
+- **What:** 依當時最新版 Google 品牌指南確認「Powered by Google」logo 資產與使用方式；目前 UI 已依 `place_id` 自動為 Google 來源資料顯示文字歸因。
+- **Why:** 品牌資產與規範可能更新，正式上線前需以當時版本做最後確認。
+- **Depends on:** hosted 正式上線計畫。
+
 ### limiter map TTL 清理（hosted 前）
 
 - **What:** `server/handlers.go` 的 `limiterStore` per-user map 加 TTL 清理（程式內 ponytail 註解已標「P2 部署時加」）。

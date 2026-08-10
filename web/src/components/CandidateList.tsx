@@ -1,4 +1,5 @@
 import type { CandidateRow, VoteRow } from '../lib/types'
+import { isGoogleSourced } from '../lib/placesSource'
 import { chipLabel, formatPercents, sortExcluded, sortKept } from '../lib/probability'
 import { Chevron } from './icons'
 
@@ -15,6 +16,7 @@ export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; 
   const percents = formatPercents(kept.map(c => c.probability ?? 0))
   const excluded = sortExcluded(rows)
   const max = Math.max(...kept.map(c => c.probability ?? 0), 0.0001)
+  const showGoogleAttribution = rows.some(c => isGoogleSourced(c.restaurants.place_id))
 
   const ups = (rid: string) => voting!.votes.filter(v => v.restaurant_id === rid && v.kind === 'up').length
   const mine = (rid: string, kind: VoteRow['kind']) =>
@@ -90,6 +92,9 @@ export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; 
             ))}
           </ul>
         </details>
+      )}
+      {showGoogleAttribution && (
+        <p className="text-xs text-fg-muted">餐廳資料 Powered by Google</p>
       )}
     </div>
   )

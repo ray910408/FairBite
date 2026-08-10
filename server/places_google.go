@@ -185,17 +185,23 @@ func gHours(p gPlace) OpeningHours {
 		openDay, closeDay := period.Open.Day, period.Close.Day
 		openMin := period.Open.Hour*60 + period.Open.Minute
 		closeMin := period.Close.Hour*60 + period.Close.Minute
-		if closeDay != openDay && closeMin > openMin {
-			oh[weekdayKeys[openDay]] = append(oh[weekdayKeys[openDay]], [2]int{openMin, 1440})
-			for day := (openDay + 1) % len(weekdayKeys); day != closeDay; day = (day + 1) % len(weekdayKeys) {
-				oh[weekdayKeys[day]] = append(oh[weekdayKeys[day]], [2]int{0, 1440})
-			}
-			oh[weekdayKeys[closeDay]] = append(oh[weekdayKeys[closeDay]], [2]int{0, closeMin})
-			// >24 小時時，非最終日的 closing-soon 分鐘會算到午夜；此罕見情況只影響評分細節。
+		delta := (closeDay - openDay + len(weekdayKeys)) % len(weekdayKeys)
+		if delta == 0 {
+			oh[weekdayKeys[openDay]] = append(oh[weekdayKeys[openDay]], [2]int{openMin, closeMin})
 			continue
 		}
-		// 精簡跨夜格式（close.day 不同且 closeMin <= openMin）須保留在 open day，供 carry-over 邏輯使用。
-		oh[weekdayKeys[openDay]] = append(oh[weekdayKeys[openDay]], [2]int{openMin, closeMin})
+		if delta == 1 && closeMin <= openMin {
+			// 精簡跨夜格式須保留在 open day，供 MinutesUntilClose carry-over 邏輯使用。
+			oh[weekdayKeys[openDay]] = append(oh[weekdayKeys[openDay]], [2]int{openMin, closeMin})
+			continue
+		}
+		oh[weekdayKeys[openDay]] = append(oh[weekdayKeys[openDay]], [2]int{openMin, 1440})
+		for offset := 1; offset < delta; offset++ {
+			day := (openDay + offset) % len(weekdayKeys)
+			oh[weekdayKeys[day]] = append(oh[weekdayKeys[day]], [2]int{0, 1440})
+		}
+		oh[weekdayKeys[closeDay]] = append(oh[weekdayKeys[closeDay]], [2]int{0, closeMin})
+		// 跨越完整日的期間，非最終日 closing-soon 分鐘只會算到午夜；此罕見情況只影響評分細節。
 	}
 	return oh
 }

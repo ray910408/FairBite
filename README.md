@@ -37,7 +37,7 @@ go run .
 
 | Go 環境變數 | 必填 | 說明 |
 | --- | --- | --- |
-| `GOOGLE_PLACES_API_KEY` | 否 | 未設定時使用 mock provider；僅供 Go server 使用，絕不放入 web bundle。 |
+| `GOOGLE_PLACES_API_KEY` | 否 | 未設定時使用 mock provider；僅供 Go server 使用，絕不放入 web bundle。Google 來源資料會自動顯示「餐廳資料 Powered by Google」歸因；正式上線前的 logo 資產版本檢查見 `TODOS.md`。 |
 | `APP_TZ` | 否（選填） | 預設 `Asia/Taipei`；營業時間一律以此時區評估；per-place 時區留待未來。 |
 
 ## 測試
