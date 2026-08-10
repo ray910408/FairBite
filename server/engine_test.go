@@ -592,3 +592,131 @@ func TestTimeSlotFactor(t *testing.T) {
 		}
 	}
 }
+
+func TestSatisfactionEMA(t *testing.T) {
+	if got := satisfactionEMA([]float64{1}); got != 1 {
+		t.Fatalf("單樣本即初值，got %v", got)
+	}
+	// 由舊到新折入：初值 1.0，新樣本 0.0 → 0.3*0 + 0.7*1 = 0.7
+	if got := satisfactionEMA([]float64{1, 0}); got < 0.699 || got > 0.701 {
+		t.Fatalf("got %v, want 0.7", got)
+	}
+}
+
+func TestPrefFairnessBoost(t *testing.T) {
+	in := EngineInput{
+		Restaurants: []Restaurant{rest(nil)}, // japanese
+		Members: []Member{
+			member(nil), // u1 小明 japanese
+			member(func(m *Member) { m.UserID = "u2"; m.DisplayName = "小華"; m.Cuisines = []string{"taiwanese"} }),
+		},
+		Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+	}
+	prefMult := func(in EngineInput) (float64, string) {
+		res := Evaluate(in)
+		if len(res.Kept) != 1 {
+			t.Fatalf("應保留，got %+v", res.Excluded)
+		}
+		for _, e := range res.Kept[0].Trace {
+			if e.Factor == "preference" {
+				return e.Mult, e.Reason
+			}
+		}
+		t.Fatal("缺 preference trace")
+		return 0, ""
+	}
+	// 無滿足度資料：一半命中 → 0.6 + 0.9*0.5 = 1.05
+	if m, reason := prefMult(in); m < 1.049 || m > 1.051 || strings.Contains(reason, "公平") {
+		t.Fatalf("無資料不應校正，got %v %q", m, reason)
+	}
+	// u1 最不滿足（且差距 ≥ FairnessMinGap）→ u1 權重 2：ratio 2/3 → 0.6 + 0.9*(2/3) = 1.2
+	// trace 匿名（D7）：說有校正、不說是誰
+	in.Satisfaction = map[string]float64{"u1": 0.2, "u2": 0.8}
+	if m, reason := prefMult(in); m < 1.199 || m > 1.201 ||
+		!strings.Contains(reason, "公平校正") || strings.Contains(reason, "小明") {
+		t.Fatalf("應匿名加重 u1，got %v %q", m, reason)
+	}
+	// 差距小於 FairnessMinGap → 不校正
+	in.Satisfaction = map[string]float64{"u1": 0.50, "u2": 0.55}
+	if m, _ := prefMult(in); m < 1.049 || m > 1.051 {
+		t.Fatalf("差距不足不應校正，got %v", m)
+	}
+	// 只有一人有 EMA → 不校正（沒得比較）
+	in.Satisfaction = map[string]float64{"u1": 0.2}
+	if m, _ := prefMult(in); m < 1.049 || m > 1.051 {
+		t.Fatalf("單人資料不應校正，got %v", m)
+	}
+	// D22/OV#8：最低者沒填偏好 → 加重是 no-op，不選拔、不宣告假校正
+	in.Members[0].Cuisines = nil // u1 空偏好
+	in.Satisfaction = map[string]float64{"u1": 0.1, "u2": 0.9}
+	if _, reason := prefMult(in); strings.Contains(reason, "公平校正") {
+		t.Fatalf("空偏好成員不應觸發公平校正宣告，got %q", reason)
+	}
+}
+
+func TestNewFactorsChangeOutcome(t *testing.T) {
+	probOf := func(in EngineInput, key string) float64 {
+		t.Helper()
+		for _, c := range Evaluate(in).Kept {
+			if c.PlaceID == key {
+				return c.Probability
+			}
+		}
+		t.Fatalf("%s 不在 kept", key)
+		return 0
+	}
+	near := rest(func(r *Restaurant) { r.PlaceID = "near" })
+	far := rest(func(r *Restaurant) { r.PlaceID = "far"; r.Lat = 25.0586 }) // ~1.2km
+	base := func() EngineInput {
+		return EngineInput{Restaurants: []Restaurant{near, far}, Members: []Member{member(nil)},
+			Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170}
+	}
+
+	t.Run("大雨天讓遠的步行選項掉 ≥5%", func(t *testing.T) {
+		dry, wet := base(), base()
+		wet.Weather = &Weather{RainMM: 5}
+		if diff := probOf(dry, "far") - probOf(wet, "far"); diff < 0.05 {
+			t.Fatalf("weather 位移不足：%v", diff)
+		}
+	})
+	t.Run("explore 檔新出現店家加成 ≥3%", func(t *testing.T) {
+		off, on := base(), base()
+		on.Exploration = "explore"
+		on.Exposure = map[string]ExposureCount{"near": {}, "far": {Recommended: 5}}
+		if diff := probOf(on, "near") - probOf(off, "near"); diff < 0.03 {
+			t.Fatalf("new-store 位移不足：%v", diff)
+		}
+	})
+	t.Run("人均熟店降權 ≥2%（spec 輕降權）", func(t *testing.T) {
+		off, on := base(), base()
+		on.Exposure = map[string]ExposureCount{"near": {Recommended: 9, Chosen: 5}, "far": {Recommended: 9}}
+		if diff := probOf(off, "near") - probOf(on, "near"); diff < 0.02 {
+			t.Fatalf("chosen-penalty 位移不足：%v", diff)
+		}
+	})
+	t.Run("早餐時段加成 ≥3%", func(t *testing.T) {
+		bf := rest(func(r *Restaurant) { r.PlaceID = "bf"; r.CuisineTags = []string{"breakfast", "japanese"} })
+		off, on := base(), base()
+		off.Restaurants = []Restaurant{near, bf}
+		on.Restaurants = []Restaurant{near, bf}
+		on.Now = at(time.Monday, 8, 0)
+		if diff := probOf(on, "bf") - probOf(off, "bf"); diff < 0.03 {
+			t.Fatalf("timeslot 位移不足：%v", diff)
+		}
+	})
+	t.Run("公平校正拉抬最低者偏好 ≥5%", func(t *testing.T) {
+		jp := rest(func(r *Restaurant) { r.PlaceID = "jp" })
+		tw := rest(func(r *Restaurant) { r.PlaceID = "tw"; r.CuisineTags = []string{"taiwanese"} })
+		mk := func() EngineInput {
+			return EngineInput{Restaurants: []Restaurant{jp, tw},
+				Members: []Member{member(nil),
+					member(func(m *Member) { m.UserID = "u2"; m.Cuisines = []string{"taiwanese"} })},
+				Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170}
+		}
+		off, on := mk(), mk()
+		on.Satisfaction = map[string]float64{"u1": 0.2, "u2": 0.8}
+		if diff := probOf(on, "jp") - probOf(off, "jp"); diff < 0.05 {
+			t.Fatalf("fairness 位移不足：%v", diff)
+		}
+	})
+}

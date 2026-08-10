@@ -1224,14 +1224,17 @@ func TestSearchDrawRecordsHistory(t *testing.T) {
 	if w := do("/api/rooms/" + roomID + "/draw"); w.Code != http.StatusOK {
 		t.Fatalf("draw: want 200 got %d body %s", w.Code, w.Body.String())
 	}
-	var histCount, chosenCount int
+	var histCount, prefHitCount, chosenCount int
 	if err := pool.QueryRow(ctx,
-		`select count(*) from public.dining_history where room_id = $1 and user_id = $2`,
-		roomID, hostID).Scan(&histCount); err != nil {
+		`select count(*), count(pref_hit) from public.dining_history where room_id = $1 and user_id = $2`,
+		roomID, hostID).Scan(&histCount, &prefHitCount); err != nil {
 		t.Fatal(err)
 	}
 	if histCount != 1 {
 		t.Fatalf("draw 後每位成員應有 1 筆同席紀錄，got %d", histCount)
+	}
+	if prefHitCount != 1 {
+		t.Fatalf("有偏好成員的同席紀錄應寫入 pref_hit，got %d", prefHitCount)
 	}
 	if err := pool.QueryRow(ctx,
 		`select count(*) from public.exposure_stats
