@@ -37,6 +37,7 @@ func TestGoogleHoursMultiDayClosingAtMidnight(t *testing.T) {
 
 const gSample = `{"places":[
   {"id":"gp-1","displayName":{"text":"山本壽司"},
+   "businessStatus":"OPERATIONAL",
    "types":["sushi_restaurant","japanese_restaurant","restaurant"],
    "priceLevel":"PRICE_LEVEL_MODERATE",
    "location":{"latitude":25.0478,"longitude":121.5170},
@@ -75,7 +76,15 @@ const gSample = `{"places":[
     "types":["restaurant"],
     "priceLevel":"PRICE_LEVEL_INEXPENSIVE",
     "location":{"latitude":25.0476,"longitude":121.5166},
-    "formattedAddress":"台北市中正區某路6號","rating":4.0}
+    "formattedAddress":"台北市中正區某路6號","rating":4.0},
+  {"id":"gp-7","displayName":{"text":"Closed Restaurant"},
+    "businessStatus":"CLOSED_PERMANENTLY",
+    "types":["restaurant"],
+    "priceLevel":"PRICE_LEVEL_INEXPENSIVE",
+    "location":{"latitude":25.0477,"longitude":121.5167},
+    "formattedAddress":"Taipei","rating":4.8,
+    "regularOpeningHours":{"periods":[
+      {"open":{"day":1,"hour":0,"minute":0}}]}}
 ]}`
 
 func gServer(t *testing.T, fail1st bool) *httptest.Server {
@@ -87,6 +96,9 @@ func gServer(t *testing.T, fail1st bool) *httptest.Server {
 		}
 		if r.Header.Get("X-Goog-Api-Key") == "" || r.Header.Get("X-Goog-FieldMask") == "" {
 			t.Error("缺 API key 或 FieldMask header")
+		}
+		if !strings.Contains(r.Header.Get("X-Goog-FieldMask"), "places.businessStatus") {
+			t.Errorf("FieldMask missing places.businessStatus: %q", r.Header.Get("X-Goog-FieldMask"))
 		}
 		if fail1st && calls.Add(1) == 1 {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -109,7 +121,13 @@ func TestGoogleProviderMapping(t *testing.T) {
 	for _, r := range rs {
 		byPID[r.PlaceID] = r
 	}
-	sushi := byPID["gp-1"]
+	if _, ok := byPID["gp-7"]; ok {
+		t.Error("CLOSED_PERMANENTLY place must be filtered")
+	}
+	sushi, ok := byPID["gp-1"]
+	if !ok {
+		t.Fatal("OPERATIONAL place gp-1 must be kept")
+	}
 	if sushi.Name != "山本壽司" || sushi.PriceLevel != 2 || sushi.Rating != 4.3 {
 		t.Errorf("基本欄位對映錯誤：%+v", sushi)
 	}
@@ -169,7 +187,10 @@ func TestGoogleProviderMapping(t *testing.T) {
 			}
 		})
 	}
-	unknown := byPID["gp-6"]
+	unknown, ok := byPID["gp-6"]
+	if !ok {
+		t.Fatal("place without businessStatus gp-6 must be kept")
+	}
 	if len(unknown.Hours) != 0 {
 		t.Errorf("缺 regularOpeningHours 應保留為未知（empty map），got %v", unknown.Hours)
 	}

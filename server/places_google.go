@@ -58,8 +58,9 @@ type gPoint struct {
 }
 
 type gPlace struct {
-	ID          string `json:"id"`
-	DisplayName struct {
+	ID             string `json:"id"`
+	BusinessStatus string `json:"businessStatus"`
+	DisplayName    struct {
 		Text string `json:"text"`
 	} `json:"displayName"`
 	Types      []string `json:"types"`
@@ -112,7 +113,7 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 	req.Header.Set("X-Goog-Api-Key", g.apiKey)
 	req.Header.Set("X-Goog-FieldMask",
 		"places.id,places.displayName,places.types,places.priceLevel,places.location,"+
-			"places.formattedAddress,places.rating,places.regularOpeningHours,places.servesVegetarianFood")
+			"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours,places.servesVegetarianFood")
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -130,6 +131,10 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 	}
 	rs := make([]Restaurant, 0, len(out.Places))
 	for _, p := range out.Places {
+		// Absent status is common, so only explicitly closed places are excluded.
+		if p.BusinessStatus == "CLOSED_TEMPORARILY" || p.BusinessStatus == "CLOSED_PERMANENTLY" {
+			continue
+		}
 		rs = append(rs, Restaurant{
 			PlaceID:     p.ID,
 			Name:        p.DisplayName.Text,
