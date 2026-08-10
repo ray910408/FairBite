@@ -103,6 +103,27 @@ func TestWeatherNegativeCache(t *testing.T) {
 	}
 }
 
+func TestCanceledCurrentDoesNotPopulateNegativeCache(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		fmt.Fprint(w, `{"current":{"precipitation":0.6}}`)
+	}))
+	defer srv.Close()
+	p := NewOpenMeteoProvider(srv.URL)
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := p.Current(canceled, 25, 121); err == nil || calls != 0 {
+		t.Fatalf("已取消請求應在送出前失敗：err=%v calls=%d", err, calls)
+	}
+
+	w, err := p.Current(context.Background(), 25, 121)
+	if err != nil || w.RainMM != 0.6 || calls != 1 {
+		t.Fatalf("取消不應進 negative cache；fresh request 應打 API：w=%v err=%v calls=%d", w, err, calls)
+	}
+}
+
 func TestOpenMeteoCacheExpires(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

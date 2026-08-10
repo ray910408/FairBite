@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"sync"
 
@@ -81,6 +82,10 @@ func loadWeather(ctx context.Context, wp WeatherProvider, lat, lng float64) *Wea
 	}
 	w, err := wp.Current(ctx, lat, lng)
 	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
 		log.Printf("weather provider failed, scoring without weather: %v", err)
 		return nil
 	}
@@ -295,7 +300,7 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
 		return
 	}
-	rs, err := LoadRoomRestaurants(ctx, tx, room.ID)
+	rs, searchKept, err := LoadRoomRestaurants(ctx, tx, room.ID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "讀取候選失敗")
 		return
@@ -315,10 +320,16 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusInternalServerError, "讀取曝光統計失敗")
 		return
 	}
-	// state machine 保證每房只 search 一次，0006 又在 search 後凍結成員；本房對每家候選的 +1 精確為 len(members)。
+	baseline := map[string]int{}
+	for restaurantID, kept := range searchKept {
+		if kept {
+			baseline[restaurantID] = len(members)
+		}
+	}
+	// state machine 保證每房只 search 一次，0006 又在 search 後凍結成員；search 時 kept 候選的本房 +1 精確為 len(members)。
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Weather: wx, Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: len(members), Exploration: room.Exploration})
+		Weather: wx, Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: baseline, Exploration: room.Exploration})
 	if err := ReplaceCandidates(ctx, tx, room.ID, result); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
 		return
@@ -587,7 +598,7 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
 		return
 	}
-	rs, err := LoadRoomRestaurants(ctx, tx, room.ID)
+	rs, searchKept, err := LoadRoomRestaurants(ctx, tx, room.ID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "讀取候選失敗")
 		return
@@ -607,11 +618,17 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusInternalServerError, "讀取曝光統計失敗")
 		return
 	}
-	// state machine 保證每房只 search 一次，0006 又在 search 後凍結成員；本房對每家候選的 +1 精確為 len(members)。
+	baseline := map[string]int{}
+	for restaurantID, kept := range searchKept {
+		if kept {
+			baseline[restaurantID] = len(members)
+		}
+	}
+	// state machine 保證每房只 search 一次，0006 又在 search 後凍結成員；search 時 kept 候選的本房 +1 精確為 len(members)。
 	// spec §5.5：抽選前權威重算；pre-tx center_* 永遠、exploration 在 lobby 外由 guard_room_columns 凍結
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Weather: wx, Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: len(members), Exploration: room.Exploration})
+		Weather: wx, Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: baseline, Exploration: room.Exploration})
 	if len(result.Kept) == 0 {
 		for _, e := range result.Excluded {
 			if hasKind(e.Kinds, "veto") {

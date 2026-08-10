@@ -73,6 +73,9 @@ func (p *openMeteoProvider) Current(ctx context.Context, lat, lng float64) (Weat
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return Weather{}, err
+		}
 		return Weather{}, p.markFail(key, err)
 	}
 	defer resp.Body.Close()
@@ -85,6 +88,9 @@ func (p *openMeteoProvider) Current(ctx context.Context, lat, lng float64) (Weat
 		} `json:"current"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		if ctx.Err() != nil {
+			return Weather{}, err
+		}
 		return Weather{}, p.markFail(key, err)
 	}
 	w := Weather{RainMM: body.Current.Precipitation}

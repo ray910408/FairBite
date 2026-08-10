@@ -68,7 +68,7 @@ type EngineInput struct {
 	Votes                map[string]VoteInfo      // key = rkey(r)；nil = 無投票資料（P1 相容）
 	Recency              map[string]RecencyCount  // key = rkey(r)；nil = 無紀錄
 	Exposure             map[string]ExposureCount // key = rkey(r)；nil = 無統計（相容舊測試）
-	ExposureBaseline     int                      // vote/draw 扣本房 search 自房 +1；search 留 0
+	ExposureBaseline     map[string]int           // vote/draw 僅為 search 時 kept（收到本房 +1）的候選填 len(members)；nil = 不扣
 	Exploration          string                   // familiar/balanced/explore；"" 視為 balanced
 }
 
@@ -276,9 +276,9 @@ func gearScale(scales map[string]float64, exploration string) float64 {
 	return scales["balanced"]
 }
 
-// effectiveRecommended：扣掉本房 search 自房 +1 後的推薦次數（vote/draw 傳 ExposureBaseline=len(members)；clamp 0）
-func effectiveRecommended(c ExposureCount, in EngineInput) int {
-	n := c.Recommended - in.ExposureBaseline
+// effectiveRecommended：扣掉該候選在本房 search 收到的自房 +1 後推薦次數（clamp 0）。
+func effectiveRecommended(r Restaurant, c ExposureCount, in EngineInput) int {
+	n := c.Recommended - in.ExposureBaseline[rkey(r)]
 	if n < 0 {
 		n = 0
 	}
@@ -289,7 +289,7 @@ func effectiveRecommended(c ExposureCount, in EngineInput) int {
 // ponytail: O(n²)（每家候選掃一次全場），n ≤ 數十，夠用
 func allCandidatesNew(in EngineInput) bool {
 	for _, r := range in.Restaurants {
-		if effectiveRecommended(in.Exposure[rkey(r)], in) != 0 {
+		if effectiveRecommended(r, in.Exposure[rkey(r)], in) != 0 {
 			return false
 		}
 	}
@@ -301,7 +301,7 @@ func exposureFactor(r Restaurant, in EngineInput) TraceEntry {
 		return TraceEntry{Mult: 1.0} // 無統計資料：中性且不產生 trace（比照 closingFactor 先例）
 	}
 	c := in.Exposure[rkey(r)]
-	if effectiveRecommended(c, in) == 0 {
+	if effectiveRecommended(r, c, in) == 0 {
 		scale := gearScale(NewStoreBonusScale, in.Exploration)
 		if scale == 0 {
 			return TraceEntry{Mult: 1.0} // 熟悉檔：新店加成關閉，不出 chip
@@ -326,7 +326,7 @@ func exposureFactor(r Restaurant, in EngineInput) TraceEntry {
 		frac = 1
 	}
 	mult := 1 - (1-ChosenPenaltyMult)*frac*penaltyScale
-	return TraceEntry{"exposure", mult, fmt.Sprintf("房內累計中選 %d 次，稍作降權", c.Chosen)}
+	return TraceEntry{"exposure", mult, fmt.Sprintf("房內累計中選 %d 人次，稍作降權", c.Chosen)}
 }
 
 func recencyFactor(r Restaurant, in EngineInput) TraceEntry {

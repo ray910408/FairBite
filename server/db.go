@@ -305,32 +305,38 @@ func TransitionRoom(ctx context.Context, tx pgx.Tx, roomID, from, to string) err
 	return nil
 }
 
-// LoadRoomRestaurants 取回該房搜尋時的完整餐廳集合（含被排除者）— 抽選前權威重算用
-func LoadRoomRestaurants(ctx context.Context, q querier, roomID string) ([]Restaurant, error) {
+// LoadRoomRestaurants 取回該房搜尋時的完整餐廳集合（含被排除者）及目前 kept 狀態— 抽選前權威重算用
+func LoadRoomRestaurants(ctx context.Context, q querier, roomID string) ([]Restaurant, map[string]bool, error) {
 	rows, err := q.Query(ctx, `
 		select r.id, r.place_id, r.name, r.cuisine_tags, r.price_level,
-		       r.lat, r.lng, r.address, r.opening_hours, coalesce(r.rating, 0)
+		       r.lat, r.lng, r.address, r.opening_hours, coalesce(r.rating, 0), rc.status
 		from room_candidates rc join restaurants r on r.id = rc.restaurant_id
 		where rc.room_id = $1 order by rc.restaurant_id`, roomID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 	var out []Restaurant
+	kept := map[string]bool{}
 	for rows.Next() {
 		var r Restaurant
 		var tags, hours []byte
+		var status string
 		if err := rows.Scan(&r.ID, &r.PlaceID, &r.Name, &tags, &r.PriceLevel,
-			&r.Lat, &r.Lng, &r.Address, &hours, &r.Rating); err != nil {
-			return nil, err
+			&r.Lat, &r.Lng, &r.Address, &hours, &r.Rating, &status); err != nil {
+			return nil, nil, err
 		}
 		if err := json.Unmarshal(tags, &r.CuisineTags); err != nil {
-			return nil, fmt.Errorf("restaurant %s tags: %w", r.PlaceID, err)
+			return nil, nil, fmt.Errorf("restaurant %s tags: %w", r.PlaceID, err)
 		}
 		if err := json.Unmarshal(hours, &r.Hours); err != nil {
-			return nil, fmt.Errorf("restaurant %s hours: %w", r.PlaceID, err)
+			return nil, nil, fmt.Errorf("restaurant %s hours: %w", r.PlaceID, err)
 		}
 		out = append(out, r)
+		kept[r.ID] = status == "kept"
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return out, kept, nil
 }

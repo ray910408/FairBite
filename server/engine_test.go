@@ -450,10 +450,22 @@ func TestExposureAllNewSurvivorsNeutralWhenOldCandidateExcluded(t *testing.T) {
 func TestExposureBaselineTreatsOwnSearchAsNew(t *testing.T) {
 	in := exposureIn(ExposureCount{Recommended: 2}, "balanced")
 	in.Members = append(in.Members, member(func(m *Member) { m.UserID = "u2" }))
-	in.ExposureBaseline = len(in.Members)
+	in.ExposureBaseline = map[string]int{"p1": len(in.Members)}
 	got, hasTrace := exposureMult(t, in)
 	if !hasTrace || got != 1.1 {
 		t.Fatalf("Recommended 等於本房 baseline 應視為新店：got %v trace=%v", got, hasTrace)
+	}
+}
+
+func TestExposureBaselineDoesNotSubtractCandidateExcludedAtSearch(t *testing.T) {
+	in := exposureIn(ExposureCount{Recommended: 2}, "balanced")
+	in.Members = append(in.Members, member(func(m *Member) { m.UserID = "u2" }))
+	// p1 搜尋時遭排除，沒有收到本房曝光 +1，因此不在 baseline map。
+	in.ExposureBaseline = map[string]int{"p-old": len(in.Members)}
+
+	entry := exposureFactor(in.Restaurants[0], in)
+	if entry.Mult != 1.0 || strings.Contains(entry.Reason, "新出現") {
+		t.Fatalf("搜尋時被排除的候選不可扣 baseline 或取得新店加成：got %+v", entry)
 	}
 }
 
@@ -467,6 +479,9 @@ func TestChosenPenaltyIsPerCapita(t *testing.T) {
 	want := 1 - 0.1*(1.0/25.0) // 1/(5*5) = 0.04 → 0.996
 	if !hasTrace || got < want-1e-9 || got > want+1e-9 {
 		t.Fatalf("五人房 Chosen=1 應僅極輕降權：got %v want %v", got, want)
+	}
+	if entry := exposureFactor(in.Restaurants[0], in); entry.Reason != "房內累計中選 1 人次，稍作降權" {
+		t.Fatalf("中選 trace 應使用人次：got %q", entry.Reason)
 	}
 }
 
