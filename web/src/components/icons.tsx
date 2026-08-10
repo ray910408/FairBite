@@ -91,3 +91,9 @@ export function Spinner({ className = 'h-6 w-6' }: P) {
     </svg>
   )
 }
+
+export const Star = ({ className = '' }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M12 2.5l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.3l-5.8 3.1 1.1-6.5L2.6 9.3l6.5-.9L12 2.5z" />
+  </svg>
+)

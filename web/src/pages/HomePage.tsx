@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Alert, Logo, LogOut, Spinner } from '../components/icons'
+import { RecentRatingPrompt } from '../components/RatingPrompt'
 
 const FALLBACK = { lat: 25.0478, lng: 121.517 } // 台北車站：拒絕定位時的 demo 預設
 
@@ -87,6 +88,8 @@ export default function HomePage() {
             <button className="btn btn-quiet px-5" type="submit" disabled={busy}>加入</button>
           </form>
         </section>
+
+        <RecentRatingPrompt />
 
         {error && (
           <p role="alert" className="banner bg-danger-soft text-danger">

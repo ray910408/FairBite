@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(26);
+select plan(30);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -188,6 +188,41 @@ select results_eq(
 set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated"}';
 select is((select count(*) from public.profiles)::int, 1, '無共同房間者只看得到自己的 profile');
 select is(length((select code from ctx)), 12, '新房邀請碼為 12 碼');
+
+-- P3 餐後評分：自己的紀錄可評分，別人的碰不到（欄級 grant 只開 rating）
+reset role;
+select results_eq(
+  $$
+    select column_name::text collate "default"
+    from information_schema.role_column_grants
+    where grantee = 'authenticated' and table_schema = 'public'
+      and table_name = 'dining_history' and privilege_type = 'UPDATE'
+  $$,
+  $$ values ('rating') $$,
+  'dining_history 的 UPDATE 欄級 grant 僅 rating');
+
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}';
+update public.dining_history set rating = 4
+  where user_id = '00000000-0000-0000-0000-0000000000b2';
+select is(
+  (select rating from public.dining_history
+    where user_id = '00000000-0000-0000-0000-0000000000b2'),
+  4, 'B 可評自己的同席紀錄');
+update public.dining_history set rating = 1
+  where user_id = '00000000-0000-0000-0000-0000000000a1';
+-- 空斷言陷阱（OV#14）：B 的 RLS 本來就看不到 A 的列，在 B 的 context 下數恆為 0、
+-- RLS 壞了也綠。必須 reset role 用特權視角數（比照 rls_test.sql:70 的既有寫法）。
+reset role;
+select is(
+  (select count(*) from public.dining_history
+    where user_id = '00000000-0000-0000-0000-0000000000a1' and rating is not null)::int,
+  0, 'B 改不動 A 的評分');
+-- 0003 的 rating CHECK 至今無測試，順手釘住（eng review Test Review）
+select throws_ok(
+  $$update public.dining_history set rating = 6
+     where user_id = '00000000-0000-0000-0000-0000000000b2'$$,
+  '23514', null, 'rating 超界被 CHECK 擋下');
 
 select * from finish();
 rollback;
