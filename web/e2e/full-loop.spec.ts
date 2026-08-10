@@ -111,12 +111,20 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await setConditionsAndReady(b, 1600)
     await expect(a.getByText('已準備', { exact: true })).toHaveCount(2)
 
-    // A 搜尋 → 兩邊同步看到候選；先記住餐廳名，後續投票定位不依賴排序。
-    await a.getByRole('button', { name: '開始搜尋餐廳' }).click()
+    // A 快速連點搜尋只送一次 request → 兩邊同步看到候選；後續投票定位不依賴排序。
+    let searchRequestCount = 0
+    a.on('request', request => {
+      if (request.method() === 'POST' && request.url().endsWith('/search')) searchRequestCount++
+    })
+    await a.getByRole('button', { name: '開始搜尋餐廳' }).evaluate(button => {
+      button.click()
+      button.click()
+    })
     const candidateHeadingA = a.getByText(/候選餐廳（\d+）/)
     const candidateHeadingB = b.getByText(/候選餐廳（\d+）/)
     await expect(candidateHeadingA).toBeVisible()
     await expect(candidateHeadingB).toBeVisible()
+    expect(searchRequestCount).toBe(1)
     const restaurantNames = await b
       .locator('div.card.animate-rise.space-y-2.p-3 span.flex-1.font-semibold')
       .allInnerTexts()

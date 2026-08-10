@@ -23,6 +23,8 @@ type limiterStore struct {
 	burst  int
 }
 
+var searchInFlight sync.Map
+
 func newLimiterStore(perSec rate.Limit, burst int) *limiterStore {
 	return &limiterStore{m: map[string]*rate.Limiter{}, perSec: perSec, burst: burst}
 }
@@ -337,6 +339,12 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusConflict, "房間狀態已變更")
 		return
 	}
+	// Places 呼叫付費，同房並發搜尋只放行一個。
+	if _, loaded := searchInFlight.LoadOrStore(room.ID, struct{}{}); loaded {
+		jsonError(w, http.StatusConflict, "房間狀態已變更")
+		return
+	}
+	defer searchInFlight.Delete(room.ID)
 	members, err := LoadMembers(ctx, pool, room.ID)
 	if err != nil || len(members) == 0 {
 		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
@@ -348,6 +356,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 			radius = m.MaxDistanceM
 		}
 	}
+	// 若 member 在 provider call 中放寬距離，fetch envelope 仍採 call-time radius，只會 under-fetch；
+	// 下方 tx 內 fresh members 會供 Evaluate 重套每人距離，不會造成錯誤 inclusion。
 	found, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, radius)
 	degraded := false
 	if err != nil {
@@ -419,6 +429,11 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	// exploration 在 lobby 仍可變，鎖定後重讀；center_* 由 guard 永凍毋需重讀
 	if err := tx.QueryRow(ctx, `select exploration from rooms where id = $1`, room.ID).Scan(&room.Exploration); err != nil {
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	members, err = LoadMembers(ctx, tx, room.ID)
+	if err != nil || len(members) == 0 {
+		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
 		return
 	}
 	recency, err := LoadRecency(ctx, tx, memberIDs(members), restaurantIDs(found))

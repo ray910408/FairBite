@@ -47,6 +47,7 @@ export default function RoomPage() {
   const [actionWarning, setActionWarning] = useState('')
   const [copied, setCopied] = useState(false)
   const voteInFlight = useRef(false)
+  const searchInFlight = useRef(false)
   const startVotingInFlight = useRef(false)
   if (!room) return notFound ? (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
@@ -213,10 +214,13 @@ export default function RoomPage() {
               const notReady = members.filter(m => !m.ready).length
               if (notReady > 0 &&
                 !confirm(`還有 ${notReady} 位成員未按準備，開始後條件將凍結。確定開始搜尋？`)) return
+              if (searchInFlight.current) return
+              searchInFlight.current = true
               setActionError('')
               import('../lib/api').then(m => m.searchRoom(room.id))
                 .then(o => { setActionError(o.error ?? ''); setActionWarning(o.warning ?? '') })
                 .catch(() => setActionError('搜尋失敗：無法連線到伺服器'))
+                .finally(() => { searchInFlight.current = false })
             }}>
             開始搜尋餐廳
           </button>
