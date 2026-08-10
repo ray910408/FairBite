@@ -31,7 +31,14 @@ const gSample = `{"places":[
    "priceLevel":"PRICE_LEVEL_INEXPENSIVE",
    "location":{"latitude":25.0470,"longitude":121.5160},
    "formattedAddress":"台北市中正區某路3號","rating":3.9,
-   "regularOpeningHours":{"periods":[{"open":{"day":0,"hour":0,"minute":0}}]}}
+   "regularOpeningHours":{"periods":[{"open":{"day":0,"hour":0,"minute":0}}]}},
+  {"id":"gp-4","displayName":{"text":"週末長時段餐廳"},
+   "types":["restaurant"],
+   "priceLevel":"PRICE_LEVEL_INEXPENSIVE",
+   "location":{"latitude":25.0472,"longitude":121.5162},
+   "formattedAddress":"台北市中正區某路4號","rating":4.1,
+   "regularOpeningHours":{"periods":[
+     {"open":{"day":5,"hour":10,"minute":0},"close":{"day":6,"hour":12,"minute":0}}]}}
 ]}`
 
 func gServer(t *testing.T, fail1st bool) *httptest.Server {
@@ -58,8 +65,8 @@ func TestGoogleProviderMapping(t *testing.T) {
 	defer srv.Close()
 	p := NewGooglePlacesProvider("test-key", srv.URL)
 	rs, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000)
-	if err != nil || len(rs) != 3 {
-		t.Fatalf("want 3 restaurants, got %d err %v", len(rs), err)
+	if err != nil || len(rs) != 4 {
+		t.Fatalf("want 4 restaurants, got %d err %v", len(rs), err)
 	}
 	byPID := map[string]Restaurant{}
 	for _, r := range rs {
@@ -79,8 +86,8 @@ func TestGoogleProviderMapping(t *testing.T) {
 	if !hasTag(late.CuisineTags, "vegetarian_friendly") {
 		t.Errorf("servesVegetarianFood 應產 vegetarian_friendly：%v", late.CuisineTags)
 	}
-	if late.PriceLevel != 2 {
-		t.Errorf("缺 priceLevel 應 fallback 中間值 2，got %d", late.PriceLevel)
+	if late.PriceLevel != PriceLevelUnknown {
+		t.Errorf("缺 priceLevel 應為 PriceLevelUnknown，got %d", late.PriceLevel)
 	}
 	if !late.Hours.IsOpenAt(at(time.Saturday, 1, 0)) || late.Hours.IsOpenAt(at(time.Saturday, 3, 0)) {
 		t.Error("跨夜時段轉換錯誤")
@@ -88,6 +95,24 @@ func TestGoogleProviderMapping(t *testing.T) {
 	breakfast := byPID["gp-3"]
 	if !breakfast.Hours.IsOpenAt(at(time.Wednesday, 4, 0)) {
 		t.Error("無 close 的單一 period 應視為 24/7")
+	}
+	long := byPID["gp-4"]
+	for _, tc := range []struct {
+		name string
+		at   time.Time
+		open bool
+	}{
+		{"週五開門前", at(time.Friday, 9, 0), false},
+		{"週五上午", at(time.Friday, 11, 0), true},
+		{"週五深夜", at(time.Friday, 23, 30), true},
+		{"週六上午", at(time.Saturday, 11, 0), true},
+		{"週六關門後", at(time.Saturday, 13, 0), false},
+	} {
+		t.Run("multi-day/"+tc.name, func(t *testing.T) {
+			if got := long.Hours.IsOpenAt(tc.at); got != tc.open {
+				t.Errorf("IsOpenAt() = %v, want %v；hours=%v", got, tc.open, long.Hours)
+			}
+		})
 	}
 }
 

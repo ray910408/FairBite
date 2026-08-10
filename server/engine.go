@@ -121,9 +121,11 @@ func hardExclude(r Restaurant, ms []Member, now time.Time) (kinds, reasons []str
 			minBudget, minName = m.BudgetMax, m.DisplayName
 		}
 	}
-	if price := PriceLevelMaxTWD[r.PriceLevel]; price > minBudget {
-		addKind("budget")
-		reasons = append(reasons, fmt.Sprintf("價位約 NT$%d，超過 %s 的預算上限 NT$%d", price, minName, minBudget))
+	if r.PriceLevel >= 0 {
+		if price := PriceLevelMaxTWD[r.PriceLevel]; price > minBudget {
+			addKind("budget")
+			reasons = append(reasons, fmt.Sprintf("價位約 NT$%d，超過 %s 的預算上限 NT$%d", price, minName, minBudget))
+		}
 	}
 	if !r.Hours.IsOpenAt(now) {
 		addKind("closed")

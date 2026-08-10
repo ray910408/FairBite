@@ -165,12 +165,12 @@ func gTags(p gPlace) []string {
 	return tags
 }
 
-// 未提供價位 → 2（中間值）：不偏袒排除也不偏袒保留
+// 未對映或未提供價位 → PriceLevelUnknown；未知價位不參與預算硬排除。
 func gPrice(level string) int {
 	if v, ok := gPriceLevels[level]; ok {
 		return v
 	}
-	return 2
+	return PriceLevelUnknown
 }
 
 func gHours(p gPlace) OpeningHours {
@@ -182,10 +182,20 @@ func gHours(p gPlace) OpeningHours {
 			}
 			return oh
 		}
-		day := weekdayKeys[period.Open.Day]
-		// 跨夜（close.day != open.day）落在同 key：closeMin ≤ openMin 即為跨夜格式
-		oh[day] = append(oh[day],
-			[2]int{period.Open.Hour*60 + period.Open.Minute, period.Close.Hour*60 + period.Close.Minute})
+		openDay, closeDay := period.Open.Day, period.Close.Day
+		openMin := period.Open.Hour*60 + period.Open.Minute
+		closeMin := period.Close.Hour*60 + period.Close.Minute
+		if closeDay != openDay && closeMin > openMin {
+			oh[weekdayKeys[openDay]] = append(oh[weekdayKeys[openDay]], [2]int{openMin, 1440})
+			for day := (openDay + 1) % len(weekdayKeys); day != closeDay; day = (day + 1) % len(weekdayKeys) {
+				oh[weekdayKeys[day]] = append(oh[weekdayKeys[day]], [2]int{0, 1440})
+			}
+			oh[weekdayKeys[closeDay]] = append(oh[weekdayKeys[closeDay]], [2]int{0, closeMin})
+			// >24 小時時，非最終日的 closing-soon 分鐘會算到午夜；此罕見情況只影響評分細節。
+			continue
+		}
+		// 精簡跨夜格式（close.day 不同且 closeMin <= openMin）須保留在 open day，供 carry-over 邏輯使用。
+		oh[weekdayKeys[openDay]] = append(oh[weekdayKeys[openDay]], [2]int{openMin, closeMin})
 	}
 	return oh
 }

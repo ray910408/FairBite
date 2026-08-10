@@ -2,6 +2,9 @@ package main
 
 // 所有可調參數集中此檔（spec §5）
 
+// PriceLevelUnknown 代表未知價位：不參與預算硬排除；使用者裁決 2026-08-10，取代原「補中間值 2」。
+const PriceLevelUnknown = -1
+
 var PriceLevelMaxTWD = map[int]int{0: 100, 1: 200, 2: 400, 3: 800, 4: 1600}
 
 // 嚴格禁忌：餐廳必須具備正向認證 tag 才保留 — 負向推斷會錯誤放行
