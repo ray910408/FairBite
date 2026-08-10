@@ -300,7 +300,7 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
 		return
 	}
-	rs, searchKept, err := LoadRoomRestaurants(ctx, tx, room.ID)
+	rs, exposureCounted, err := LoadRoomRestaurants(ctx, tx, room.ID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "讀取候選失敗")
 		return
@@ -321,16 +321,17 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		return
 	}
 	baseline := map[string]int{}
-	for restaurantID, kept := range searchKept {
-		if kept {
+	// DB-loaded Restaurant.ID == rkey(r)，故此處 restaurant ID keys 與 engine baseline lookup 完全一致。
+	for restaurantID, counted := range exposureCounted {
+		if counted {
 			baseline[restaurantID] = len(members)
 		}
 	}
-	// state machine 保證每房只 search 一次，0006 又在 search 後凍結成員；search 時 kept 候選的本房 +1 精確為 len(members)。
+	// state machine 保證每房只 search 一次，0006 又在 search 後凍結成員；search 時 counted 候選的本房 +1 精確為 len(members)。
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
 		Weather: wx, Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: baseline, Exploration: room.Exploration})
-	if err := ReplaceCandidates(ctx, tx, room.ID, result); err != nil {
+	if err := ReplaceCandidates(ctx, tx, room.ID, result, exposureCounted); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
 		return
 	}
@@ -546,13 +547,15 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		})
 		return
 	}
-	if err := ReplaceCandidates(ctx, tx, room.ID, result); err != nil {
-		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
-		return
-	}
 	keptIDs := make([]string, len(result.Kept))
+	exposureCounted := make(map[string]bool, len(result.Kept))
 	for i, c := range result.Kept {
 		keptIDs[i] = c.Restaurant.ID
+		exposureCounted[c.Restaurant.ID] = true
+	}
+	if err := ReplaceCandidates(ctx, tx, room.ID, result, exposureCounted); err != nil {
+		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
+		return
 	}
 	// 順序不變式：LoadExposure → Evaluate → RecordExposure，避免本次 +1 汙染新店判定。
 	if err := RecordExposure(ctx, tx, memberIDs(members), keptIDs); err != nil {
@@ -598,7 +601,7 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
 		return
 	}
-	rs, searchKept, err := LoadRoomRestaurants(ctx, tx, room.ID)
+	rs, exposureCounted, err := LoadRoomRestaurants(ctx, tx, room.ID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "讀取候選失敗")
 		return
@@ -619,12 +622,13 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		return
 	}
 	baseline := map[string]int{}
-	for restaurantID, kept := range searchKept {
-		if kept {
+	// DB-loaded Restaurant.ID == rkey(r)，故此處 restaurant ID keys 與 engine baseline lookup 完全一致。
+	for restaurantID, counted := range exposureCounted {
+		if counted {
 			baseline[restaurantID] = len(members)
 		}
 	}
-	// state machine 保證每房只 search 一次，0006 又在 search 後凍結成員；search 時 kept 候選的本房 +1 精確為 len(members)。
+	// state machine 保證每房只 search 一次，0006 又在 search 後凍結成員；search 時 counted 候選的本房 +1 精確為 len(members)。
 	// spec §5.5：抽選前權威重算；pre-tx center_* 永遠、exploration 在 lobby 外由 guard_room_columns 凍結
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
@@ -644,7 +648,7 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 	for _, c := range result.Kept {
 		probs[c.Restaurant.ID] = c.Probability
 	}
-	if err := ReplaceCandidates(ctx, tx, room.ID, result); err != nil {
+	if err := ReplaceCandidates(ctx, tx, room.ID, result, exposureCounted); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
 		return
 	}

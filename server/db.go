@@ -269,24 +269,26 @@ func LoadCachedRestaurants(ctx context.Context, pool *pgxpool.Pool, lat, lng flo
 	return out, rows.Err()
 }
 
-func ReplaceCandidates(ctx context.Context, tx pgx.Tx, roomID string, res EngineResult) error {
+func ReplaceCandidates(ctx context.Context, tx pgx.Tx, roomID string, res EngineResult, exposureCounted map[string]bool) error {
 	if _, err := tx.Exec(ctx, `delete from room_candidates where room_id = $1`, roomID); err != nil {
 		return err
 	}
 	for _, c := range res.Kept {
 		trace, _ := json.Marshal(c.Trace)
 		if _, err := tx.Exec(ctx, `
-			insert into room_candidates (room_id, restaurant_id, status, probability, weight_breakdown)
-			values ($1, $2, 'kept', $3, $4)`,
-			roomID, c.Restaurant.ID, c.Probability, trace); err != nil {
+			insert into room_candidates
+				(room_id, restaurant_id, status, probability, weight_breakdown, exposure_counted)
+			values ($1, $2, 'kept', $3, $4, $5)`,
+			roomID, c.Restaurant.ID, c.Probability, trace, exposureCounted[c.Restaurant.ID]); err != nil {
 			return err
 		}
 	}
 	for _, e := range res.Excluded {
 		if _, err := tx.Exec(ctx, `
-			insert into room_candidates (room_id, restaurant_id, status, exclusion_reason)
-			values ($1, $2, 'excluded', $3)`,
-			roomID, e.Restaurant.ID, e.Reason); err != nil {
+			insert into room_candidates
+				(room_id, restaurant_id, status, exclusion_reason, exposure_counted)
+			values ($1, $2, 'excluded', $3, $4)`,
+			roomID, e.Restaurant.ID, e.Reason, exposureCounted[e.Restaurant.ID]); err != nil {
 			return err
 		}
 	}
@@ -305,11 +307,11 @@ func TransitionRoom(ctx context.Context, tx pgx.Tx, roomID, from, to string) err
 	return nil
 }
 
-// LoadRoomRestaurants 取回該房搜尋時的完整餐廳集合（含被排除者）及目前 kept 狀態— 抽選前權威重算用
+// LoadRoomRestaurants 取回該房搜尋時的完整餐廳集合（含被排除者）及 search 曝光旗標— 抽選前權威重算用
 func LoadRoomRestaurants(ctx context.Context, q querier, roomID string) ([]Restaurant, map[string]bool, error) {
 	rows, err := q.Query(ctx, `
 		select r.id, r.place_id, r.name, r.cuisine_tags, r.price_level,
-		       r.lat, r.lng, r.address, r.opening_hours, coalesce(r.rating, 0), rc.status
+		       r.lat, r.lng, r.address, r.opening_hours, coalesce(r.rating, 0), rc.exposure_counted
 		from room_candidates rc join restaurants r on r.id = rc.restaurant_id
 		where rc.room_id = $1 order by rc.restaurant_id`, roomID)
 	if err != nil {
@@ -317,13 +319,13 @@ func LoadRoomRestaurants(ctx context.Context, q querier, roomID string) ([]Resta
 	}
 	defer rows.Close()
 	var out []Restaurant
-	kept := map[string]bool{}
+	exposureCounted := map[string]bool{}
 	for rows.Next() {
 		var r Restaurant
 		var tags, hours []byte
-		var status string
+		var counted bool
 		if err := rows.Scan(&r.ID, &r.PlaceID, &r.Name, &tags, &r.PriceLevel,
-			&r.Lat, &r.Lng, &r.Address, &hours, &r.Rating, &status); err != nil {
+			&r.Lat, &r.Lng, &r.Address, &hours, &r.Rating, &counted); err != nil {
 			return nil, nil, err
 		}
 		if err := json.Unmarshal(tags, &r.CuisineTags); err != nil {
@@ -333,10 +335,10 @@ func LoadRoomRestaurants(ctx context.Context, q querier, roomID string) ([]Resta
 			return nil, nil, fmt.Errorf("restaurant %s hours: %w", r.PlaceID, err)
 		}
 		out = append(out, r)
-		kept[r.ID] = status == "kept"
+		exposureCounted[r.ID] = counted
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
-	return out, kept, nil
+	return out, exposureCounted, nil
 }
