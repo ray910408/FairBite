@@ -529,3 +529,51 @@ func TestRainFactor(t *testing.T) {
 		}
 	})
 }
+
+func TestTimeSlotFactor(t *testing.T) {
+	slotMult := func(now time.Time, tags []string) (float64, bool) {
+		res := Evaluate(EngineInput{
+			Restaurants: []Restaurant{rest(func(r *Restaurant) { r.CuisineTags = tags })},
+			Members:     []Member{member(nil)},
+			Now:         now, CenterLat: 25.0478, CenterLng: 121.5170})
+		if len(res.Kept) != 1 {
+			t.Fatalf("應保留，got %+v", res.Excluded)
+		}
+		for _, e := range res.Kept[0].Trace {
+			if e.Factor == "timeslot" {
+				return e.Mult, true
+			}
+		}
+		return 1.0, false
+	}
+	morning := at(time.Monday, 8, 0)
+	if m, ok := slotMult(morning, []string{"breakfast", "taiwanese"}); !ok || m != TimeSlotBoostMult {
+		t.Errorf("早餐時段 breakfast 應加成，got %v %v", m, ok)
+	}
+	if _, ok := slotMult(lunchMonday, []string{"breakfast"}); ok {
+		t.Error("午餐時段不在任何 slot，不應有 timeslot trace")
+	}
+	if _, ok := slotMult(morning, []string{"japanese"}); ok {
+		t.Error("早餐時段未命中 tag 不應有 trace")
+	}
+	// D23：晚餐 slot 不存在（hotpot 無真實 tag 來源），晚上不得有任何 timeslot trace
+	if _, ok := slotMult(at(time.Monday, 19, 0), []string{"hotpot"}); ok {
+		t.Error("晚餐時段已移除，不應有 trace")
+	}
+	// 時段邊界（2026-08-10 eng review Test Review）
+	for _, c := range []struct {
+		name string
+		now  time.Time
+		tags []string
+		want bool
+	}{
+		{"05:59 不在早餐時段", at(time.Monday, 5, 59), []string{"breakfast"}, false},
+		{"06:00 起算", at(time.Monday, 6, 0), []string{"breakfast"}, true},
+		{"10:59 仍算", at(time.Monday, 10, 59), []string{"breakfast"}, true},
+		{"11:00 結束", at(time.Monday, 11, 0), []string{"breakfast"}, false},
+	} {
+		if _, ok := slotMult(c.now, c.tags); ok != c.want {
+			t.Errorf("%s: trace presence = %v, want %v", c.name, ok, c.want)
+		}
+	}
+}

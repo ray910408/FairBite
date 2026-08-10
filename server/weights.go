@@ -65,6 +65,18 @@ var (
 	WeatherFailRetryTTL = time.Minute      // negative cache（D24/OV#21）：故障期間不重複硬等 5 秒
 )
 
+// 時段×菜系（P3 spec §5）：時段命中 tag 小幅加成。
+// 硬規則（eng review D23）：新增 slot/tag 前必須先驗證 tag 確實由 provider 產生
+// （places_google.go googleTypeTags 或 mockdata.go）——不做無依據的時段×菜系配對。
+// 晚餐 slot 因無任何真實 tag 來源而不上（hotpot 只存在於 mock），待 tag 詞彙擴充再回歸。
+const TimeSlotBoostMult = 1.15
+
+var TimeSlotBoosts = map[string][]string{
+	"morning": {"breakfast"}, // 06:00–10:59；breakfast ← googleTypeTags["breakfast_restaurant"] ✓
+}
+
+var TimeSlotLabels = map[string]string{"morning": "早餐時段"}
+
 const (
 	PrefMultMin = 0.6
 	PrefMultMax = 1.5

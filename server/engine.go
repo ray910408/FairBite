@@ -225,6 +225,26 @@ func rainFactor(r Restaurant, in EngineInput) TraceEntry {
 	return TraceEntry{"weather", mult, fmt.Sprintf("雨天，%d 位步行成員路程較遠", walkers)}
 }
 
+func timeSlotOf(t time.Time) string {
+	if h := t.Hour(); h >= 6 && h < 11 {
+		return "morning"
+	}
+	return ""
+}
+
+func timeSlotFactor(r Restaurant, in EngineInput) TraceEntry {
+	slot := timeSlotOf(in.Now)
+	if slot == "" {
+		return TraceEntry{Mult: 1.0}
+	}
+	for _, tag := range TimeSlotBoosts[slot] {
+		if hasTag(r.CuisineTags, tag) {
+			return TraceEntry{"timeslot", TimeSlotBoostMult, TimeSlotLabels[slot] + "加成"}
+		}
+	}
+	return TraceEntry{Mult: 1.0}
+}
+
 func closingFactor(r Restaurant, in EngineInput) TraceEntry {
 	// 比照未知價位先例：未知不排除，也不臆測即將打烊。
 	if len(r.Hours) == 0 {
@@ -328,7 +348,7 @@ func recencyFactor(r Restaurant, in EngineInput) TraceEntry {
 	return TraceEntry{"recency", mult, strings.Join(parts, "；")}
 }
 
-var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor, exposureFactor, rainFactor}
+var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor, exposureFactor, rainFactor, timeSlotFactor}
 
 func Evaluate(in EngineInput) EngineResult {
 	var res EngineResult
