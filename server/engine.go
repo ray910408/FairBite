@@ -64,6 +64,7 @@ type EngineInput struct {
 	Members              []Member
 	Now                  time.Time
 	CenterLat, CenterLng float64
+	Weather              *Weather                 // nil = 無資料（provider 失敗或未接），中性
 	Votes                map[string]VoteInfo      // key = rkey(r)；nil = 無投票資料（P1 相容）
 	Recency              map[string]RecencyCount  // key = rkey(r)；nil = 無紀錄
 	Exposure             map[string]ExposureCount // key = rkey(r)；nil = 無統計（相容舊測試）
@@ -160,12 +161,18 @@ func prefFactor(r Restaurant, in EngineInput) TraceEntry {
 		fmt.Sprintf("%d/%d 位成員偏好命中", hits, len(in.Members))}
 }
 
+// travelMinutes：單一成員到某距離的通勤分鐘數（overhead + 距離/速度）。
+// distFactor 與 rainFactor 共用——兩個因素對「通勤時間」的定義不許分岔（OV#23）。
+func travelMinutes(m Member, distM float64) float64 {
+	return TransportOverheadMin[m.Transport] + distM/TransportMetersPerMin[m.Transport]
+}
+
 func distFactor(r Restaurant, in EngineInput) TraceEntry {
 	dist := Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng)
 	var sumMult, sumMin, worstMin float64
 	worstTransport := in.Members[0].Transport
 	for _, m := range in.Members {
-		minutes := TransportOverheadMin[m.Transport] + dist/TransportMetersPerMin[m.Transport]
+		minutes := travelMinutes(m, dist)
 		frac := (minutes - DistBestMin) / (DistWorstMin - DistBestMin)
 		if frac < 0 {
 			frac = 0
@@ -183,6 +190,39 @@ func distFactor(r Restaurant, in EngineInput) TraceEntry {
 	return TraceEntry{"distance", sumMult / n,
 		fmt.Sprintf("平均交通約 %.0f 分鐘（最慢 %.0f 分鐘，%s）",
 			sumMin/n, worstMin, TransportLabels[worstTransport])}
+}
+
+func rainFactor(r Restaurant, in EngineInput) TraceEntry {
+	if in.Weather == nil || in.Weather.RainMM < RainThresholdMM {
+		return TraceEntry{Mult: 1.0}
+	}
+	dist := Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng)
+	var sum float64
+	walkers := 0
+	for _, m := range in.Members {
+		if m.Transport != "walking" {
+			sum += 1.0
+			continue
+		}
+		walkers++
+		minutes := travelMinutes(m, dist)
+		frac := (minutes - RainWalkFreeMin) / (RainWalkWorstMin - RainWalkFreeMin)
+		if frac < 0 {
+			frac = 0
+		}
+		if frac > 1 {
+			frac = 1
+		}
+		sum += 1 - (1-RainWalkPenaltyMult)*frac
+	}
+	if walkers == 0 {
+		return TraceEntry{Mult: 1.0}
+	}
+	mult := sum / float64(len(in.Members))
+	if mult > 0.999 {
+		return TraceEntry{"weather", 1.0, "雨天，但步行距離近"}
+	}
+	return TraceEntry{"weather", mult, fmt.Sprintf("雨天，%d 位步行成員路程較遠", walkers)}
 }
 
 func closingFactor(r Restaurant, in EngineInput) TraceEntry {
@@ -288,7 +328,7 @@ func recencyFactor(r Restaurant, in EngineInput) TraceEntry {
 	return TraceEntry{"recency", mult, strings.Join(parts, "；")}
 }
 
-var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor, exposureFactor}
+var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor, exposureFactor, rainFactor}
 
 func Evaluate(in EngineInput) EngineResult {
 	var res EngineResult

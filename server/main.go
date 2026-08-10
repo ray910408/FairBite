@@ -61,5 +61,5 @@ func main() {
 	}
 	log.Printf("listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port,
-		buildRoutes(verifier, pool, provider, newLimiterStore(RateLimitPerSec, RateLimitBurst))))
+		buildRoutes(verifier, pool, provider, NewOpenMeteoProvider(""), newLimiterStore(RateLimitPerSec, RateLimitBurst))))
 }

@@ -7,6 +7,7 @@ export const FACTOR_LABELS: Record<string, string> = {
   votes: '投票',
   recency: '最近去過',
   exposure: '曝光/新店',
+  weather: '天氣',
 }
 
 export function formatPercent(p: number): string {

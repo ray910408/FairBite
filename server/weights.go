@@ -1,5 +1,7 @@
 package main
 
+import "time"
+
 // 所有可調參數集中此檔（spec §5）
 
 // PriceLevelUnknown 代表未知價位：不參與預算硬排除；使用者裁決 2026-08-10，取代原「補中間值 2」。
@@ -48,6 +50,20 @@ const (
 // 壟斷防線由近期懲罰 0.5 充當）
 var NewStoreBonusScale = map[string]float64{"familiar": 0, "balanced": 1.0, "explore": 2.0}
 var ChosenPenaltyScale = map[string]float64{"familiar": 0, "balanced": 1.0, "explore": 1.5}
+
+// 天氣（P3 spec §5）：雨天走路方案降權。全場均勻的倍率會在正規化後抵銷，
+// 因此懲罰必須隨步行時間放大才有意義；只影響步行成員。
+const (
+	RainThresholdMM     = 0.1  // 降水量 ≥ 此值視為雨天
+	RainWalkFreeMin     = 5.0  // 步行 ≤ 5 分鐘不受雨天影響
+	RainWalkWorstMin    = 20.0 // 步行 ≥ 20 分鐘受全額降權
+	RainWalkPenaltyMult = 0.7
+)
+
+var (
+	WeatherCacheTTL     = 15 * time.Minute // 投票 rescore 頻繁，不能每票打一次 API
+	WeatherFailRetryTTL = time.Minute      // negative cache（D24/OV#21）：故障期間不重複硬等 5 秒
+)
 
 const (
 	PrefMultMin = 0.6

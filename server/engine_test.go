@@ -469,3 +469,63 @@ func TestChosenPenaltyIsPerCapita(t *testing.T) {
 		t.Fatalf("五人房 Chosen=1 應僅極輕降權：got %v want %v", got, want)
 	}
 }
+
+func rainIn(w *Weather, transport string, lat float64) EngineInput {
+	return EngineInput{
+		Restaurants: []Restaurant{rest(func(r *Restaurant) { r.Lat = lat })},
+		Members:     []Member{member(func(m *Member) { m.Transport = transport })},
+		Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+		Weather: w,
+	}
+}
+
+func weatherMult(t *testing.T, in EngineInput) (float64, bool) {
+	t.Helper()
+	res := Evaluate(in)
+	if len(res.Kept) != 1 {
+		t.Fatalf("應保留，got %+v", res.Excluded)
+	}
+	for _, e := range res.Kept[0].Trace {
+		if e.Factor == "weather" {
+			return e.Mult, true
+		}
+	}
+	return 1.0, false
+}
+
+func TestRainFactor(t *testing.T) {
+	rain := &Weather{RainMM: 2.0}
+	cases := []struct {
+		name      string
+		in        EngineInput
+		want      float64
+		wantTrace bool
+	}{
+		{"無資料中性", rainIn(nil, "walking", 25.0586), 1.0, false},
+		{"沒下雨中性", rainIn(&Weather{RainMM: 0}, "walking", 25.0586), 1.0, false},
+		{"雨天步行遠_降權", rainIn(rain, "walking", 25.0586), 0.78, true},
+		{"雨天開車_中性無trace", rainIn(rain, "driving", 25.0586), 1.0, false},
+		{"雨天步行近_中性有trace", rainIn(rain, "walking", 25.0480), 1.0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, hasTrace := weatherMult(t, c.in)
+			if hasTrace != c.wantTrace {
+				t.Fatalf("trace presence = %v, want %v", hasTrace, c.wantTrace)
+			}
+			if diff := got - c.want; diff > 0.01 || diff < -0.01 {
+				t.Errorf("mult = %v, want %v", got, c.want)
+			}
+		})
+	}
+
+	t.Run("混合交通取平均", func(t *testing.T) {
+		rain := &Weather{RainMM: 2.0}
+		in := rainIn(rain, "walking", 25.0586)
+		in.Members = append(in.Members, member(func(m *Member) { m.UserID = "u2"; m.Transport = "driving" }))
+		got, hasTrace := weatherMult(t, in)
+		if !hasTrace || got < 0.88 || got > 0.90 { // (0.78 + 1.0) / 2 ≈ 0.89
+			t.Fatalf("got %v trace=%v, want ≈0.89", got, hasTrace)
+		}
+	})
+}

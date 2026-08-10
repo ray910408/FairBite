@@ -22,13 +22,17 @@ func newTestApp(t *testing.T, pool *pgxpool.Pool) http.Handler {
 }
 
 func newTestAppWithProvider(t *testing.T, pool *pgxpool.Pool, places PlacesProvider) http.Handler {
+	return newTestAppWithWeather(t, pool, places, nil)
+}
+
+func newTestAppWithWeather(t *testing.T, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider) http.Handler {
 	t.Setenv("SUPABASE_JWT_SECRET", "test-secret-test-secret-test-secret!")
 	t.Setenv("SUPABASE_JWKS_URL", "") // 外部環境設了就會誤走 JWKS 路徑，HS256 測試必失敗
 	v, err := NewVerifier()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return buildRoutes(v, pool, places, newLimiterStore(1000, 1000))
+	return buildRoutes(v, pool, places, weather, newLimiterStore(1000, 1000))
 }
 
 type failingProvider struct{}
@@ -36,6 +40,13 @@ type failingProvider struct{}
 func (failingProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
 	return nil, fmt.Errorf("simulated outage")
 }
+
+type failingWeather struct{}
+
+func (failingWeather) Current(context.Context, float64, float64) (Weather, error) {
+	return Weather{}, fmt.Errorf("simulated weather outage")
+}
+func (failingWeather) CurrentCached(float64, float64) (Weather, bool) { return Weather{}, false }
 
 type fixedProvider []Restaurant
 
@@ -652,7 +663,7 @@ func TestSearchFallsBackToCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := buildRoutes(v, pool, failingProvider{}, newLimiterStore(1000, 1000))
+	h := buildRoutes(v, pool, failingProvider{}, nil, newLimiterStore(1000, 1000))
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
 	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
 	r.Header.Set("Authorization", "Bearer "+token)
@@ -873,7 +884,7 @@ func TestSearchNoCacheReturns502(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := buildRoutes(v, pool, failingProvider{}, newLimiterStore(1000, 1000))
+	h := buildRoutes(v, pool, failingProvider{}, nil, newLimiterStore(1000, 1000))
 	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
 	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
 	w := httptest.NewRecorder()
@@ -1455,5 +1466,65 @@ func TestSearchExposureOrderingNewStoreBonus(t *testing.T) {
 	// 房 B：同批餐廳已在房 A 被推薦 → 「推薦過但尚未中選」具名中性 trace
 	if e, ok := exposureTrace(roomB); !ok || e.Mult != 1.0 || !strings.Contains(e.Reason, "推薦過") {
 		t.Fatalf("房 B 應為「推薦過但尚未中選」中性，got %+v ok=%v", e, ok)
+	}
+}
+
+func TestSearchSurvivesWeatherOutage(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	hostID := "35353535-3535-3535-3535-353535353535"
+	roomID := "36363636-3636-3636-3636-363636363636"
+	if _, err := pool.Exec(ctx,
+		`insert into auth.users (id, email) values ($1, 'weather@test.dev') on conflict do nothing`,
+		hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
+		 values ($1, $2, 'lobby', 25.0478, 121.5170)
+		 on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		 values ($1, $2, 1600, '["japanese"]', 2000, 'walking') on conflict do nothing`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+	})
+
+	h := newTestAppWithWeather(t, pool, NewMockProvider(), failingWeather{})
+	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
+	r := httptest.NewRequest("POST", fmt.Sprintf("/api/rooms/%s/search", roomID), nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("天氣故障不得阻斷 search：want 200 got %d body %s", w.Code, w.Body.String())
+	}
+	var sr struct {
+		Kept []struct {
+			Trace []TraceEntry `json:"trace"`
+		} `json:"kept"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &sr); err != nil || len(sr.Kept) == 0 {
+		t.Fatalf("kept 不可為空：%v %s", err, w.Body.String())
+	}
+	for _, e := range sr.Kept[0].Trace {
+		if e.Factor == "weather" {
+			t.Fatalf("天氣失敗時不得產生 weather trace：%+v", e)
+		}
 	}
 }

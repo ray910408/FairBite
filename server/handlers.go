@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,26 +52,51 @@ func rateLimit(store *limiterStore, next http.Handler) http.Handler {
 	})
 }
 
-func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, rl *limiterStore) http.Handler {
+func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider, rl *limiterStore) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, map[string]bool{"ok": true})
 	})
 	api := http.NewServeMux()
 	api.HandleFunc("POST /api/rooms/{id}/search", func(w http.ResponseWriter, r *http.Request) {
-		handleSearch(w, r, pool, places)
+		handleSearch(w, r, pool, places, weather)
 	})
 	api.HandleFunc("POST /api/rooms/{id}/start-voting", func(w http.ResponseWriter, r *http.Request) {
 		handleStartVoting(w, r, pool)
 	})
 	api.HandleFunc("POST /api/rooms/{id}/vote", func(w http.ResponseWriter, r *http.Request) {
-		handleVote(w, r, pool)
+		handleVote(w, r, pool, weather)
 	})
 	api.HandleFunc("POST /api/rooms/{id}/draw", func(w http.ResponseWriter, r *http.Request) {
-		handleDraw(w, r, pool)
+		handleDraw(w, r, pool, weather)
 	})
 	mux.Handle("/api/", v.Middleware(rateLimit(rl, api)))
 	return cors(mux)
+}
+
+// loadWeather：天氣是加分資料，失敗不阻斷（比 Places 降級更輕：連橫幅都不用）
+func loadWeather(ctx context.Context, wp WeatherProvider, lat, lng float64) *Weather {
+	if wp == nil {
+		return nil
+	}
+	w, err := wp.Current(ctx, lat, lng)
+	if err != nil {
+		log.Printf("weather provider failed, scoring without weather: %v", err)
+		return nil
+	}
+	return &w
+}
+
+// loadWeatherCached：vote 熱路徑版——只讀快取、永不發網路（eng review D6）。
+// miss 就當無資料（中性）；快取由前一次 search/draw 的 blocking fetch 餵飽。
+func loadWeatherCached(wp WeatherProvider, lat, lng float64) *Weather {
+	if wp == nil {
+		return nil
+	}
+	if w, ok := wp.CurrentCached(lat, lng); ok {
+		return &w
+	}
+	return nil
 }
 
 func roomIDFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -173,7 +199,7 @@ func handleStartVoting(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 //	     ├─ 限額：cast veto 且他店現存 veto ≥ VetoQuota → 409
 //	     ├─ 冪等寫入（insert on conflict do nothing / delete）
 //	     └─ inline rescore（其餘資料 tx 內讀；pre-tx room 設定由 guard_room_columns 凍結）→ ReplaceCandidates → commit
-func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
+func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weather WeatherProvider) {
 	ctx := r.Context()
 	room, ok := loadMemberRoom(w, r, pool)
 	if !ok {
@@ -196,6 +222,7 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 		jsonError(w, http.StatusUnprocessableEntity, "餐廳 ID 格式不正確")
 		return
 	}
+	wx := loadWeatherCached(weather, room.CenterLat, room.CenterLng)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
@@ -291,7 +318,7 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 	// state machine 保證每房只 search 一次，0006 又在 search 後凍結成員；本房對每家候選的 +1 精確為 len(members)。
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: len(members), Exploration: room.Exploration})
+		Weather: wx, Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: len(members), Exploration: room.Exploration})
 	if err := ReplaceCandidates(ctx, tx, room.ID, result); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
 		return
@@ -345,7 +372,7 @@ func minimumMemberRadius(members []Member) int {
 	return radius
 }
 
-func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, places PlacesProvider) {
+func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider) {
 	ctx := r.Context()
 	room, ok := loadHostRoom(w, r, pool)
 	if !ok {
@@ -361,6 +388,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	defer searchInFlight.Delete(room.ID)
+	wx := loadWeather(ctx, weather, room.CenterLat, room.CenterLng)
 	members, err := LoadMembers(ctx, pool, room.ID)
 	if err != nil || len(members) == 0 {
 		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
@@ -489,7 +517,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	}
 	result := Evaluate(EngineInput{Restaurants: found, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Recency: recency, Exposure: exposure, Exploration: room.Exploration})
+		Weather: wx, Recency: recency, Exposure: exposure, Exploration: room.Exploration})
 
 	if len(result.Kept) == 0 {
 		byKind := map[string]int{}
@@ -529,7 +557,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	jsonOK(w, resp)
 }
 
-func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
+func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weather WeatherProvider) {
 	ctx := r.Context()
 	room, ok := loadHostRoom(w, r, pool)
 	if !ok {
@@ -539,6 +567,7 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 		jsonError(w, http.StatusConflict, "房間狀態不允許抽選")
 		return
 	}
+	wx := loadWeather(ctx, weather, room.CenterLat, room.CenterLng)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
@@ -582,7 +611,7 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 	// spec §5.5：抽選前權威重算；pre-tx center_* 永遠、exploration 在 lobby 外由 guard_room_columns 凍結
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: len(members), Exploration: room.Exploration})
+		Weather: wx, Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: len(members), Exploration: room.Exploration})
 	if len(result.Kept) == 0 {
 		for _, e := range result.Excluded {
 			if hasKind(e.Kinds, "veto") {
