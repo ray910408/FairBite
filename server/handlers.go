@@ -283,9 +283,14 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 		jsonError(w, http.StatusInternalServerError, "讀取同席紀錄失敗")
 		return
 	}
+	exposure, err := LoadExposure(ctx, tx, memberIDs(members), restaurantIDs(rs))
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "讀取曝光統計失敗")
+		return
+	}
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Votes: votes, Recency: recency, Exploration: room.Exploration})
+		Votes: votes, Recency: recency, Exposure: exposure, Exploration: room.Exploration})
 	if err := ReplaceCandidates(ctx, tx, room.ID, result); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
 		return
@@ -476,9 +481,14 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusInternalServerError, "讀取同席紀錄失敗")
 		return
 	}
+	exposure, err := LoadExposure(ctx, tx, memberIDs(members), restaurantIDs(found))
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "讀取曝光統計失敗")
+		return
+	}
 	result := Evaluate(EngineInput{Restaurants: found, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Recency: recency, Exploration: room.Exploration})
+		Recency: recency, Exposure: exposure, Exploration: room.Exploration})
 
 	if len(result.Kept) == 0 {
 		byKind := map[string]int{}
@@ -504,6 +514,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	for i, c := range result.Kept {
 		keptIDs[i] = c.Restaurant.ID
 	}
+	// 順序不變式：LoadExposure → Evaluate → RecordExposure，避免本次 +1 汙染新店判定。
 	if err := RecordExposure(ctx, tx, memberIDs(members), keptIDs); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入曝光統計失敗")
 		return
@@ -561,10 +572,15 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 		jsonError(w, http.StatusInternalServerError, "讀取同席紀錄失敗")
 		return
 	}
+	exposure, err := LoadExposure(ctx, tx, memberIDs(members), restaurantIDs(rs))
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "讀取曝光統計失敗")
+		return
+	}
 	// spec §5.5：抽選前權威重算；pre-tx center_* 永遠、exploration 在 lobby 外由 guard_room_columns 凍結
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Votes: votes, Recency: recency, Exploration: room.Exploration})
+		Votes: votes, Recency: recency, Exposure: exposure, Exploration: room.Exploration})
 	if len(result.Kept) == 0 {
 		for _, e := range result.Excluded {
 			if hasKind(e.Kinds, "veto") {

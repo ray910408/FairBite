@@ -1338,3 +1338,79 @@ func TestDrawAllVetoed(t *testing.T) {
 		t.Fatalf("全否決後房間應停留在 voting，got %q err %v", status, err)
 	}
 }
+
+func TestSearchExposureOrderingNewStoreBonus(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	hostID := "31313131-3131-3131-3131-313131313131"
+	roomA := "32323232-3232-3232-3232-323232323232"
+	roomB := "34343434-3434-3434-3434-343434343434"
+	if _, err := pool.Exec(ctx,
+		`insert into auth.users (id, email) values ($1, 'exposure@test.dev') on conflict do nothing`,
+		hostID); err != nil {
+		t.Fatal(err)
+	}
+	for _, rid := range []string{roomA, roomB} {
+		if _, err := pool.Exec(ctx,
+			`insert into public.rooms (id, host_id, status, center_lat, center_lng)
+			 values ($1, $2, 'lobby', 25.0478, 121.5170)
+			 on conflict (id) do update set status = 'lobby'`, rid, hostID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx,
+			`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+			 values ($1, $2, 1600, '["japanese"]', 2000, 'walking') on conflict do nothing`,
+			rid, hostID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.rooms where id = any($1::uuid[])`, []string{roomA, roomB})
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+	})
+
+	h := newTestApp(t, pool)
+	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
+	exposureTrace := func(roomID string) (TraceEntry, bool) {
+		r := httptest.NewRequest("POST", fmt.Sprintf("/api/rooms/%s/search", roomID), nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("search %s: want 200 got %d body %s", roomID, w.Code, w.Body.String())
+		}
+		var sr struct {
+			Kept []struct {
+				Trace []TraceEntry `json:"trace"`
+			} `json:"kept"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &sr); err != nil || len(sr.Kept) == 0 {
+			t.Fatalf("kept 不可為空：%v %s", err, w.Body.String())
+		}
+		for _, e := range sr.Kept[0].Trace {
+			if e.Factor == "exposure" {
+				return e, true
+			}
+		}
+		return TraceEntry{}, false
+	}
+
+	// 房 A 首搜：全場皆新 → 中性、無 exposure chip（D21）。
+	// 順序證明：若 RecordExposure 誤移到 Evaluate 之前，房 A 就會看到「推薦過」trace。
+	if e, ok := exposureTrace(roomA); ok {
+		t.Fatalf("房 A 首搜全場皆新，不應有 exposure trace（若出現「推薦過」= 順序被打破），got %+v", e)
+	}
+	// 房 B：同批餐廳已在房 A 被推薦 → 「推薦過但尚未中選」具名中性 trace
+	if e, ok := exposureTrace(roomB); !ok || e.Mult != 1.0 || !strings.Contains(e.Reason, "推薦過") {
+		t.Fatalf("房 B 應為「推薦過但尚未中選」中性，got %+v ok=%v", e, ok)
+	}
+}

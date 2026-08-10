@@ -146,6 +146,31 @@ func LoadRecency(ctx context.Context, q querier, memberIDs, restaurantIDs []stri
 	return out, rows.Err()
 }
 
+// LoadExposure：房內成員對每家餐廳的曝光聚合（P3 spec §5 曝光/新店因素）。
+// handleSearch 必須在 RecordExposure 之前呼叫，否則本次搜尋的 +1
+// 會讓「全員 recommended_count = 0」的新店判定永遠不成立。
+func LoadExposure(ctx context.Context, q querier, memberIDs, restaurantIDs []string) (map[string]ExposureCount, error) {
+	rows, err := q.Query(ctx, `
+		select restaurant_id, sum(recommended_count)::int, sum(chosen_count)::int
+		from exposure_stats
+		where user_id = any($1::uuid[]) and restaurant_id = any($2::uuid[])
+		group by 1`, memberIDs, restaurantIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]ExposureCount{}
+	for rows.Next() {
+		var rid string
+		var c ExposureCount
+		if err := rows.Scan(&rid, &c.Recommended, &c.Chosen); err != nil {
+			return nil, err
+		}
+		out[rid] = c
+	}
+	return out, rows.Err()
+}
+
 // RecordExposure：搜尋成功時為「每位成員 × 每家 kept」+1（P3 曝光平衡的資料來源）
 func RecordExposure(ctx context.Context, tx pgx.Tx, memberIDs, keptRestaurantIDs []string) error {
 	_, err := tx.Exec(ctx, `

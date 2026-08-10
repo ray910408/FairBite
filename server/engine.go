@@ -26,6 +26,11 @@ type RecencyCount struct {
 	Fading int
 }
 
+type ExposureCount struct {
+	Recommended int // 房內成員 recommended_count 總和
+	Chosen      int // 房內成員 chosen_count 總和
+}
+
 type TraceEntry struct {
 	Factor string  `json:"factor"`
 	Mult   float64 `json:"mult"`
@@ -59,9 +64,10 @@ type EngineInput struct {
 	Members              []Member
 	Now                  time.Time
 	CenterLat, CenterLng float64
-	Votes                map[string]VoteInfo     // key = rkey(r)；nil = 無投票資料（P1 相容）
-	Recency              map[string]RecencyCount // key = rkey(r)；nil = 無紀錄
-	Exploration          string                  // familiar/balanced/explore；"" 視為 balanced
+	Votes                map[string]VoteInfo      // key = rkey(r)；nil = 無投票資料（P1 相容）
+	Recency              map[string]RecencyCount  // key = rkey(r)；nil = 無紀錄
+	Exposure             map[string]ExposureCount // key = rkey(r)；nil = 無統計（相容舊測試）
+	Exploration          string                   // familiar/balanced/explore；"" 視為 balanced
 }
 
 type EngineResult struct {
@@ -200,16 +206,64 @@ func voteFactor(r Restaurant, in EngineInput) TraceEntry {
 		fmt.Sprintf("%d 張贊成票", ups)}
 }
 
+func gearScale(scales map[string]float64, exploration string) float64 {
+	if s, ok := scales[exploration]; ok {
+		return s
+	}
+	return scales["balanced"]
+}
+
+// allCandidatesNew：全場皆未被推薦過（區域首搜的常態）。
+// ponytail: O(n²)（每家候選掃一次全場），n ≤ 數十，夠用
+func allCandidatesNew(in EngineInput) bool {
+	for _, r := range in.Restaurants {
+		if in.Exposure[rkey(r)].Recommended != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func exposureFactor(r Restaurant, in EngineInput) TraceEntry {
+	if in.Exposure == nil {
+		return TraceEntry{Mult: 1.0} // 無統計資料：中性且不產生 trace（比照 closingFactor 先例）
+	}
+	c := in.Exposure[rkey(r)]
+	if c.Recommended == 0 {
+		scale := gearScale(NewStoreBonusScale, in.Exploration)
+		if scale == 0 {
+			return TraceEntry{Mult: 1.0} // 熟悉檔：新店加成關閉，不出 chip
+		}
+		// 全場皆新（區域首搜常態）：一致加成會在正規化後抵銷 → 中性且不出 chip，
+		// 不產生虛構 trace（eng review D21/OV#7）。只有「舊場景中新出現的店」有相對加成。
+		if allCandidatesNew(in) {
+			return TraceEntry{Mult: 1.0}
+		}
+		return TraceEntry{"exposure", 1 + (NewStoreBonusMult-1)*scale, "新出現的店家"}
+	}
+	if c.Chosen == 0 {
+		return TraceEntry{"exposure", 1.0, "推薦過但尚未中選"}
+	}
+	penaltyScale := gearScale(ChosenPenaltyScale, in.Exploration)
+	if penaltyScale == 0 {
+		return TraceEntry{Mult: 1.0} // 熟悉檔：熟店降權關閉（eng review D8），不出誤導性 chip
+	}
+	// 人均中選次數（D21/OV#5）：Chosen 是跨成員總和，不除人數會隨房間人數暴衝
+	frac := float64(c.Chosen) / (float64(ChosenPenaltyAtCount) * float64(len(in.Members)))
+	if frac > 1 {
+		frac = 1
+	}
+	mult := 1 - (1-ChosenPenaltyMult)*frac*penaltyScale
+	return TraceEntry{"exposure", mult, fmt.Sprintf("房內累計中選 %d 次，稍作降權", c.Chosen)}
+}
+
 func recencyFactor(r Restaurant, in EngineInput) TraceEntry {
 	c := in.Recency[rkey(r)]
 	if c.Fresh == 0 && c.Fading == 0 {
 		return TraceEntry{"recency", 1.0, "近 30 天無成員造訪"}
 	}
 	eff := (float64(c.Fresh) + RecencyFadingWeight*float64(c.Fading)) / float64(len(in.Members))
-	scale, ok := RecencyPenaltyScale[in.Exploration]
-	if !ok {
-		scale = RecencyPenaltyScale["balanced"]
-	}
+	scale := gearScale(RecencyPenaltyScale, in.Exploration)
 	mult := 1 - (1-RecencyFloorMult)*eff*scale
 	if mult < RecencyMinMult {
 		mult = RecencyMinMult
@@ -224,7 +278,7 @@ func recencyFactor(r Restaurant, in EngineInput) TraceEntry {
 	return TraceEntry{"recency", mult, strings.Join(parts, "；")}
 }
 
-var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor}
+var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor, exposureFactor}
 
 func Evaluate(in EngineInput) EngineResult {
 	var res EngineResult

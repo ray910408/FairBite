@@ -31,8 +31,23 @@ var TransportOverheadMin = map[string]float64{"walking": 0, "driving": 6, "trans
 
 var TransportLabels = map[string]string{"walking": "步行", "driving": "開車", "transit": "大眾運輸"}
 
-// 探索檔位 = 近期懲罰強度的 preset（spec §5.4）。新店加成係數屬 P3 曝光因素，屆時再加
-var RecencyPenaltyScale = map[string]float64{"familiar": 0.5, "balanced": 1.0, "explore": 1.25}
+// 探索檔位 = 三個係數的 preset。D14 的 explore ×1.25 是曝光因素未上線前的近似，P3 起由新店/熟店係數承擔探索語意
+var RecencyPenaltyScale = map[string]float64{"familiar": 0.5, "balanced": 1.0, "explore": 1.0}
+
+// 曝光/新店（P3 spec §5）：房內 chosen_count 聚合高者輕降權；全員 recommended_count = 0 小幅加成
+const (
+	NewStoreBonusMult    = 1.1 // 沒被推薦過的「新出現店家」→ 探索價值加成（balanced 檔全額）
+	ChosenPenaltyMult    = 0.9 // 人均中選次數達門檻的降權下限（balanced 檔全額；spec「輕降權」）
+	ChosenPenaltyAtCount = 5   // 「人均」chosen 次數 ≥ 此值全額生效，以下線性內插
+	//（eng review D21：除以人數，比照 recencyFactor 的 /len 先例，
+	// 否則 5 人房吃一次就吃滿懲罰）
+)
+
+// 探索檔位完整語意（spec §5.4）：新店加成倍率 × 熟店降權強度 × 近期懲罰強度 的 preset。
+// familiar 的新店加成與熟店降權都關閉（eng review D8：「常去的店優先」不該再拉低常去的店，
+// 壟斷防線由近期懲罰 0.5 充當）
+var NewStoreBonusScale = map[string]float64{"familiar": 0, "balanced": 1.0, "explore": 2.0}
+var ChosenPenaltyScale = map[string]float64{"familiar": 0, "balanced": 1.0, "explore": 1.5}
 
 const (
 	PrefMultMin = 0.6
