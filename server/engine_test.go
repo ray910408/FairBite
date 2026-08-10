@@ -439,6 +439,24 @@ func TestAllNewCandidatesNeutral(t *testing.T) {
 	}
 }
 
+func TestExposureAllNewSurvivorsNeutralWhenOldCandidateExcluded(t *testing.T) {
+	in := exposureIn(ExposureCount{}, "balanced")
+	in.Restaurants[1].PriceLevel = 4 // p-old 超過成員預算，會在 factor pipeline 前被排除
+	if _, hasTrace := exposureMult(t, in); hasTrace {
+		t.Fatal("所有存活候選皆新時不應讓已排除舊店觸發 exposure trace")
+	}
+}
+
+func TestExposureBaselineTreatsOwnSearchAsNew(t *testing.T) {
+	in := exposureIn(ExposureCount{Recommended: 2}, "balanced")
+	in.Members = append(in.Members, member(func(m *Member) { m.UserID = "u2" }))
+	in.ExposureBaseline = len(in.Members)
+	got, hasTrace := exposureMult(t, in)
+	if !hasTrace || got != 1.1 {
+		t.Fatalf("Recommended 等於本房 baseline 應視為新店：got %v trace=%v", got, hasTrace)
+	}
+}
+
 // 五人房吃過一次 ≠ 吃滿懲罰（D21/OV#5：人均門檻）
 func TestChosenPenaltyIsPerCapita(t *testing.T) {
 	in := exposureIn(ExposureCount{Recommended: 9, Chosen: 1}, "balanced")

@@ -288,9 +288,10 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 		jsonError(w, http.StatusInternalServerError, "讀取曝光統計失敗")
 		return
 	}
+	// state machine 保證每房只 search 一次，0006 又在 search 後凍結成員；本房對每家候選的 +1 精確為 len(members)。
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Votes: votes, Recency: recency, Exposure: exposure, Exploration: room.Exploration})
+		Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: len(members), Exploration: room.Exploration})
 	if err := ReplaceCandidates(ctx, tx, room.ID, result); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
 		return
@@ -577,10 +578,11 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 		jsonError(w, http.StatusInternalServerError, "讀取曝光統計失敗")
 		return
 	}
+	// state machine 保證每房只 search 一次，0006 又在 search 後凍結成員；本房對每家候選的 +1 精確為 len(members)。
 	// spec §5.5：抽選前權威重算；pre-tx center_* 永遠、exploration 在 lobby 外由 guard_room_columns 凍結
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Votes: votes, Recency: recency, Exposure: exposure, Exploration: room.Exploration})
+		Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: len(members), Exploration: room.Exploration})
 	if len(result.Kept) == 0 {
 		for _, e := range result.Excluded {
 			if hasKind(e.Kinds, "veto") {

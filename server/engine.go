@@ -67,6 +67,7 @@ type EngineInput struct {
 	Votes                map[string]VoteInfo      // key = rkey(r)；nil = 無投票資料（P1 相容）
 	Recency              map[string]RecencyCount  // key = rkey(r)；nil = 無紀錄
 	Exposure             map[string]ExposureCount // key = rkey(r)；nil = 無統計（相容舊測試）
+	ExposureBaseline     int                      // vote/draw 扣本房 search 自房 +1；search 留 0
 	Exploration          string                   // familiar/balanced/explore；"" 視為 balanced
 }
 
@@ -213,11 +214,20 @@ func gearScale(scales map[string]float64, exploration string) float64 {
 	return scales["balanced"]
 }
 
-// allCandidatesNew：全場皆未被推薦過（區域首搜的常態）。
+// effectiveRecommended：扣掉本房 search 自房 +1 後的推薦次數（vote/draw 傳 ExposureBaseline=len(members)；clamp 0）
+func effectiveRecommended(c ExposureCount, in EngineInput) int {
+	n := c.Recommended - in.ExposureBaseline
+	if n < 0 {
+		n = 0
+	}
+	return n
+}
+
+// allCandidatesNew：全場存活候選皆未被推薦過（區域首搜的常態）。
 // ponytail: O(n²)（每家候選掃一次全場），n ≤ 數十，夠用
 func allCandidatesNew(in EngineInput) bool {
 	for _, r := range in.Restaurants {
-		if in.Exposure[rkey(r)].Recommended != 0 {
+		if effectiveRecommended(in.Exposure[rkey(r)], in) != 0 {
 			return false
 		}
 	}
@@ -229,7 +239,7 @@ func exposureFactor(r Restaurant, in EngineInput) TraceEntry {
 		return TraceEntry{Mult: 1.0} // 無統計資料：中性且不產生 trace（比照 closingFactor 先例）
 	}
 	c := in.Exposure[rkey(r)]
-	if c.Recommended == 0 {
+	if effectiveRecommended(c, in) == 0 {
 		scale := gearScale(NewStoreBonusScale, in.Exploration)
 		if scale == 0 {
 			return TraceEntry{Mult: 1.0} // 熟悉檔：新店加成關閉，不出 chip
@@ -282,6 +292,7 @@ var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, rece
 
 func Evaluate(in EngineInput) EngineResult {
 	var res EngineResult
+	survivors := make([]Restaurant, 0, len(in.Restaurants))
 	for _, r := range in.Restaurants {
 		if kinds, reasons := hardExclude(r, in.Members, in.Now); len(kinds) > 0 {
 			res.Excluded = append(res.Excluded, Excluded{r, kinds, strings.Join(reasons, "；")})
@@ -292,6 +303,10 @@ func Evaluate(in EngineInput) EngineResult {
 				fmt.Sprintf("遭 %s 否決（可收回）", strings.Join(v.Vetoers, "、"))})
 			continue
 		}
+		survivors = append(survivors, r)
+	}
+	in.Restaurants = survivors
+	for _, r := range survivors {
 		c := Candidate{Restaurant: r, Score: 1.0}
 		for _, f := range factors {
 			e := f(r, in)

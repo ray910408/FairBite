@@ -349,7 +349,7 @@ func TestSearchSingleFlightPerRoom(t *testing.T) {
 	}
 }
 
-func TestSearchAndDrawHappyPath(t *testing.T) {
+func TestSearchAndDrawHappyPathExposureBaseline(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
@@ -371,6 +371,9 @@ func TestSearchAndDrawHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = pool.Exec(ctx,
 		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		 values ($1, $2, 'lobby', 25.0478, 121.5170)
@@ -384,6 +387,7 @@ func TestSearchAndDrawHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
 		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
 	})
 
@@ -408,8 +412,15 @@ func TestSearchAndDrawHappyPath(t *testing.T) {
 			Trace        []TraceEntry `json:"trace"`
 		} `json:"kept"`
 	}
-	if err := json.Unmarshal(w1.Body.Bytes(), &sr); err != nil || len(sr.Kept) == 0 {
-		t.Fatalf("search 應回非空 kept：%v %s", err, w1.Body.String())
+	if err := json.Unmarshal(w1.Body.Bytes(), &sr); err != nil || len(sr.Kept) < 2 {
+		t.Fatalf("baseline 行為測試至少需要 2 家 kept：%v %s", err, w1.Body.String())
+	}
+	oldID, newID := sr.Kept[0].RestaurantID, sr.Kept[1].RestaurantID
+	// 在本房 search 寫入的 +1 之外，替 oldID 再加一次既有曝光；其餘候選仍只有本房的 +1。
+	if _, err := pool.Exec(ctx, `update public.exposure_stats
+		set recommended_count = recommended_count + 1
+		where user_id = $1 and restaurant_id = $2`, hostID, oldID); err != nil {
+		t.Fatal(err)
 	}
 
 	if w := do(fmt.Sprintf("/api/rooms/%s/search", roomID)); w.Code != http.StatusConflict {
@@ -417,6 +428,38 @@ func TestSearchAndDrawHappyPath(t *testing.T) {
 	}
 	if w := do("/api/rooms/" + roomID + "/start-voting"); w.Code != http.StatusOK {
 		t.Fatalf("start-voting: want 200 got %d body %s", w.Code, w.Body.String())
+	}
+	voteBody := fmt.Sprintf(`{"restaurant_id":%q,"kind":"up","op":"cast"}`, oldID)
+	voteReq := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/vote", strings.NewReader(voteBody))
+	voteReq.Header.Set("Authorization", "Bearer "+token)
+	voteW := httptest.NewRecorder()
+	h.ServeHTTP(voteW, voteReq)
+	if voteW.Code != http.StatusOK {
+		t.Fatalf("vote: want 200 got %d body %s", voteW.Code, voteW.Body.String())
+	}
+	var vr struct {
+		Kept []struct {
+			RestaurantID string       `json:"restaurant_id"`
+			Trace        []TraceEntry `json:"trace"`
+		} `json:"kept"`
+	}
+	if err := json.Unmarshal(voteW.Body.Bytes(), &vr); err != nil {
+		t.Fatalf("vote 回應無法解析：%v %s", err, voteW.Body.String())
+	}
+	var newStoreTrace TraceEntry
+	foundNewStoreTrace := false
+	for _, candidate := range vr.Kept {
+		if candidate.RestaurantID != newID {
+			continue
+		}
+		for _, entry := range candidate.Trace {
+			if entry.Factor == "exposure" {
+				newStoreTrace, foundNewStoreTrace = entry, true
+			}
+		}
+	}
+	if !foundNewStoreTrace || newStoreTrace.Mult != 1.1 || !strings.Contains(newStoreTrace.Reason, "新出現") {
+		t.Fatalf("vote 應扣除本房 search +1 並保留新店加成，got %+v found=%v", newStoreTrace, foundNewStoreTrace)
 	}
 
 	w2 := do(fmt.Sprintf("/api/rooms/%s/draw", roomID))
