@@ -652,6 +652,13 @@ func TestPrefFairnessBoost(t *testing.T) {
 	if _, reason := prefMult(in); strings.Contains(reason, "公平校正") {
 		t.Fatalf("空偏好成員不應觸發公平校正宣告，got %q", reason)
 	}
+	// 空偏好者仍應計入比較域：u1 有偏好且較不滿足時，必須加重 u1。
+	in.Members[0].Cuisines = []string{"japanese"}
+	in.Members[1].Cuisines = nil
+	in.Satisfaction = map[string]float64{"u1": 0.2, "u2": 0.8}
+	if m, reason := prefMult(in); m < 1.199 || m > 1.201 || !strings.Contains(reason, "公平校正") {
+		t.Fatalf("混合偏好房應加重 u1，got %v %q", m, reason)
+	}
 }
 
 func TestNewFactorsChangeOutcome(t *testing.T) {

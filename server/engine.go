@@ -166,22 +166,24 @@ func lowestSatisfactionMember(in EngineInput) string {
 	var lowID string
 	low, high := 2.0, -1.0
 	for _, m := range in.Members {
-		if len(m.Cuisines) == 0 {
-			// 無偏好可加重：選了也是 no-op 還宣告假校正（D22/OV#8）——不選拔、不宣告
-			continue
-		}
 		s, ok := in.Satisfaction[m.UserID]
 		if !ok {
+			continue
+		}
+		if s > high {
+			high = s
+		}
+		if len(m.Cuisines) == 0 {
+			// 無偏好可加重：不參與選拔（D22/OV#8——選了也是 no-op 還宣告假校正），
+			// 但其滿足度仍計入比較域 high（PR #5 Codex P2，2026-08-11 裁定：
+			// 混合房的真實不平等必須能觸發校正，否則 2 人房 gap 恆 0）
 			continue
 		}
 		if s < low {
 			low, lowID = s, m.UserID
 		}
-		if s > high {
-			high = s
-		}
 	}
-	if high-low < FairnessMinGap {
+	if lowID == "" || high-low < FairnessMinGap {
 		return ""
 	}
 	return lowID

@@ -7,19 +7,24 @@ import { Star } from './icons'
 // 真正入口是 HomePage 的 RecentRatingPrompt（最近 1 筆未評，eng review D4）。
 function StarRow({ historyId, onRated }: { historyId: string; onRated: (n: number) => void }) {
   const [saveError, setSaveError] = useState('')
+  const [busy, setBusy] = useState(false)
   return (
     <>
       <div className="flex justify-center gap-1">
         {[1, 2, 3, 4, 5].map(n => (
           <button key={n} type="button" aria-label={`${n} 顆星`}
-            className="flex h-11 w-11 items-center justify-center rounded-xl text-fg-muted hover:text-brand"
+            disabled={busy}
+            className="flex h-11 w-11 items-center justify-center rounded-xl text-fg-muted hover:text-brand disabled:opacity-50"
             onClick={async () => {
               setSaveError('')
+              setBusy(true)
               // count:'exact'：RLS 擋下時 204 無 error，只看 error 會誤判成功
               const { error, count } = await supabase.from('dining_history')
                 .update({ rating: n }, { count: 'exact' }).eq('id', historyId)
-              if (error || count === 0) setSaveError('評分儲存失敗，請再試一次')
-              else onRated(n)
+              if (error || count === 0) {
+                setSaveError('評分儲存失敗，請再試一次')
+                setBusy(false)
+              } else onRated(n)
             }}>
             <Star className="h-7 w-7" />
           </button>

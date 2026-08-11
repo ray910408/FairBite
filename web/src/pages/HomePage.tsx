@@ -25,6 +25,9 @@ function getPosition(): Promise<{ lat: number; lng: number }> {
 async function applyDefaultPrefs(roomId: string) {
   const { data: auth } = await supabase.auth.getUser()
   if (!auth.user) return
+  const appliedKey = `prefs-applied:${roomId}:${auth.user.id}`
+  if (localStorage.getItem(appliedKey)) return
+  localStorage.setItem(appliedKey, '1')
   const { data: profile } = await supabase.from('profiles')
     .select('default_prefs').eq('id', auth.user.id).single()
   const cuisines = (profile?.default_prefs as { cuisines?: string[] } | null)?.cuisines
@@ -59,7 +62,7 @@ export default function HomePage() {
       const current = Array.isArray(dp.cuisines) ? (dp.cuisines as string[]) : []
       const tags = suggestCuisines((history ?? []) as unknown as HistoryRow[], current,
         CUISINE_OPTIONS.map(([k]) => k))
-      const dismissed = (localStorage.getItem('prefs-suggest-dismissed') ?? '').split(',')
+      const dismissed = (localStorage.getItem(`prefs-suggest-dismissed:${auth.user.id}`) ?? '').split(',')
       setMyUserId(auth.user.id)
       setPrefs(dp)
       setSuggestion(tags.filter(t => !dismissed.includes(t)))
@@ -158,8 +161,9 @@ export default function HomePage() {
                 else setError('偏好儲存失敗，請稍後再試')
               }}>加入預設偏好</button>
               <button className="btn btn-quiet" onClick={() => {
-                const prev = (localStorage.getItem('prefs-suggest-dismissed') ?? '').split(',')
-                localStorage.setItem('prefs-suggest-dismissed',
+                const dismissedKey = `prefs-suggest-dismissed:${myUserId}`
+                const prev = (localStorage.getItem(dismissedKey) ?? '').split(',')
+                localStorage.setItem(dismissedKey,
                   [...new Set([...prev, ...suggestion])].filter(Boolean).join(','))
                 setSuggestion([])
               }}>忽略</button>

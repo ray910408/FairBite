@@ -18,6 +18,11 @@ describe('suggestCuisines', () => {
   it('打過低分（≤2 星）的那餐不列入學習', () => {
     expect(suggestCuisines([row(['japanese'], 1), row(['japanese'])], [], KNOWN)).toEqual([])
   })
+  it('打過低分的菜系即使另有兩筆未評分也不建議', () => {
+    expect(suggestCuisines([
+      row(['japanese'], 1), row(['japanese']), row(['japanese']),
+    ], [], KNOWN)).toEqual([])
+  })
   it('不在可選清單的 tag 不建議', () => {
     expect(suggestCuisines([row(['noodle']), row(['noodle'])], [], KNOWN)).toEqual([])
   })
