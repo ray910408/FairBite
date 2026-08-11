@@ -22,10 +22,9 @@ describe('suggestCuisines', () => {
     expect(suggestCuisines([row(['noodle']), row(['noodle'])], [], KNOWN)).toEqual([])
   })
   it('最多 3 個', () => {
-    const rows = ['japanese', 'korean', 'taiwanese', 'japanese', 'korean', 'taiwanese']
-      .map(t => row([t]))
+    const rows = ['japanese', 'korean', 'taiwanese', 'western'].flatMap(t => [row([t]), row([t])])
     expect(suggestCuisines([...rows, row(['japanese'])], [],
-      [...KNOWN, 'western']).length).toBeLessThanOrEqual(3)
+      [...KNOWN, 'western'])).toHaveLength(3)
   })
   it('restaurants 為 null 的紀錄跳過', () => {
     const nullRow: HistoryRow = { rating: null, restaurants: null }

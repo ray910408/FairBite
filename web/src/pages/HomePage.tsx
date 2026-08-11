@@ -31,6 +31,7 @@ async function applyDefaultPrefs(roomId: string) {
   if (!Array.isArray(cuisines) || cuisines.length === 0) return
   await supabase.from('room_members').update({ cuisines })
     .eq('room_id', roomId).eq('user_id', auth.user.id)
+    .eq('cuisines', '[]') // 只填仍是預設的列：重複加入不得覆蓋使用者已調好的條件（task6 review r1）
 }
 
 export default function HomePage() {
@@ -157,7 +158,9 @@ export default function HomePage() {
                 else setError('偏好儲存失敗，請稍後再試')
               }}>加入預設偏好</button>
               <button className="btn btn-quiet" onClick={() => {
-                localStorage.setItem('prefs-suggest-dismissed', suggestion.join(','))
+                const prev = (localStorage.getItem('prefs-suggest-dismissed') ?? '').split(',')
+                localStorage.setItem('prefs-suggest-dismissed',
+                  [...new Set([...prev, ...suggestion])].filter(Boolean).join(','))
                 setSuggestion([])
               }}>忽略</button>
             </div>
