@@ -417,39 +417,18 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := TransitionRoom(ctx, tx, room.ID, "lobby", "candidates"); err != nil {
-		if errors.Is(err, ErrConflict) {
+	members, found, err = freezeAndLoadMembers(ctx, tx, &room, fetchedRadius, found)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrConflict):
 			jsonError(w, http.StatusConflict, "房間狀態已變更")
-			return
+		case errors.Is(err, ErrMembersChanged):
+			jsonError(w, http.StatusConflict, "成員條件已於搜尋期間變更，請再按一次開始搜尋")
+		default:
+			log.Printf("search freeze failed: %v", err)
+			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		}
-		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
-	}
-	// exploration 在 lobby 仍可變，鎖定後重讀；center_* 由 guard 永凍毋需重讀
-	if err := tx.QueryRow(ctx, `select exploration from rooms where id = $1`, room.ID).Scan(&room.Exploration); err != nil {
-		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-		return
-	}
-	members, err = LoadMembersForUpdate(ctx, tx, room.ID)
-	if err != nil || len(members) == 0 {
-		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
-		return
-	}
-	reloadedRadius := minimumMemberRadius(members)
-	// tx 內重讀的「全員最小距離」有三種情況：縮小則重濾、相等則直接繼續；
-	// 放大代表先前的 fetch envelope under-fetch，回 409 並由 deferred rollback 留在 lobby，讓 host 重搜。
-	if reloadedRadius > fetchedRadius {
-		jsonError(w, http.StatusConflict, "成員條件已於搜尋期間變更，請再按一次開始搜尋")
-		return
-	}
-	if reloadedRadius < fetchedRadius {
-		withinReloadedRadius := found[:0]
-		for _, restaurant := range found {
-			if Haversine(room.CenterLat, room.CenterLng, restaurant.Lat, restaurant.Lng) <= float64(reloadedRadius) {
-				withinReloadedRadius = append(withinReloadedRadius, restaurant)
-			}
-		}
-		found = withinReloadedRadius
 	}
 	recency, err := LoadRecency(ctx, tx, memberIDs(members), restaurantIDs(found))
 	if err != nil {
