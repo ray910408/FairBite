@@ -229,17 +229,19 @@ func RecordDecision(ctx context.Context, tx pgx.Tx, roomID string, members []Mem
 // ponytail: window 掃無專屬索引（dining_history_recency 中段的 restaurant_id 用不上排序）；
 // 個人量級夠用，量大加 (user_id, decided_at desc) 索引
 func LoadSatisfaction(ctx context.Context, q querier, memberIDs []string) (map[string]float64, error) {
+	// decided_at 可能同值；window 選樣本與 EMA 折入皆以 id 作穩定 tie-break。
 	rows, err := q.Query(ctx, `
 		select user_id, sample::float8 from (
 			select user_id,
+			       id,
 			       coalesce((rating - 1) / 4.0, pref_hit) as sample,
 			       decided_at,
-			       row_number() over (partition by user_id order by decided_at desc) as rn
+			       row_number() over (partition by user_id order by decided_at desc, id desc) as rn
 			from dining_history
 			where user_id = any($1::uuid[])
 			  and (rating is not null or pref_hit is not null)
 		) t where rn <= $2
-		order by user_id, decided_at`, memberIDs, EMASampleWindow)
+		order by user_id, decided_at, id`, memberIDs, EMASampleWindow)
 	if err != nil {
 		return nil, err
 	}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
@@ -45,30 +45,42 @@ export default function HomePage() {
   const [myUserId, setMyUserId] = useState('')
   const [prefs, setPrefs] = useState<Record<string, unknown>>({})
   const [suggestion, setSuggestion] = useState<string[]>([])
+  const suggestionRequest = useRef(0)
+  const suggestionsMounted = useRef(false)
+
+  const loadSuggestions = useCallback(async () => {
+    if (!suggestionsMounted.current) return
+    const request = ++suggestionRequest.current
+    setSuggestion([]) // 評分後先撤下舊快照，避免 refetch 完成前仍可採納已失效建議
+    const { data: auth } = await supabase.auth.getUser()
+    if (!auth.user || request !== suggestionRequest.current) return
+    const [{ data: profile }, { data: history }] = await Promise.all([
+      supabase.from('profiles').select('default_prefs').eq('id', auth.user.id).single(),
+      supabase.from('dining_history')
+        .select('rating, restaurants(cuisine_tags)')
+        .order('decided_at', { ascending: false }).limit(50),
+    ])
+    if (request !== suggestionRequest.current || !profile) return
+    const dp = (profile?.default_prefs ?? {}) as Record<string, unknown>
+    const current = Array.isArray(dp.cuisines) ? (dp.cuisines as string[]) : []
+    const tags = suggestCuisines((history ?? []) as unknown as HistoryRow[], current,
+      CUISINE_OPTIONS.map(([k]) => k))
+    const dismissed = (localStorage.getItem(`prefs-suggest-dismissed:${auth.user.id}`) ?? '').split(',')
+    setMyUserId(auth.user.id)
+    setPrefs(dp)
+    setSuggestion(tags.filter(t => !dismissed.includes(t)))
+  }, [])
+
+  const cancelSuggestionLoads = useCallback(() => {
+    suggestionsMounted.current = false
+    suggestionRequest.current++
+  }, [])
 
   useEffect(() => {
-    let live = true
-    ;(async () => {
-      const { data: auth } = await supabase.auth.getUser()
-      if (!auth.user || !live) return
-      const [{ data: profile }, { data: history }] = await Promise.all([
-        supabase.from('profiles').select('default_prefs').eq('id', auth.user.id).single(),
-        supabase.from('dining_history')
-          .select('rating, restaurants(cuisine_tags)')
-          .order('decided_at', { ascending: false }).limit(50),
-      ])
-      if (!live || !profile) return
-      const dp = (profile?.default_prefs ?? {}) as Record<string, unknown>
-      const current = Array.isArray(dp.cuisines) ? (dp.cuisines as string[]) : []
-      const tags = suggestCuisines((history ?? []) as unknown as HistoryRow[], current,
-        CUISINE_OPTIONS.map(([k]) => k))
-      const dismissed = (localStorage.getItem(`prefs-suggest-dismissed:${auth.user.id}`) ?? '').split(',')
-      setMyUserId(auth.user.id)
-      setPrefs(dp)
-      setSuggestion(tags.filter(t => !dismissed.includes(t)))
-    })()
-    return () => { live = false }
-  }, [])
+    suggestionsMounted.current = true
+    void loadSuggestions()
+    return cancelSuggestionLoads
+  }, [cancelSuggestionLoads, loadSuggestions])
 
   async function createRoom() {
     setBusy(true)
@@ -171,7 +183,7 @@ export default function HomePage() {
           </section>
         )}
 
-        <RecentRatingPrompt />
+        <RecentRatingPrompt onRated={loadSuggestions} />
 
         {error && (
           <p role="alert" className="banner bg-danger-soft text-danger">

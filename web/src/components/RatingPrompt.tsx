@@ -70,25 +70,30 @@ export default function RatingPrompt({ roomId }: { roomId: string }) {
 }
 
 // HomePage：只提示最近 1 筆、7 天內、未評分的同席紀錄（eng review D4 附帶約束）。
-// 略過以 historyId 記 localStorage，同一筆不再糾纏；下一筆新紀錄自然重新出現。
-export function RecentRatingPrompt() {
+// 略過依使用者保存 historyId 集合，同一筆不再糾纏；下一筆新紀錄自然重新出現。
+export function RecentRatingPrompt({ onRated }: { onRated?: () => void } = {}) {
   const [row, setRow] = useState<{ id: string; name: string } | null>(null)
   const [rated, setRated] = useState(false)
+  const [userId, setUserId] = useState('')
 
   useEffect(() => {
     let live = true
-    supabase.from('dining_history')
-      .select('id, rating, decided_at, restaurants(name)')
-      .is('rating', null)
-      .gte('decided_at', new Date(Date.now() - 7 * 86_400_000).toISOString())
-      .order('decided_at', { ascending: false })
-      .limit(1)
-      .then(({ data }) => {
-        const r = data?.[0]
-        if (!live || !r) return
-        if (localStorage.getItem('rating-dismissed') === r.id) return
-        setRow({ id: r.id, name: (r.restaurants as unknown as { name: string } | null)?.name ?? '上一餐' })
-      })
+    ;(async () => {
+      const { data: auth } = await supabase.auth.getUser()
+      if (!live || !auth.user) return
+      const { data } = await supabase.from('dining_history')
+        .select('id, rating, decided_at, restaurants(name)')
+        .is('rating', null)
+        .gte('decided_at', new Date(Date.now() - 7 * 86_400_000).toISOString())
+        .order('decided_at', { ascending: false })
+        .limit(1)
+      const r = data?.[0]
+      if (!live || !r) return
+      const dismissed = (localStorage.getItem(`rating-dismissed:${auth.user.id}`) ?? '').split(',')
+      if (dismissed.includes(r.id)) return
+      setUserId(auth.user.id)
+      setRow({ id: r.id, name: (r.restaurants as unknown as { name: string } | null)?.name ?? '上一餐' })
+    })()
     return () => { live = false }
   }, [])
 
@@ -96,9 +101,15 @@ export function RecentRatingPrompt() {
   return (
     <section className="card animate-rise space-y-3 text-center">
       <p className="text-sm font-semibold">上次吃的《{row.name}》滿意嗎？</p>
-      <StarRow historyId={row.id} onRated={() => setRated(true)} />
+      <StarRow historyId={row.id} onRated={() => { setRated(true); onRated?.() }} />
       <button type="button" className="text-sm text-fg-muted underline"
-        onClick={() => { localStorage.setItem('rating-dismissed', row.id); setRow(null) }}>
+        onClick={() => {
+          const dismissedKey = `rating-dismissed:${userId}`
+          const dismissed = (localStorage.getItem(dismissedKey) ?? '').split(',')
+          localStorage.setItem(dismissedKey,
+            [...new Set([...dismissed, row.id])].filter(Boolean).join(','))
+          setRow(null)
+        }}>
         略過
       </button>
     </section>
