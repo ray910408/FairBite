@@ -275,8 +275,17 @@ type keptJSON struct {
 }
 
 type excludedJSON struct {
-	Name   string `json:"name"`
-	Reason string `json:"reason"`
+	Name   string   `json:"name"`
+	Reason string   `json:"reason"`
+	Kinds  []string `json:"kinds"`
+}
+
+// nonNilKinds 保證編碼端拿到 non-nil slice：DB 欄位 not null、JSON 出 [] 而非 null
+func nonNilKinds(kinds []string) []string {
+	if kinds == nil {
+		return []string{}
+	}
+	return kinds
 }
 
 func resultJSON(result EngineResult) map[string]any {
@@ -286,7 +295,7 @@ func resultJSON(result EngineResult) map[string]any {
 	}
 	ex := []excludedJSON{}
 	for _, e := range result.Excluded {
-		ex = append(ex, excludedJSON{e.Name, e.Reason})
+		ex = append(ex, excludedJSON{e.Name, e.Reason, nonNilKinds(e.Kinds)})
 	}
 	return map[string]any{"kept": kept, "excluded": ex}
 }
@@ -468,7 +477,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 			for _, k := range e.Kinds {
 				byKind[k]++
 			}
-			ex = append(ex, excludedJSON{e.Name, e.Reason})
+			ex = append(ex, excludedJSON{e.Name, e.Reason, nonNilKinds(e.Kinds)})
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)

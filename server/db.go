@@ -349,11 +349,12 @@ func ReplaceCandidates(ctx context.Context, tx pgx.Tx, roomID string, res Engine
 		}
 	}
 	for _, e := range res.Excluded {
+		// arch c3：結構化 kinds 隨列持久化（kept 列吃欄位 default '{}'）
 		if _, err := tx.Exec(ctx, `
 			insert into room_candidates
-				(room_id, restaurant_id, status, exclusion_reason, exposure_counted)
-			values ($1, $2, 'excluded', $3, $4)`,
-			roomID, e.Restaurant.ID, e.Reason, exposureCounted[e.Restaurant.ID]); err != nil {
+				(room_id, restaurant_id, status, exclusion_reason, exclusion_kinds, exposure_counted)
+			values ($1, $2, 'excluded', $3, $4, $5)`,
+			roomID, e.Restaurant.ID, e.Reason, nonNilKinds(e.Kinds), exposureCounted[e.Restaurant.ID]); err != nil {
 			return err
 		}
 	}

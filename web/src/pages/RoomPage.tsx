@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
 import { startVoting, voteRoom } from '../lib/api'
+import { isVetoDeadEnd } from '../lib/deadEnd'
 import { EXPLORATION_OPTIONS } from '../lib/labels'
 import { isGoogleSourced } from '../lib/placesSource'
 import { supabase } from '../lib/supabase'
@@ -251,10 +252,10 @@ export default function RoomPage() {
             <CandidateList rows={candidates}
               voting={{ votes, myUserId, onToggle: toggleVote }} />
             {candidates.some(c => c.status === 'kept') ? null : (
-              // D16：「全否決」和「全打烊」是兩種死路——理由字串是自家 contract，可安全判斷
+              // D16：「全否決」和「全打烊」是兩種死路——用結構化 exclusion_kinds 分辨（deadEnd.ts）
               <p role="status" className="banner bg-warn-soft text-warn">
                 <Alert className="h-5 w-5 shrink-0" />
-                <span>{candidates.some(c => c.exclusion_reason?.includes('否決'))
+                <span>{isVetoDeadEnd(candidates)
                   ? '候選已全數被否決，需有人收回否決才能抽選'
                   : '候選已全數失效（可能都打烊了），請建立新房間重新搜尋'}</span>
               </p>

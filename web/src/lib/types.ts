@@ -36,6 +36,7 @@ export type CandidateRow = {
   probability: number | null
   weight_breakdown: TraceEntry[]
   exclusion_reason: string | null
+  exclusion_kinds: string[]
   restaurants: RestaurantRef
 }
 

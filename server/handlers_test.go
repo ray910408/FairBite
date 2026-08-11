@@ -1453,9 +1453,20 @@ func TestVotingFlow(t *testing.T) {
 	}
 	var vetoResp struct {
 		VetoesRemaining int `json:"vetoes_remaining"`
+		Excluded        []struct {
+			Kinds []string `json:"kinds"`
+		} `json:"excluded"`
 	}
 	if err := json.Unmarshal(wv.Body.Bytes(), &vetoResp); err != nil || vetoResp.VetoesRemaining != VetoQuota-1 {
 		t.Fatalf("第 1 個否決後 vetoes_remaining 應為 %d：%v %s", VetoQuota-1, err, wv.Body.String())
+	}
+	// arch c3：否決產生的 excluded 要帶結構化 kinds（client 死路判定的 contract）
+	vetoKind := false
+	for _, e := range vetoResp.Excluded {
+		vetoKind = vetoKind || hasKind(e.Kinds, "veto")
+	}
+	if !vetoKind {
+		t.Fatalf("veto 後 excluded 應含 kinds=[veto]：%s", wv.Body.String())
 	}
 	if myVotes("up") != 0 || myVotes("veto") != 1 {
 		t.Fatalf("互斥失敗：up=%d veto=%d", myVotes("up"), myVotes("veto"))
