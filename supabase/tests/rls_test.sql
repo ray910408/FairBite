@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(31);
+select plan(32);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -231,6 +231,14 @@ select throws_ok(
      where user_id = '00000000-0000-0000-0000-0000000000b2'$$,
   '23514', null,
   'cuisines 非字串元素被 CHECK 擋下');
+
+-- ADR-0002：紀錄跟人 —— 刪房不得抹掉同席紀錄
+reset role;
+delete from public.rooms where id = (select id from ctx);
+select is(
+  (select count(*) from public.dining_history
+    where user_id = '00000000-0000-0000-0000-0000000000a1' and room_id is null)::int,
+  1, '刪房後同席紀錄仍在，room_id 轉為 null');
 
 select * from finish();
 rollback;
