@@ -8,13 +8,13 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var ErrConflict = errors.New("status conflict")
 
 // D2/D15：讀取函式吃 querier（*pgxpool.Pool 與 pgx.Tx 皆滿足），
 // vote 交易才能在 room row lock 之後於 tx 內讀，杜絕 stale 讀寫競態
+// 寫入函式（TransitionRoom/ReplaceCandidates/RecordExposure/RecordDecision/UpsertRestaurants）刻意吃 pgx.Tx——型別即「必須與呼叫端其他寫入同交易」的不變式，勿放寬成 querier。
 type querier interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
@@ -30,9 +30,9 @@ type RoomRow struct {
 	Exploration string
 }
 
-func LoadRoom(ctx context.Context, pool *pgxpool.Pool, roomID string) (RoomRow, error) {
+func LoadRoom(ctx context.Context, q querier, roomID string) (RoomRow, error) {
 	var r RoomRow
-	err := pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), exploration
 		 from rooms where id = $1`, roomID).
 		Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.Exploration)
@@ -265,22 +265,24 @@ func LoadSatisfaction(ctx context.Context, q querier, memberIDs []string) (map[s
 	return out, nil
 }
 
-// UpsertRestaurants 寫入快取並回填 DB uuid 到 rs[i].ID
-func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant) error {
+// UpsertRestaurants 寫入快取並回填 DB uuid 到 rs[i].ID。
+// source 是寫入 provider 的出身（PlacesProvider.Source）；conflict 時一併更新——
+// 同一列被不同 provider 重抓時，provenance 跟著最新寫入者走。
+func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant, source string) error {
 	for i := range rs {
 		tags, _ := json.Marshal(rs[i].CuisineTags)
 		hours, _ := json.Marshal(rs[i].Hours)
 		err := tx.QueryRow(ctx, `
-			insert into restaurants (place_id, name, cuisine_tags, price_level, lat, lng, address, opening_hours, rating, fetched_at)
-			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+			insert into restaurants (place_id, name, cuisine_tags, price_level, lat, lng, address, opening_hours, rating, source, fetched_at)
+			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
 			on conflict (place_id) do update set
 			  name = excluded.name, cuisine_tags = excluded.cuisine_tags,
 			  price_level = excluded.price_level, lat = excluded.lat, lng = excluded.lng,
 			  address = excluded.address, opening_hours = excluded.opening_hours,
-			  rating = excluded.rating, fetched_at = now()
+			  rating = excluded.rating, source = excluded.source, fetched_at = now()
 			returning id`,
 			rs[i].PlaceID, rs[i].Name, tags, rs[i].PriceLevel, rs[i].Lat, rs[i].Lng,
-			rs[i].Address, hours, rs[i].Rating).Scan(&rs[i].ID)
+			rs[i].Address, hours, rs[i].Rating, source).Scan(&rs[i].ID)
 		if err != nil {
 			return fmt.Errorf("upsert %s: %w", rs[i].PlaceID, err)
 		}
@@ -298,17 +300,19 @@ func StaleOutRestaurants(ctx context.Context, q querier, placeIDs []string) erro
 }
 
 // LoadCachedRestaurants：快取 fallback（spec §8）。只取 30 天內（快取條款：fetched_at 為準）。
+// excludeMock = 只接受 Google 出身的快取，故用正面表列 source = 'google'：
+// 第三個 provider 進來時「不是 mock」不等於「是 google」。
 // ponytail: 全量掃 + Go 端 haversine 過濾；快取量級小，夠用，量大再改 SQL bounding box
-func LoadCachedRestaurants(ctx context.Context, pool *pgxpool.Pool, lat, lng float64, radiusM int, excludeMock bool) ([]Restaurant, error) {
+func LoadCachedRestaurants(ctx context.Context, q querier, lat, lng float64, radiusM int, excludeMock bool) ([]Restaurant, error) {
 	query := `
 		select id, place_id, name, cuisine_tags, price_level, lat, lng, address, opening_hours, coalesce(rating, 0)
 		from restaurants where fetched_at > now() - interval '30 days'`
 	if excludeMock {
-		query += ` and place_id not like 'mock-%'`
+		query += ` and source = 'google'`
 	}
 	// Deterministic order pins exposure upsert lock order, matching the fresh-path sort.
 	query += ` order by place_id`
-	rows, err := pool.Query(ctx, query)
+	rows, err := q.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -349,11 +353,12 @@ func ReplaceCandidates(ctx context.Context, tx pgx.Tx, roomID string, res Engine
 		}
 	}
 	for _, e := range res.Excluded {
+		// arch c3：結構化 kinds 隨列持久化（kept 列吃欄位 default '{}'）
 		if _, err := tx.Exec(ctx, `
 			insert into room_candidates
-				(room_id, restaurant_id, status, exclusion_reason, exposure_counted)
-			values ($1, $2, 'excluded', $3, $4)`,
-			roomID, e.Restaurant.ID, e.Reason, exposureCounted[e.Restaurant.ID]); err != nil {
+				(room_id, restaurant_id, status, exclusion_reason, exclusion_kinds, exposure_counted)
+			values ($1, $2, 'excluded', $3, $4, $5)`,
+			roomID, e.Restaurant.ID, e.Reason, nonNilKinds(e.Kinds), exposureCounted[e.Restaurant.ID]); err != nil {
 			return err
 		}
 	}

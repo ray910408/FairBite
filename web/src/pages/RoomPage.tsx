@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
-import { startVoting, voteRoom } from '../lib/api'
+import { startVoting } from '../lib/api'
+import { isVetoDeadEnd } from '../lib/deadEnd'
 import { EXPLORATION_OPTIONS } from '../lib/labels'
 import { isGoogleSourced } from '../lib/placesSource'
 import { supabase } from '../lib/supabase'
@@ -43,12 +44,12 @@ function Stepper({ status }: { status: Room['status'] }) {
 
 export default function RoomPage() {
   const { id = '' } = useParams()
-  const { room, members, candidates, draw, votes, setVotes, myUserId, connected, notFound } = useRoom(id)
+  const { room, members, candidates, draw, myUserId, connected, notFound,
+    toggleVote, myVote, ups, vetoesRemaining } = useRoom(id)
   const [spun, setSpun] = useState(false)
   const [actionError, setActionError] = useState('')
   const [actionWarning, setActionWarning] = useState('')
   const [copied, setCopied] = useState(false)
-  const voteInFlight = useRef(false)
   const searchInFlight = useRef(false)
   const startVotingInFlight = useRef(false)
   if (!room) return notFound ? (
@@ -77,26 +78,11 @@ export default function RoomPage() {
     }
   }
 
-  async function toggleVote(restaurantId: string, kind: 'up' | 'veto') {
-    if (voteInFlight.current) return // D6：連點鎖 —— 慢網路下不重送、不閃假錯誤
-    voteInFlight.current = true
+  // 投票規則（op 判定/連點鎖/本地鏡射）都在 useRoom；這裡只負責把錯誤接到畫面
+  async function onToggleVote(restaurantId: string, kind: 'up' | 'veto') {
     setActionError('')
-    const has = votes.some(v =>
-      v.user_id === myUserId && v.restaurant_id === restaurantId && v.kind === kind)
-    const op = has ? 'retract' : 'cast'
-    const msg = await voteRoom(room!.id, restaurantId, kind, op)
-      .catch(() => '投票失敗：無法連線到伺服器')
-    voteInFlight.current = false
-    if (msg) {
-      setActionError(msg) // D4：伺服器訊息直達（額度用盡/不在投票階段都有明確下一步）
-      return
-    }
-    // D6：本地先行 merge —— 按鈕 aria-pressed 立即反應，不等 Realtime round-trip；
-    // cast 同時清掉自己同店另一 kind（鏡射伺服器互斥語意），權威資料稍後由 refetch 帶回
-    setVotes(vs => op === 'retract'
-      ? vs.filter(v => !(v.user_id === myUserId && v.restaurant_id === restaurantId && v.kind === kind))
-      : [...vs.filter(v => !(v.user_id === myUserId && v.restaurant_id === restaurantId)),
-          { room_id: room!.id, user_id: myUserId, restaurant_id: restaurantId, kind }])
+    const msg = await toggleVote(restaurantId, kind)
+    if (msg) setActionError(msg) // D4：伺服器訊息直達（額度用盡/不在投票階段都有明確下一步）
   }
 
   return (
@@ -249,12 +235,12 @@ export default function RoomPage() {
         {room.status === 'voting' && (
           <>
             <CandidateList rows={candidates}
-              voting={{ votes, myUserId, onToggle: toggleVote }} />
+              voting={{ myVote, ups, vetoesRemaining, onToggle: onToggleVote }} />
             {candidates.some(c => c.status === 'kept') ? null : (
-              // D16：「全否決」和「全打烊」是兩種死路——理由字串是自家 contract，可安全判斷
+              // D16：「全否決」和「全打烊」是兩種死路——用結構化 exclusion_kinds 分辨（deadEnd.ts）
               <p role="status" className="banner bg-warn-soft text-warn">
                 <Alert className="h-5 w-5 shrink-0" />
-                <span>{candidates.some(c => c.exclusion_reason?.includes('否決'))
+                <span>{isVetoDeadEnd(candidates)
                   ? '候選已全數被否決，需有人收回否決才能抽選'
                   : '候選已全數失效（可能都打烊了），請建立新房間重新搜尋'}</span>
               </p>
@@ -284,7 +270,7 @@ export default function RoomPage() {
                 <RatingPrompt roomId={room.id} />
               </>
             )}
-            {candidates.some(c => c.status === 'kept' && isGoogleSourced(c.restaurants.place_id)) && (
+            {candidates.some(c => c.status === 'kept' && isGoogleSourced(c.restaurants.source)) && (
               <p className="text-xs text-fg-muted">餐廳資料 Powered by Google</p>
             )}
             <p className="text-xs text-fg-muted">天氣資料 Open-Meteo.com（CC BY 4.0）</p>

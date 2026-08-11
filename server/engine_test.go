@@ -450,7 +450,7 @@ func TestExposureAllNewSurvivorsNeutralWhenOldCandidateExcluded(t *testing.T) {
 func TestExposureBaselineTreatsOwnSearchAsNew(t *testing.T) {
 	in := exposureIn(ExposureCount{Recommended: 2}, "balanced")
 	in.Members = append(in.Members, member(func(m *Member) { m.UserID = "u2" }))
-	in.ExposureBaseline = map[string]int{"p1": len(in.Members)}
+	in.ExposureCounted = map[string]bool{"p1": true}
 	got, hasTrace := exposureMult(t, in)
 	if !hasTrace || got != 1.1 {
 		t.Fatalf("Recommended 等於本房 baseline 應視為新店：got %v trace=%v", got, hasTrace)
@@ -460,8 +460,8 @@ func TestExposureBaselineTreatsOwnSearchAsNew(t *testing.T) {
 func TestExposureBaselineDoesNotSubtractCandidateExcludedAtSearch(t *testing.T) {
 	in := exposureIn(ExposureCount{Recommended: 2}, "balanced")
 	in.Members = append(in.Members, member(func(m *Member) { m.UserID = "u2" }))
-	// p1 搜尋時遭排除，沒有收到本房曝光 +1，因此不在 baseline map。
-	in.ExposureBaseline = map[string]int{"p-old": len(in.Members)}
+	// p1 搜尋時遭排除，沒有收到本房曝光 +1，因此不在 counted 集合。
+	in.ExposureCounted = map[string]bool{"p-old": true}
 
 	entry := exposureFactor(in.Restaurants[0], in)
 	if entry.Mult != 1.0 || strings.Contains(entry.Reason, "新出現") {

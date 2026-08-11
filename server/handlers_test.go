@@ -37,6 +37,9 @@ func newTestAppWithWeather(t *testing.T, pool *pgxpool.Pool, places PlacesProvid
 
 type failingProvider struct{}
 
+// "mock" 維持既有語意：非 google 出身 → fallback 不過濾 mock 快取。
+func (failingProvider) Source() string { return "mock" }
+
 func (failingProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
 	return nil, fmt.Errorf("simulated outage")
 }
@@ -103,9 +106,9 @@ func seedVotingRoomCandidate(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `insert into public.restaurants
-		(id, place_id, name, cuisine_tags, price_level, lat, lng, opening_hours)
+		(id, place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source)
 		values ($1, $2, 'Weather test restaurant', '["japanese"]', 1, 25.0478, 121.5171,
-			'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}')`, restaurantID, placeID); err != nil {
+			'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'google')`, restaurantID, placeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `insert into public.room_candidates
@@ -117,6 +120,8 @@ func seedVotingRoomCandidate(t *testing.T, ctx context.Context, pool *pgxpool.Po
 
 type fixedProvider []Restaurant
 
+func (fixedProvider) Source() string { return "mock" }
+
 func (p fixedProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
 	return p, nil
 }
@@ -127,6 +132,8 @@ type conditionUpdateProvider struct {
 	userID      string
 	restaurants []Restaurant
 }
+
+func (conditionUpdateProvider) Source() string { return "mock" }
 
 func (p conditionUpdateProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) ([]Restaurant, error) {
 	if _, err := p.pool.Exec(ctx, `update room_members set budget_max = 100, max_distance_m = 300
@@ -143,6 +150,8 @@ type radiusGrowthProvider struct {
 	restaurants []Restaurant
 }
 
+func (radiusGrowthProvider) Source() string { return "mock" }
+
 func (p radiusGrowthProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) ([]Restaurant, error) {
 	if _, err := p.pool.Exec(ctx, `update room_members set max_distance_m = 2000
 		where room_id = $1 and user_id = $2`, p.roomID, p.userID); err != nil {
@@ -157,6 +166,8 @@ type blockingProvider struct {
 	releaseFirst chan struct{}
 	restaurants  []Restaurant
 }
+
+func (*blockingProvider) Source() string { return "mock" }
 
 func (p *blockingProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
 	if p.calls.Add(1) == 1 {
@@ -609,12 +620,12 @@ func TestVotePreservesExcludedAtSearchExposureBaseline(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `insert into public.restaurants
-		(id, place_id, name, cuisine_tags, price_level, lat, lng, opening_hours)
+		(id, place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source)
 		values
 			($1, 'baseline-r2-target', '搜尋時排除餐廳', '["japanese"]', 1, 25.0478, 121.5171,
-			 '{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}'),
+			 '{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'google'),
 			($2, 'baseline-r2-anchor', '歷史餐廳', '["japanese"]', 1, 25.0478, 121.5172,
-			 '{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}')`, targetID, anchorID); err != nil {
+			 '{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'google')`, targetID, anchorID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `insert into public.room_candidates
@@ -845,10 +856,10 @@ func TestSearchFallsBackToCache(t *testing.T) {
 	}
 	// 先種一筆 30 天內的快取（mock 資料座標圈內）
 	if _, err = pool.Exec(ctx, `
-		insert into public.restaurants (place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, fetched_at)
+		insert into public.restaurants (place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
 		values ('cached-1', '快取餐廳', '["japanese"]', 1, 25.0478, 121.5172,
 		        '{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}',
-		        now())
+		        'google', now())
 		on conflict (place_id) do update set fetched_at = now()`); err != nil {
 		t.Fatal(err)
 	}
@@ -918,9 +929,9 @@ func TestSearchClosedPlaceTombstonesCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(ctx, `insert into public.restaurants
-		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, fetched_at)
+		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
 		values ($1, '已歇業快取餐廳', '[]', 1, 24.1988, 121.6543,
-		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', now())
+		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'google', now())
 		on conflict (place_id) do update set fetched_at = now()`, closedPlaceID); err != nil {
 		t.Fatal(err)
 	}
@@ -1020,9 +1031,9 @@ func TestSearchFallbackAllExcludedIncludesDegraded(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(ctx, `insert into public.restaurants
-		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, fetched_at)
+		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
 		values ($1, '降級全排除快取', '[]', 1, 23.9911, 121.6112,
-		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', now())
+		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'google', now())
 		on conflict (place_id) do update set fetched_at = now()`, placeID); err != nil {
 		t.Fatal(err)
 	}
@@ -1110,6 +1121,8 @@ func TestGoogleSearchDoesNotFallbackToMockCache(t *testing.T) {
 		hostID  = "41414141-4141-4141-4141-414141414141"
 		roomID  = "42424242-4242-4242-4242-424242424242"
 		placeID = "mock-google-fallback-only"
+		// 交叉案例：place_id 不帶 mock- 前綴，出身只寫在 source 欄。
+		crossPlaceID = "sourced-mock-no-prefix"
 	)
 	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
 		values ($1, 'google-cache@test.dev') on conflict do nothing`, hostID); err != nil {
@@ -1125,21 +1138,41 @@ func TestGoogleSearchDoesNotFallbackToMockCache(t *testing.T) {
 		values ($1, $2, 500, '[]', 2000, 'walking') on conflict do nothing`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
+	// source='mock' 需顯式指定：0013 後過濾依 source 欄而非 place_id 前綴，
+	// 本列模擬的正是 mock provider 寫入的快取。
 	if _, err = pool.Exec(ctx, `insert into public.restaurants
-		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, fetched_at)
+		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
 		values ($1, '不可供 Google 使用的 mock 快取', '[]', 1, 23.5685, 119.5660,
-		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', now())
-		on conflict (place_id) do update set fetched_at = now()`, placeID); err != nil {
+		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'mock', now())
+		on conflict (place_id) do update set source = excluded.source, fetched_at = now()`, placeID); err != nil {
 		t.Fatal(err)
 	}
-	nearbyCache, err := LoadCachedRestaurants(ctx, pool, 23.5685, 119.5660, 2000, false)
-	if err != nil || len(nearbyCache) != 1 || nearbyCache[0].PlaceID != placeID {
-		t.Fatalf("test precondition requires only the fresh mock cache row nearby: got %+v err %v", nearbyCache, err)
+	if _, err = pool.Exec(ctx, `insert into public.restaurants
+		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
+		values ($1, '前綴不像 mock 的 mock 快取', '[]', 1, 23.5685, 119.5660,
+		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'mock', now())
+		on conflict (place_id) do update set source = excluded.source, fetched_at = now()`, crossPlaceID); err != nil {
+		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(ctx, `delete from public.restaurants where place_id = $1`, placeID)
+		pool.Exec(ctx, `delete from public.restaurants where place_id = any($1)`,
+			[]string{placeID, crossPlaceID})
 		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
 	})
+	nearbyCache, err := LoadCachedRestaurants(ctx, pool, 23.5685, 119.5660, 2000, false)
+	seeded := map[string]bool{}
+	for _, r := range nearbyCache {
+		seeded[r.PlaceID] = true
+	}
+	if err != nil || len(nearbyCache) != 2 || !seeded[placeID] || !seeded[crossPlaceID] {
+		t.Fatalf("test precondition requires only the two fresh mock cache rows nearby: got %+v err %v", nearbyCache, err)
+	}
+	// 出身只認 source 欄：前綴看不出是 mock 的那列同樣要被擋掉，
+	// 否則 place_id 前綴 sniff 復辟時這條回歸線會失效。
+	googleOnly, err := LoadCachedRestaurants(ctx, pool, 23.5685, 119.5660, 2000, true)
+	if err != nil || len(googleOnly) != 0 {
+		t.Fatalf("excludeMock 必須排除所有 source='mock' 的列（含非 mock- 前綴者）：got %+v err %v", googleOnly, err)
+	}
 
 	var attempts atomic.Int32
 	deadGoogle := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -1281,8 +1314,8 @@ func TestLoadRecencyBuckets(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(ctx, `
-		insert into public.restaurants (id, place_id, name, lat, lng)
-		values ($1, 'recency-r1', 'Recency R1', 25.0478, 121.5170)
+		insert into public.restaurants (id, place_id, name, lat, lng, source)
+		values ($1, 'recency-r1', 'Recency R1', 25.0478, 121.5170, 'google')
 		on conflict (id) do nothing`, r1); err != nil {
 		t.Fatal(err)
 	}
@@ -1446,9 +1479,27 @@ func TestVotingFlow(t *testing.T) {
 		t.Fatalf("vote 後 trace 應含投票因素：%s", trace)
 	}
 
-	// 互斥：同店 cast veto → up 自動撤
-	if w := vote(memberID, cands[0], "veto", "cast"); w.Code != http.StatusOK {
-		t.Fatalf("veto: %d %s", w.Code, w.Body.String())
+	// 互斥：同店 cast veto → up 自動撤；回應含剩餘否決額度
+	wv := vote(memberID, cands[0], "veto", "cast")
+	if wv.Code != http.StatusOK {
+		t.Fatalf("veto: %d %s", wv.Code, wv.Body.String())
+	}
+	var vetoResp struct {
+		VetoesRemaining int `json:"vetoes_remaining"`
+		Excluded        []struct {
+			Kinds []string `json:"kinds"`
+		} `json:"excluded"`
+	}
+	if err := json.Unmarshal(wv.Body.Bytes(), &vetoResp); err != nil || vetoResp.VetoesRemaining != VetoQuota-1 {
+		t.Fatalf("第 1 個否決後 vetoes_remaining 應為 %d：%v %s", VetoQuota-1, err, wv.Body.String())
+	}
+	// arch c3：否決產生的 excluded 要帶結構化 kinds（client 死路判定的 contract）
+	vetoKind := false
+	for _, e := range vetoResp.Excluded {
+		vetoKind = vetoKind || hasKind(e.Kinds, "veto")
+	}
+	if !vetoKind {
+		t.Fatalf("veto 後 excluded 應含 kinds=[veto]：%s", wv.Body.String())
 	}
 	if myVotes("up") != 0 || myVotes("veto") != 1 {
 		t.Fatalf("互斥失敗：up=%d veto=%d", myVotes("up"), myVotes("veto"))

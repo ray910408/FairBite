@@ -36,7 +36,8 @@ func TestLoadSatisfactionRatingOverridesPrefHit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx,
-		`insert into restaurants (place_id, name, lat, lng) values ('test-satisfaction-1', '滿足度測試', 25, 121)
+		`insert into restaurants (place_id, name, lat, lng, source)
+		 values ('test-satisfaction-1', '滿足度測試', 25, 121, 'google')
 		 returning id`).Scan(&rid); err != nil {
 		t.Fatal(err)
 	}
@@ -94,8 +95,8 @@ func TestLoadSatisfactionPartitionsWindowByUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx,
-		`insert into restaurants (place_id, name, lat, lng)
-		 values ('test-satisfaction-partition', '分區測試', 25, 121) returning id`).Scan(&rid); err != nil {
+		`insert into restaurants (place_id, name, lat, lng, source)
+		 values ('test-satisfaction-partition', '分區測試', 25, 121, 'google') returning id`).Scan(&rid); err != nil {
 		t.Fatal(err)
 	}
 
@@ -182,7 +183,8 @@ func TestLoadSatisfactionWindowDropsOldest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx,
-		`insert into restaurants (place_id, name, lat, lng) values ('test-satisfaction-window', '視窗測試', 25, 121)
+		`insert into restaurants (place_id, name, lat, lng, source)
+		 values ('test-satisfaction-window', '視窗測試', 25, 121, 'google')
 		 returning id`).Scan(&rid); err != nil {
 		t.Fatal(err)
 	}
@@ -248,8 +250,8 @@ func TestRecordDecisionWritesPrefHit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx,
-		`insert into restaurants (place_id, name, cuisine_tags, lat, lng)
-		 values ('test-prefhit-1', '命中測試', '["japanese"]', 25, 121) returning id`).Scan(&rid); err != nil {
+		`insert into restaurants (place_id, name, cuisine_tags, lat, lng, source)
+		 values ('test-prefhit-1', '命中測試', '["japanese"]', 25, 121, 'google') returning id`).Scan(&rid); err != nil {
 		t.Fatal(err)
 	}
 

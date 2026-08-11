@@ -17,6 +17,11 @@
 
 - **均勻倍率 chip 策略：** timeslot 全場命中、rain 全場飽和、「推薦過但尚未中選」穩態 chip 三案併為一次決策：由引擎 guard 或 web 端過濾（P3 batch 1 final review）。
 
+### CUISINE/DIETARY 選項的 Google 缺口（產品決策待定，2026-08-11）
+
+- **What:** `CUISINE_OPTIONS` 的 cantonese/sichuan/hotpot 與 `DIETARY_OPTIONS` 的 halal 在 Google provider 下無法命中／會全排除（halal 因 `DietaryRequires` 的正向認證設計）；三個菜系 tag 只有 mockdata 產得出來。`server/tags_test.go` 已釘住現狀缺口，變動必須是刻意決策。
+- **Why:** 提供產不出結果的選項會靜默拖累勾選成員的滿足度 EMA（永無 pref hit）。需決定移除、重映射（如 cantonese ← 部分 chinese_restaurant）或標註 UI 提示。
+
 ### Google Places attribution logo 確認（正式上線前）
 
 - **What:** 依當時最新版 Google 品牌指南確認「Powered by Google」logo 資產與使用方式；目前 UI 已依 `place_id` 自動為 Google 來源資料顯示文字歸因。
@@ -49,6 +54,11 @@
 - **Cons:** cache-first 涉及「快取是否涵蓋該區域」判定與營業時間新鮮度取捨，屬產品決策——當批已明確拒絕立即重設計。
 - **Context:** search 每房僅一次且被狀態機閘住，濫用面已小。
 - **Depends on:** hosted 部署；與 limiter TTL 同群。
+
+### vote 回應的 vetoes_remaining 未被 web 消費（arch review，2026-08-11）
+
+- **What:** 審查建議讓 web 消費 vote 回應的 `vetoes_remaining`，取代目前由票列本地推導剩餘否決額度。
+- **Why:** 多分頁或 Realtime 中斷時，本地推導的剩餘額度會落後真實值。現況依 ADR-0003（`docs/adr/0003-centralized-vote-write-command.md`）：payload 仍是 API contract 的一部分，但 web 不消費，成功後靠 Realtime + debounce refetch 對齊。若日後出現實際回報再改。
 
 ## P2 候選
 

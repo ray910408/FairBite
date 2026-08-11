@@ -68,7 +68,7 @@ type EngineInput struct {
 	Votes                map[string]VoteInfo      // key = rkey(r)；nil = 無投票資料（P1 相容）
 	Recency              map[string]RecencyCount  // key = rkey(r)；nil = 無紀錄
 	Exposure             map[string]ExposureCount // key = rkey(r)；nil = 無統計（相容舊測試）
-	ExposureBaseline     map[string]int           // vote/draw 僅為 search 時 kept（收到本房 +1）的候選填 len(members)；nil = 不扣
+	ExposureCounted      map[string]bool          // search 時 kept（收到本房曝光 +1）的候選；nil/false = 不扣
 	Satisfaction         map[string]float64       // key = UserID；無樣本的成員不在 map；nil = 無資料
 	Exploration          string                   // familiar/balanced/explore；"" 視為 balanced
 }
@@ -343,9 +343,13 @@ func gearScale(scales map[string]float64, exploration string) float64 {
 	return scales["balanced"]
 }
 
-// effectiveRecommended：扣掉該候選在本房 search 收到的自房 +1 後推薦次數（clamp 0）。
+// effectiveRecommended：扣掉該候選在本房 search 收到的自房 +1（每位成員一次）後推薦次數（clamp 0）。
+// state machine 保證每房只 search 一次，0006 又在 search 後凍結成員；故本房 +1 精確為 len(Members)。
 func effectiveRecommended(r Restaurant, c ExposureCount, in EngineInput) int {
-	n := c.Recommended - in.ExposureBaseline[rkey(r)]
+	n := c.Recommended
+	if in.ExposureCounted[rkey(r)] {
+		n -= len(in.Members)
+	}
 	if n < 0 {
 		n = 0
 	}

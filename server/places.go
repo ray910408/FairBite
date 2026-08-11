@@ -92,6 +92,9 @@ type Restaurant struct {
 
 type PlacesProvider interface {
 	SearchNearby(ctx context.Context, lat, lng float64, radiusM int) ([]Restaurant, error)
+	// Source 是出身識別——寫入 restaurants.source 與快取 fallback 過濾都以此為準，
+	// 勿再比對 place_id 前綴或 type assert。
+	Source() string
 }
 
 func Haversine(lat1, lng1, lat2, lng2 float64) float64 {
@@ -106,6 +109,8 @@ func Haversine(lat1, lng1, lat2, lng2 float64) float64 {
 type mockProvider struct{}
 
 func NewMockProvider() PlacesProvider { return mockProvider{} }
+
+func (mockProvider) Source() string { return "mock" }
 
 func (mockProvider) SearchNearby(_ context.Context, lat, lng float64, radiusM int) ([]Restaurant, error) {
 	var out []Restaurant

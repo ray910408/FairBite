@@ -1,4 +1,5 @@
-// mock place_ids 是目前唯一的非 Google 來源；若增加 provider，應升級為逐列 provenance 欄位。
-export function isGoogleSourced(placeId: string): boolean {
-  return !placeId.startsWith('mock-')
+// provenance 已升級為逐列欄位（restaurants.source，migration 0013）——
+// 判斷以資料庫欄位為準，不再 sniff place_id 的 mock- 前綴。
+export function isGoogleSourced(source: string): boolean {
+  return source === 'google'
 }
