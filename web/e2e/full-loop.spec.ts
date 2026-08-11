@@ -232,6 +232,7 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await b.goto('/')
     await expect(b.getByText(/滿意嗎？/)).toBeVisible()
     await b.getByRole('button', { name: '5 顆星' }).click()
+    await expect(b.getByText(/滿意嗎？/)).toBeHidden()
     await b.reload()
     await expect(b.getByText(/滿意嗎？/)).toBeHidden()
   } finally {
