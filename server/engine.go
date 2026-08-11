@@ -219,6 +219,8 @@ func prefFactor(r Restaurant, in EngineInput) TraceEntry {
 	if lowest != "" {
 		// 匿名（eng review D7）：公開「有校正」維持可解釋性，
 		// 但不公開誰的滿足度最低——那是個人資料，點名有社交成本。
+		// 2026-08-11 task5 review 裁定：D7 = 不點名；小房間可由 mult 反推是
+		// 任何可見公平效果的數學必然（藏標記只會變成無解釋的 ×1.20），接受。
 		reason += "（已套用成員公平校正）"
 	}
 	return TraceEntry{"preference", mult, reason}

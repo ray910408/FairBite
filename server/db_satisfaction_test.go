@@ -66,6 +66,93 @@ func TestLoadSatisfactionRatingOverridesPrefHit(t *testing.T) {
 	}
 }
 
+func TestLoadSatisfactionPartitionsWindowByUser(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const u1 = "e8e8e8e8-e8e8-4e8e-8e8e-e8e8e8e8e8e1"
+	const u2 = "e8e8e8e8-e8e8-4e8e-8e8e-e8e8e8e8e8e2"
+	ids := []string{u1, u2}
+	var rid string
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `delete from rooms where host_id = any($1::uuid[])`, ids)
+		pool.Exec(context.Background(), `delete from auth.users where id = any($1::uuid[])`, ids)
+		pool.Exec(context.Background(), `delete from restaurants where place_id = 'test-satisfaction-partition'`)
+	})
+	if _, err := pool.Exec(ctx, `
+		insert into auth.users (id, email)
+		values ($1, 'sat-partition-u1@test.dev'), ($2, 'sat-partition-u2@test.dev')`, u1, u2); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx,
+		`insert into restaurants (place_id, name, lat, lng)
+		 values ('test-satisfaction-partition', '分區測試', 25, 121) returning id`).Scan(&rid); err != nil {
+		t.Fatal(err)
+	}
+
+	// 由舊到新交錯：u1=[1,0] → 0.7；u2=[0,1] → 0.3。
+	base := []struct {
+		userID  string
+		daysAgo int
+		hit     float64
+	}{
+		{u1, 22, 1.0},
+		{u2, 21, 0.0},
+		{u1, 20, 0.0},
+		{u2, 19, 1.0},
+	}
+	for _, s := range base {
+		if _, err := pool.Exec(ctx, `
+			with r as (insert into rooms (host_id) values ($1) returning id)
+			insert into dining_history (user_id, restaurant_id, room_id, decided_at, pref_hit)
+			select $1, $2, id, now() - make_interval(days => $3), $4 from r`,
+			s.userID, rid, s.daysAgo, s.hit); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	assertEMA := func(got map[string]float64) {
+		t.Helper()
+		if ema, ok := got[u1]; !ok || ema < 0.699 || ema > 0.701 {
+			t.Fatalf("u1 got %v (ok=%v), want 0.7", ema, ok)
+		}
+		if ema, ok := got[u2]; !ok || ema < 0.299 || ema > 0.301 {
+			t.Fatalf("u2 got %v (ok=%v), want 0.3", ema, ok)
+		}
+	}
+	got, err := LoadSatisfaction(ctx, pool, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEMA(got)
+
+	// 再加 18 筆較新的 u2=0.3 形成 22 筆全域樣本；正確的 per-user window 不改兩人 EMA。
+	// 若拿掉 partition by user_id，global rn<=20 會丟掉 u1 的舊樣本，使 u1 EMA 從 0.7 變 0。
+	for i := 1; i <= 18; i++ {
+		if _, err := pool.Exec(ctx, `
+			with r as (insert into rooms (host_id) values ($1) returning id)
+			insert into dining_history (user_id, restaurant_id, room_id, decided_at, pref_hit)
+			select $1, $2, id, now() - make_interval(days => $3), 0.3 from r`,
+			u2, rid, 19-i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err = LoadSatisfaction(ctx, pool, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEMA(got)
+}
+
 // 視窗邊界（eng review Test Review）：21 筆中最舊一筆 pref_hit=0、其餘 20 筆 =1。
 // 視窗正確丟掉最舊 → 摺 20 筆全 1 → EMA 恰為 1.0；沒丟 → 初值 0 使 EMA < 1.0。
 func TestLoadSatisfactionWindowDropsOldest(t *testing.T) {

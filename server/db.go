@@ -225,7 +225,7 @@ func RecordDecision(ctx context.Context, tx pgx.Tx, roomID string, members []Mem
 }
 
 // LoadSatisfaction：每位成員取最近 EMASampleWindow 筆樣本（rating 優先、否則 pref_hit），
-// 由舊到新折入 EMA。兩者皆缺的歷史列（0008 之前的資料）跳過。
+// 由舊到新折入 EMA。兩者皆缺的歷史列（0009 之前的資料）跳過。
 // ponytail: window 掃無專屬索引（dining_history_recency 中段的 restaurant_id 用不上排序）；
 // 個人量級夠用，量大加 (user_id, decided_at desc) 索引
 func LoadSatisfaction(ctx context.Context, q querier, memberIDs []string) (map[string]float64, error) {
