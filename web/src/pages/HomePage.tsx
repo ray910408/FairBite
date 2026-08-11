@@ -27,14 +27,18 @@ async function applyDefaultPrefs(roomId: string) {
   if (!auth.user) return
   const appliedKey = `prefs-applied:${roomId}:${auth.user.id}`
   if (localStorage.getItem(appliedKey)) return
-  localStorage.setItem(appliedKey, '1')
-  const { data: profile } = await supabase.from('profiles')
+  const { data: profile, error: profileError } = await supabase.from('profiles')
     .select('default_prefs').eq('id', auth.user.id).single()
+  if (profileError) return
   const cuisines = (profile?.default_prefs as { cuisines?: string[] } | null)?.cuisines
-  if (!Array.isArray(cuisines) || cuisines.length === 0) return
-  await supabase.from('room_members').update({ cuisines })
+  if (!Array.isArray(cuisines) || cuisines.length === 0) {
+    localStorage.setItem(appliedKey, '1')
+    return
+  }
+  const { error } = await supabase.from('room_members').update({ cuisines })
     .eq('room_id', roomId).eq('user_id', auth.user.id)
     .eq('cuisines', '[]') // 只填仍是預設的列：重複加入不得覆蓋使用者已調好的條件（task6 review r1）
+  if (!error) localStorage.setItem(appliedKey, '1')
 }
 
 export default function HomePage() {
@@ -54,16 +58,18 @@ export default function HomePage() {
     setSuggestion([]) // 評分後先撤下舊快照，避免 refetch 完成前仍可採納已失效建議
     const { data: auth } = await supabase.auth.getUser()
     if (!auth.user || request !== suggestionRequest.current) return
-    const [{ data: profile }, { data: history }] = await Promise.all([
+    const [{ data: profile }, { data: history }, { data: lowRows }] = await Promise.all([
       supabase.from('profiles').select('default_prefs').eq('id', auth.user.id).single(),
       supabase.from('dining_history')
         .select('rating, restaurants(cuisine_tags)')
         .order('decided_at', { ascending: false }).limit(50),
+      supabase.from('dining_history')
+        .select('rating, restaurants(cuisine_tags)').lte('rating', 2),
     ])
     if (request !== suggestionRequest.current || !profile) return
     const dp = (profile?.default_prefs ?? {}) as Record<string, unknown>
     const current = Array.isArray(dp.cuisines) ? (dp.cuisines as string[]) : []
-    const tags = suggestCuisines((history ?? []) as unknown as HistoryRow[], current,
+    const tags = suggestCuisines([...(lowRows ?? []), ...(history ?? [])] as unknown as HistoryRow[], current,
       CUISINE_OPTIONS.map(([k]) => k))
     const dismissed = (localStorage.getItem(`prefs-suggest-dismissed:${auth.user.id}`) ?? '').split(',')
     setMyUserId(auth.user.id)
