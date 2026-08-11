@@ -9,6 +9,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 )
 
 func jsonError(w http.ResponseWriter, code int, msg string) {
@@ -40,6 +41,10 @@ func cors(next http.Handler) http.Handler {
 }
 
 func main() {
+	// 本機 .env 只補齊「還沒設定」的變數：godotenv.Load 不覆寫既有環境變數，
+	// 所以部署平台注入的真環境變數一律優先，檔案不存在也只是無事發生。
+	_ = godotenv.Load()
+
 	verifier, err := NewVerifier()
 	if err != nil {
 		log.Fatal(err)

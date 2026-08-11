@@ -53,32 +53,31 @@ handlers 改用快取並在回應標記 `degraded`，前端顯示降級橫幅。
 資料來源為 Google 的候選會自動顯示「餐廳資料 Powered by Google」歸因。
 天氣因素使用免金鑰的 Open-Meteo；天氣資料：Open-Meteo.com（CC BY 4.0）。
 
-## 本地啟動（三個終端）
+## 本地啟動
 
-Git Bash：
+首次啟動前先把 `server/.env.example` 複製成 `server/.env` 並填值（該檔已被 `.gitignore`
+排除）。Go server 啟動時以 godotenv 讀取它，之後 shell 語法在 Git Bash 與 PowerShell
+一致。真環境變數優先於 `.env`，部署時由平台注入即可，不需要這個檔案。
+
+Windows 一鍵啟動（Supabase + Go API + Vite，後兩者各開獨立視窗）：
+
+```powershell
+.\dev.ps1          # 桌機開發，Vite 自動開瀏覽器
+.\dev.ps1 -Lan     # 手機同網段測試，印出手機要開的區網網址
+```
+
+手動起（或非 Windows），三個終端：
 
 ```bash
 # 1. Supabase local stack
 supabase start        # 記下 anon key
 
 # 2. Go 核心服務
-cd server
-SUPABASE_DB_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
-SUPABASE_JWKS_URL='http://127.0.0.1:54321/auth/v1/.well-known/jwks.json' \
+cd server && cp .env.example .env   # 首次；之後直接 go run .
 go run .
 
 # 3. Web
 cd web && npm i && npm run dev   # .env.local 填 anon key
-```
-
-PowerShell（同三個終端，只是環境變數語法不同）：
-
-```powershell
-# 2. Go 核心服務
-cd server
-$env:SUPABASE_DB_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
-$env:SUPABASE_JWKS_URL = 'http://127.0.0.1:54321/auth/v1/.well-known/jwks.json'
-go run .
 ```
 
 新版 supabase CLI local stack 簽發 ES256 token，一律用 JWKS；`SUPABASE_JWT_SECRET`
@@ -91,7 +90,7 @@ go run .
 | `GOOGLE_PLACES_API_KEY` | 否 | 未設定時使用 mock provider；僅供 Go server 使用，絕不放入 web bundle。Google 來源資料會自動顯示「餐廳資料 Powered by Google」歸因；正式上線前的 logo 資產版本檢查見 `TODOS.md`。 |
 | `APP_TZ` | 否（選填） | 預設 `Asia/Taipei`；營業時間一律以此時區評估；per-place 時區留待未來。 |
 | `PORT` | 否 | 預設 `8787`。 |
-| `WEB_ORIGIN` | 否 | CORS 允許來源，預設 `http://localhost:5173`；部署時要改成正式前端網域。 |
+| `WEB_ORIGIN` | 否 | CORS 允許來源，預設 `http://localhost:5173`；只吃單一來源，手機/區網測試時填區網 IP（桌機瀏覽器也要改用同一個 IP 開）；部署時要改成正式前端網域。 |
 
 ## 測試
 
