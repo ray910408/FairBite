@@ -9,9 +9,13 @@ alter table public.room_candidates
 -- 依現存否決票回填：status='excluded' 且該成員否決仍在 → kinds 含 veto。
 -- 只回填 veto——它是唯一被 client 當控制流讀取的 kind（deadEnd.ts）；
 -- 其餘 kind 純顯示，rescore 時整批重寫即可。
+-- 另以舊理由文案收窄：engine 的硬性排除（預算/禁忌/打烊）優先於否決，
+-- 「有人否決過」不等於「因否決被排除」；理由字串是舊列唯一留下的 kind 紀錄，
+-- 只在這支一次性 migration 裡認它。
 update public.room_candidates rc
 set exclusion_kinds = array['veto']
 where rc.status = 'excluded'
+  and rc.exclusion_reason like '%否決%'
   and exists (
     select 1 from public.votes v
     where v.room_id = rc.room_id and v.restaurant_id = rc.restaurant_id and v.kind = 'veto'
