@@ -30,8 +30,12 @@ func webOptionKeys(t *testing.T, constName string) []string {
 	for _, m := range regexp.MustCompile(`\['([a-z_]+)'`).FindAllSubmatch(block[1], -1) {
 		keys = append(keys, string(m[1]))
 	}
-	if len(keys) == 0 {
-		t.Fatalf("%s 抽不出任何 key——格式變了請同步本測試的 regex", constName)
+	// fail closed：另用寬鬆 regex 數 tuple 數（接受雙引號），與抽出的 key 數比對。
+	// 少了這道，用雙引號或連字號寫的新選項會被靜默跳過，覆蓋檢查照樣全綠。
+	tuples := regexp.MustCompile(`\[\s*['"]`).FindAllIndex(block[1], -1)
+	if len(keys) == 0 || len(keys) != len(tuples) {
+		t.Fatalf("%s 抽出 %d 個 key，但區塊內有 %d 個 tuple——格式變了請同步本測試的 regex",
+			constName, len(keys), len(tuples))
 	}
 	return keys
 }

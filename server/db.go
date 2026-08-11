@@ -300,13 +300,15 @@ func StaleOutRestaurants(ctx context.Context, q querier, placeIDs []string) erro
 }
 
 // LoadCachedRestaurants：快取 fallback（spec §8）。只取 30 天內（快取條款：fetched_at 為準）。
+// excludeMock = 只接受 Google 出身的快取，故用正面表列 source = 'google'：
+// 第三個 provider 進來時「不是 mock」不等於「是 google」。
 // ponytail: 全量掃 + Go 端 haversine 過濾；快取量級小，夠用，量大再改 SQL bounding box
 func LoadCachedRestaurants(ctx context.Context, q querier, lat, lng float64, radiusM int, excludeMock bool) ([]Restaurant, error) {
 	query := `
 		select id, place_id, name, cuisine_tags, price_level, lat, lng, address, opening_hours, coalesce(rating, 0)
 		from restaurants where fetched_at > now() - interval '30 days'`
 	if excludeMock {
-		query += ` and source <> 'mock'`
+		query += ` and source = 'google'`
 	}
 	// Deterministic order pins exposure upsert lock order, matching the fresh-path sort.
 	query += ` order by place_id`

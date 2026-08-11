@@ -36,7 +36,8 @@ func TestLoadExposureAggregatesAcrossMembers(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx,
-		`insert into restaurants (place_id, name, lat, lng) values ('test-exposure-1', '曝光測試', 25, 121)
+		`insert into restaurants (place_id, name, lat, lng, source)
+		 values ('test-exposure-1', '曝光測試', 25, 121, 'google')
 		 returning id`).Scan(&rid); err != nil {
 		t.Fatal(err)
 	}

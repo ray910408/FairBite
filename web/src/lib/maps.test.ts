@@ -14,4 +14,13 @@ describe('buildMapsUrl', () => {
     expect(url).not.toContain('destination_place_id')
     expect(url).toContain('destination=25.05%2C121.52')
   })
+  // 交叉案例：釘住判定只看 source 欄，place_id 前綴 sniff 復辟時這兩題會紅。
+  it('source 為 mock 時，長得像真的 place_id 也不進 URL', () => {
+    const url = buildMapsUrl(25.05, 121.52, 'ChIJN1t_tDeuEmsRUsoyG83frY4', 'mock', 'walking')
+    expect(url).not.toContain('destination_place_id')
+  })
+  it('source 為 google 時，mock- 前綴的 place_id 仍進 URL', () => {
+    const url = buildMapsUrl(25.05, 121.52, 'mock-008', 'google', 'walking')
+    expect(url).toContain('destination_place_id=mock-008')
+  })
 })

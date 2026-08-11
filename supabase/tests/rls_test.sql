@@ -85,8 +85,8 @@ select throws_like(
 reset role;
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000c3', 'c@test.dev');
-insert into public.restaurants (id, place_id, name, lat, lng) values
-  ('99999999-9999-9999-9999-999999999901', 'pg-1', '測試餐廳一', 25.04, 121.51);
+insert into public.restaurants (id, place_id, name, lat, lng, source) values
+  ('99999999-9999-9999-9999-999999999901', 'pg-1', '測試餐廳一', 25.04, 121.51, 'google');
 insert into public.room_candidates (room_id, restaurant_id, status, probability) values
   ((select id from ctx), '99999999-9999-9999-9999-999999999901', 'kept', 1);
 -- 模擬 Go service role 寫入的一張票

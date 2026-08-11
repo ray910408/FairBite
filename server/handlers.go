@@ -521,6 +521,8 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusInternalServerError, "重算失敗，請稍後再試")
 		return
 	}
+	// 候選已由 rescoreRoom 落盤；此處所有早退都在 commit 前，deferred rollback 會撤回。
+	// （持久化失敗時回 500 而非死路 409——寫入真的失敗了，500 才誠實。）
 	if len(result.Kept) == 0 {
 		for _, e := range result.Excluded {
 			if hasKind(e.Kinds, "veto") {

@@ -55,6 +55,11 @@
 - **Context:** search 每房僅一次且被狀態機閘住，濫用面已小。
 - **Depends on:** hosted 部署；與 limiter TTL 同群。
 
+### vote 回應的 vetoes_remaining 未被 web 消費（arch review，2026-08-11）
+
+- **What:** 審查建議讓 web 消費 vote 回應的 `vetoes_remaining`，取代目前由票列本地推導剩餘否決額度。
+- **Why:** 多分頁或 Realtime 中斷時，本地推導的剩餘額度會落後真實值。現況依 ADR-0003（`docs/adr/0003-centralized-vote-write-command.md`）：payload 仍是 API contract 的一部分，但 web 不消費，成功後靠 Realtime + debounce refetch 對齊。若日後出現實際回報再改。
+
 ## P2 候選
 
 ### ~~Playwright 多客戶端 E2E（完整閉環自動化）~~
