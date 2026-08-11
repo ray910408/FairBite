@@ -66,6 +66,11 @@ Windows 一鍵啟動（Supabase + Go API + Vite，後兩者各開獨立視窗）
 .\dev.ps1 -Lan     # 手機同網段測試，印出手機要開的區網網址
 ```
 
+Vite 開發伺服器固定使用 HTTPS，並以同源 `/api` 與 `/supabase` proxy 轉送 Go API、
+Supabase HTTP 與 Realtime WebSocket，瀏覽器不會產生 mixed content。首次開啟自簽憑證頁面時，
+請點「進階」→「繼續前往」；手機也需要對印出的區網網址做一次。`web/.env.local` 保留本機
+anon key，另將 `VITE_API_URL` 設為空字串、`VITE_SUPABASE_URL` 設為 `/supabase`。
+
 手動起（或非 Windows），三個終端：
 
 ```bash
@@ -77,7 +82,7 @@ cd server && cp .env.example .env   # 首次；之後直接 go run .
 go run .
 
 # 3. Web
-cd web && npm i && npm run dev   # .env.local 填 anon key
+cd web && npm i && npm run dev   # .env.local 填 anon key 與上述同源路徑
 ```
 
 新版 supabase CLI local stack 簽發 ES256 token，一律用 JWKS；`SUPABASE_JWT_SECRET`
@@ -90,7 +95,7 @@ cd web && npm i && npm run dev   # .env.local 填 anon key
 | `GOOGLE_PLACES_API_KEY` | 否 | 未設定時使用 mock provider；僅供 Go server 使用，絕不放入 web bundle。Google 來源資料會自動顯示「餐廳資料 Powered by Google」歸因；正式上線前的 logo 資產版本檢查見 `TODOS.md`。 |
 | `APP_TZ` | 否（選填） | 預設 `Asia/Taipei`；營業時間一律以此時區評估；per-place 時區留待未來。 |
 | `PORT` | 否 | 預設 `8787`。 |
-| `WEB_ORIGIN` | 否 | CORS 允許來源，預設 `http://localhost:5173`；只吃單一來源，手機/區網測試時填區網 IP（桌機瀏覽器也要改用同一個 IP 開）；部署時要改成正式前端網域。 |
+| `WEB_ORIGIN` | 否 | 前後端分開部署、瀏覽器直接跨來源呼叫 Go API 時的 CORS 允許來源，預設 `http://localhost:5173`。本機 Vite proxy 是同源請求，不需設定；部署時若仍為跨來源，改成正式前端網域。 |
 
 ## 測試
 

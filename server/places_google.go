@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -48,6 +49,27 @@ var googleTypeTags = map[string][]string{
 	"vegan_restaurant":      {"vegetarian_friendly"},
 }
 
+// Google 的 includedTypes 會比對所有 types；只有 primaryType 能表示場所的主要用途。
+// 這份正面表列只收能構成一餐的供餐場所：正餐場域、熟食專賣，及提供完整餐點的外帶/外送。
+// cafe、bakery、bar（以及非 _restaurant 的甜點、飲料、零食類型）刻意排除；這是產品判斷，不是遺漏。
+var googleMealPrimaryTypes = map[string]struct{}{
+	"bar_and_grill":  {},
+	"bistro":         {},
+	"cafeteria":      {},
+	"deli":           {},
+	"diner":          {},
+	"food_court":     {},
+	"hot_dog_stand":  {},
+	"kebab_shop":     {},
+	"meal_delivery":  {},
+	"meal_takeaway":  {},
+	"noodle_shop":    {},
+	"pizza_delivery": {},
+	"salad_shop":     {},
+	"sandwich_shop":  {},
+	"steak_house":    {},
+}
+
 var gPriceLevels = map[string]int{
 	"PRICE_LEVEL_FREE": 0, "PRICE_LEVEL_INEXPENSIVE": 1, "PRICE_LEVEL_MODERATE": 2,
 	"PRICE_LEVEL_EXPENSIVE": 3, "PRICE_LEVEL_VERY_EXPENSIVE": 4,
@@ -60,6 +82,7 @@ type gPoint struct {
 type gPlace struct {
 	ID             string `json:"id"`
 	BusinessStatus string `json:"businessStatus"`
+	PrimaryType    string `json:"primaryType"`
 	DisplayName    struct {
 		Text string `json:"text"`
 	} `json:"displayName"`
@@ -114,7 +137,7 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Goog-Api-Key", g.apiKey)
 	req.Header.Set("X-Goog-FieldMask",
-		"places.id,places.displayName,places.types,places.priceLevel,places.location,"+
+		"places.id,places.displayName,places.types,places.primaryType,places.priceLevel,places.location,"+
 			"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours,places.servesVegetarianFood")
 	resp, err := g.client.Do(req)
 	if err != nil {
@@ -132,7 +155,12 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 		return nil, err
 	}
 	rs := make([]Restaurant, 0, len(out.Places))
+	filtered := 0
 	for _, p := range out.Places {
+		if !gIsMealPrimaryType(p.PrimaryType) {
+			filtered++
+			continue
+		}
 		// Absent status is common, so only explicit closure carries the tombstone signal.
 		closed := p.BusinessStatus == "CLOSED_TEMPORARILY" || p.BusinessStatus == "CLOSED_PERMANENTLY"
 		rs = append(rs, Restaurant{
@@ -148,7 +176,18 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 			Rating:      p.Rating,
 		})
 	}
+	if filtered > 0 {
+		log.Printf("primaryType 過濾掉 %d 筆非餐廳", filtered)
+	}
 	return rs, nil
+}
+
+func gIsMealPrimaryType(primaryType string) bool {
+	if primaryType == "restaurant" || strings.HasSuffix(primaryType, "_restaurant") {
+		return true
+	}
+	_, ok := googleMealPrimaryTypes[primaryType]
+	return ok
 }
 
 func gTags(p gPlace) []string {
