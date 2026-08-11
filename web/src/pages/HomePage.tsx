@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
+import { suggestCuisines, type HistoryRow } from '../lib/prefsLearning'
 import { Alert, Logo, LogOut, Spinner } from '../components/icons'
 import { RecentRatingPrompt } from '../components/RatingPrompt'
 
@@ -17,11 +19,52 @@ function getPosition(): Promise<{ lat: number; lng: number }> {
   })
 }
 
+// default_prefs 帶入（spec §4；eng review D18 客戶端直寫版，取代 RPC 五欄位框架）：
+// 建/加成功後、導頁前，若有預設偏好就寫進自己的 member row（lobby 的 members_update
+// RLS 本來就允許）。失敗只影響預設值（罕見：搜尋凍結競態），靜默接受不擋導頁。
+async function applyDefaultPrefs(roomId: string) {
+  const { data: auth } = await supabase.auth.getUser()
+  if (!auth.user) return
+  const { data: profile } = await supabase.from('profiles')
+    .select('default_prefs').eq('id', auth.user.id).single()
+  const cuisines = (profile?.default_prefs as { cuisines?: string[] } | null)?.cuisines
+  if (!Array.isArray(cuisines) || cuisines.length === 0) return
+  await supabase.from('room_members').update({ cuisines })
+    .eq('room_id', roomId).eq('user_id', auth.user.id)
+}
+
 export default function HomePage() {
   const nav = useNavigate()
   const [code, setCode] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [myUserId, setMyUserId] = useState('')
+  const [prefs, setPrefs] = useState<Record<string, unknown>>({})
+  const [suggestion, setSuggestion] = useState<string[]>([])
+
+  useEffect(() => {
+    let live = true
+    ;(async () => {
+      const { data: auth } = await supabase.auth.getUser()
+      if (!auth.user || !live) return
+      const [{ data: profile }, { data: history }] = await Promise.all([
+        supabase.from('profiles').select('default_prefs').eq('id', auth.user.id).single(),
+        supabase.from('dining_history')
+          .select('rating, restaurants(cuisine_tags)')
+          .order('decided_at', { ascending: false }).limit(50),
+      ])
+      if (!live || !profile) return
+      const dp = (profile?.default_prefs ?? {}) as Record<string, unknown>
+      const current = Array.isArray(dp.cuisines) ? (dp.cuisines as string[]) : []
+      const tags = suggestCuisines((history ?? []) as unknown as HistoryRow[], current,
+        CUISINE_OPTIONS.map(([k]) => k))
+      const dismissed = (localStorage.getItem('prefs-suggest-dismissed') ?? '').split(',')
+      setMyUserId(auth.user.id)
+      setPrefs(dp)
+      setSuggestion(tags.filter(t => !dismissed.includes(t)))
+    })()
+    return () => { live = false }
+  }, [])
 
   async function createRoom() {
     setBusy(true)
@@ -32,7 +75,10 @@ export default function HomePage() {
         p_lat: pos.lat, p_lng: pos.lng,
       })
       if (error) setError(error.message)
-      else nav(`/room/${data}`)
+      else {
+        await applyDefaultPrefs(data)
+        nav(`/room/${data}`)
+      }
     } finally {
       setBusy(false)
     }
@@ -48,7 +94,10 @@ export default function HomePage() {
         setError(error?.message?.includes('頻繁')
           ? '嘗試過於頻繁，請稍後再試'
           : '房間不存在或已開始')
-      } else nav(`/room/${data}`)
+      } else {
+        await applyDefaultPrefs(data)
+        nav(`/room/${data}`)
+      }
     } finally {
       setBusy(false)
     }
@@ -88,6 +137,32 @@ export default function HomePage() {
             <button className="btn btn-quiet px-5" type="submit" disabled={busy}>加入</button>
           </form>
         </section>
+
+        {suggestion.length > 0 && (
+          <section className="card animate-rise space-y-2">
+            <p className="text-sm">
+              根據你的用餐紀錄，你常吃：
+              <span className="font-semibold">
+                {suggestion.map(t => CUISINE_LABEL[t] ?? t).join('、')}
+              </span>
+              。要加入預設偏好嗎？之後開房會自動帶入。
+            </p>
+            <div className="flex gap-2">
+              <button className="btn btn-primary flex-1" onClick={async () => {
+                const cur = Array.isArray(prefs.cuisines) ? (prefs.cuisines as string[]) : []
+                const { error } = await supabase.from('profiles').update({
+                  default_prefs: { ...prefs, cuisines: [...new Set([...cur, ...suggestion])] },
+                }).eq('id', myUserId)
+                if (!error) setSuggestion([])
+                else setError('偏好儲存失敗，請稍後再試')
+              }}>加入預設偏好</button>
+              <button className="btn btn-quiet" onClick={() => {
+                localStorage.setItem('prefs-suggest-dismissed', suggestion.join(','))
+                setSuggestion([])
+              }}>忽略</button>
+            </div>
+          </section>
+        )}
 
         <RecentRatingPrompt />
 

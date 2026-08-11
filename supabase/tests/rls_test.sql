@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(30);
+select plan(31);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -223,6 +223,14 @@ select throws_ok(
   $$update public.dining_history set rating = 6
      where user_id = '00000000-0000-0000-0000-0000000000b2'$$,
   '23514', null, 'rating 超界被 CHECK 擋下');
+
+-- D5：非字串元素在 DB 邊界就擋，堵掉「LoadMembers unmarshal 失敗 → 全房 500」
+reset role;
+select throws_ok(
+  $$update public.room_members set cuisines = '["japanese", 5]'::jsonb
+     where user_id = '00000000-0000-0000-0000-0000000000b2'$$,
+  '23514', null,
+  'cuisines 非字串元素被 CHECK 擋下');
 
 select * from finish();
 rollback;
