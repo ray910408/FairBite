@@ -1446,9 +1446,16 @@ func TestVotingFlow(t *testing.T) {
 		t.Fatalf("vote 後 trace 應含投票因素：%s", trace)
 	}
 
-	// 互斥：同店 cast veto → up 自動撤
-	if w := vote(memberID, cands[0], "veto", "cast"); w.Code != http.StatusOK {
-		t.Fatalf("veto: %d %s", w.Code, w.Body.String())
+	// 互斥：同店 cast veto → up 自動撤；回應含剩餘否決額度
+	wv := vote(memberID, cands[0], "veto", "cast")
+	if wv.Code != http.StatusOK {
+		t.Fatalf("veto: %d %s", wv.Code, wv.Body.String())
+	}
+	var vetoResp struct {
+		VetoesRemaining int `json:"vetoes_remaining"`
+	}
+	if err := json.Unmarshal(wv.Body.Bytes(), &vetoResp); err != nil || vetoResp.VetoesRemaining != VetoQuota-1 {
+		t.Fatalf("第 1 個否決後 vetoes_remaining 應為 %d：%v %s", VetoQuota-1, err, wv.Body.String())
 	}
 	if myVotes("up") != 0 || myVotes("veto") != 1 {
 		t.Fatalf("互斥失敗：up=%d veto=%d", myVotes("up"), myVotes("veto"))

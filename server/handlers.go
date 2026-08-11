@@ -199,10 +199,7 @@ func handleStartVoting(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 //	     ▼
 //	TransitionRoom(voting→voting) ─ 條件鎖：驗階段 + room row lock
 //	     │                           （序列化同房投票；draw 後回 409 — D2 防線）
-//	     ├─ 候選驗證：不在本房名單 → 422
-//	     ├─ 互斥：cast 某 kind → 刪自己同店另一 kind
-//	     ├─ 限額：cast veto 且他店現存 veto ≥ VetoQuota → 409
-//	     ├─ 冪等寫入（insert on conflict do nothing / delete）
+//	     ├─ castVote：候選驗證+互斥+限額+冪等（vote.go）
 //	     └─ inline rescore（其餘資料 tx 內讀；pre-tx room 設定由 guard_room_columns 凍結）→ ReplaceCandidates → commit
 func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weather WeatherProvider) {
 	ctx := r.Context()
@@ -210,11 +207,7 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 	if !ok {
 		return
 	}
-	var req struct {
-		RestaurantID string `json:"restaurant_id"`
-		Kind         string `json:"kind"`
-		Op           string `json:"op"`
-	}
+	var req VoteCommand
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
 		(req.Kind != "up" && req.Kind != "veto") ||
@@ -244,55 +237,19 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		return
 	}
 	uid := UserID(r)
-	var inRoom bool
-	if err := tx.QueryRow(ctx, `select exists (select 1 from room_candidates
-		where room_id = $1 and restaurant_id = $2)`, room.ID, req.RestaurantID).Scan(&inRoom); err != nil {
-		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+	vetoesRemaining, err := castVote(ctx, tx, room.ID, uid, req)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotCandidate):
+			jsonError(w, http.StatusUnprocessableEntity, "這家餐廳不在本房的候選名單中")
+		case errors.Is(err, ErrVetoQuotaExceeded):
+			jsonError(w, http.StatusConflict,
+				fmt.Sprintf("否決額度已用完（每人同房同時最多 %d 個）", VetoQuota))
+		default:
+			log.Printf("vote command failed: %v", err)
+			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		}
 		return
-	}
-	if !inRoom {
-		jsonError(w, http.StatusUnprocessableEntity, "這家餐廳不在本房的候選名單中")
-		return
-	}
-	if req.Op == "cast" {
-		other := "veto"
-		if req.Kind == "veto" {
-			other = "up"
-		}
-		if _, err := tx.Exec(ctx, `delete from votes
-			where room_id = $1 and user_id = $2 and restaurant_id = $3 and kind = $4`,
-			room.ID, uid, req.RestaurantID, other); err != nil {
-			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-			return
-		}
-		if req.Kind == "veto" {
-			// 排除同店：重複 cast 既有否決不吃額度
-			var vetoes int
-			if err := tx.QueryRow(ctx, `select count(*) from votes
-				where room_id = $1 and user_id = $2 and kind = 'veto'
-				  and restaurant_id <> $3`, room.ID, uid, req.RestaurantID).Scan(&vetoes); err != nil {
-				jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-				return
-			}
-			if vetoes >= VetoQuota {
-				jsonError(w, http.StatusConflict,
-					fmt.Sprintf("否決額度已用完（每人同房同時最多 %d 個）", VetoQuota))
-				return
-			}
-		}
-		if _, err := tx.Exec(ctx, `insert into votes (room_id, user_id, restaurant_id, kind)
-			values ($1, $2, $3, $4) on conflict do nothing`,
-			room.ID, uid, req.RestaurantID, req.Kind); err != nil {
-			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-			return
-		}
-	} else { // retract：刪不存在的票也是成功（冪等）
-		if _, err := tx.Exec(ctx, `delete from votes
-			where room_id = $1 and user_id = $2 and restaurant_id = $3 and kind = $4`,
-			room.ID, uid, req.RestaurantID, req.Kind); err != nil {
-			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-			return
-		}
 	}
 	// inline rescore（ADR-0003）：載入順序、baseline 與落盤細節見 rescoreRoom
 	result, _, err := rescoreRoom(ctx, tx, room, wx)
@@ -305,7 +262,9 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
-	jsonOK(w, resultJSON(result))
+	resp := resultJSON(result)
+	resp["vetoes_remaining"] = vetoesRemaining
+	jsonOK(w, resp)
 }
 
 type keptJSON struct {
