@@ -80,6 +80,14 @@ var TimeSlotHours = map[string][2]int{"morning": {6, 11}} // 06:00–10:59
 
 var TimeSlotLabels = map[string]string{"morning": "早餐時段"}
 
+// 滿足度 EMA 與成員公平（P3 spec §5）
+const (
+	EMAAlpha            = 0.3  // spec §5：α 起始 0.3
+	EMASampleWindow     = 20   // 每人取最近 N 筆樣本折 EMA；更早的影響已被 α 衰減到可忽略
+	FairnessBoostWeight = 2.0  // 滿足度最低成員在偏好因素中的權重（其他人 1.0）
+	FairnessMinGap      = 0.15 // 最高最低 EMA 差距低於此值視為「大家一樣滿意」，不校正
+)
+
 const (
 	PrefMultMin = 0.6
 	PrefMultMax = 1.5

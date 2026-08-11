@@ -69,6 +69,7 @@ type EngineInput struct {
 	Recency              map[string]RecencyCount  // key = rkey(r)；nil = 無紀錄
 	Exposure             map[string]ExposureCount // key = rkey(r)；nil = 無統計（相容舊測試）
 	ExposureBaseline     map[string]int           // vote/draw 僅為 search 時 kept（收到本房 +1）的候選填 len(members)；nil = 不扣
+	Satisfaction         map[string]float64       // key = UserID；無樣本的成員不在 map；nil = 無資料
 	Exploration          string                   // familiar/balanced/explore；"" 視為 balanced
 }
 
@@ -145,20 +146,86 @@ func hardExclude(r Restaurant, ms []Member, now time.Time) (kinds, reasons []str
 
 type factorFn func(r Restaurant, in EngineInput) TraceEntry
 
-func prefFactor(r Restaurant, in EngineInput) TraceEntry {
-	hits := 0
+// satisfactionEMA：樣本由舊到新折入；第一筆為初始值。
+// samples 非空（呼叫端保證；空輸入是程式錯誤，panic-fast 優於回傳假中性值，eng review D13）
+func satisfactionEMA(samples []float64) float64 {
+	ema := samples[0]
+	for _, s := range samples[1:] {
+		ema = EMAAlpha*s + (1-EMAAlpha)*ema
+	}
+	return ema
+}
+
+// lowestSatisfactionMember：至少兩位成員有 EMA 且差距達 FairnessMinGap 才校正；
+// 冷啟動（無資料）或大家一樣滿意時不動（比照 D14 的誠實原則）。
+// 迭代 in.Members（SQL 已按 user_id 排序）而非 map，平手時結果決定性。
+func lowestSatisfactionMember(in EngineInput) string {
+	if len(in.Satisfaction) < 2 {
+		return ""
+	}
+	var lowID string
+	low, high := 2.0, -1.0
 	for _, m := range in.Members {
-		for _, c := range m.Cuisines {
-			if hasTag(r.CuisineTags, c) {
-				hits++
-				break
-			}
+		s, ok := in.Satisfaction[m.UserID]
+		if !ok {
+			continue
+		}
+		if s > high {
+			high = s
+		}
+		if len(m.Cuisines) == 0 {
+			// 無偏好可加重：不參與選拔（D22/OV#8——選了也是 no-op 還宣告假校正），
+			// 但其滿足度仍計入比較域 high（PR #5 Codex P2，2026-08-11 裁定：
+			// 混合房的真實不平等必須能觸發校正，否則 2 人房 gap 恆 0）
+			continue
+		}
+		if s < low {
+			low, lowID = s, m.UserID
 		}
 	}
-	ratio := float64(hits) / float64(len(in.Members))
+	if lowID == "" || high-low < FairnessMinGap {
+		return ""
+	}
+	return lowID
+}
+
+// memberLikes：成員任一 cuisine 命中餐廳 tags。偏好因素與滿足度樣本（prefHit）
+// 共用的唯一命中定義——兩者語意必須同步，改這裡即兩處同時生效（eng review D11）。
+func memberLikes(m Member, r Restaurant) bool {
+	for _, c := range m.Cuisines {
+		if hasTag(r.CuisineTags, c) {
+			return true
+		}
+	}
+	return false
+}
+
+func prefFactor(r Restaurant, in EngineInput) TraceEntry {
+	lowest := lowestSatisfactionMember(in)
+	var wsum, hitsum float64
+	hits := 0
+	for _, m := range in.Members {
+		w := 1.0
+		if m.UserID == lowest {
+			w = FairnessBoostWeight
+		}
+		wsum += w
+		if memberLikes(m, r) {
+			hitsum += w
+			hits++
+		}
+	}
+	ratio := hitsum / wsum
 	mult := PrefMultMin + (PrefMultMax-PrefMultMin)*ratio
-	return TraceEntry{"preference", mult,
-		fmt.Sprintf("%d/%d 位成員偏好命中", hits, len(in.Members))}
+	reason := fmt.Sprintf("%d/%d 位成員偏好命中", hits, len(in.Members))
+	if lowest != "" {
+		// 匿名（eng review D7）：公開「有校正」維持可解釋性，
+		// 但不公開誰的滿足度最低——那是個人資料，點名有社交成本。
+		// 2026-08-11 task5 review 裁定：D7 = 不點名；小房間可由 mult 反推是
+		// 任何可見公平效果的數學必然（藏標記只會變成無解釋的 ×1.20），接受。
+		reason += "（已套用成員公平校正）"
+	}
+	return TraceEntry{"preference", mult, reason}
 }
 
 // travelMinutes：單一成員到某距離的通勤分鐘數（overhead + 距離/速度）。

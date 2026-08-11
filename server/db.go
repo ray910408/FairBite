@@ -182,13 +182,37 @@ func RecordExposure(ctx context.Context, tx pgx.Tx, memberIDs, keptRestaurantIDs
 	return err
 }
 
-// RecordDecision：房間 decided 時為每位成員寫一筆同席紀錄（ADR-0002）並更新 winner 曝光統計
-func RecordDecision(ctx context.Context, tx pgx.Tx, roomID string, memberIDs []string, winnerID string) error {
+// prefHit：中選餐廳對單一成員的偏好命中分（spec §5 滿足度樣本的估計值）。
+// 沒設偏好 = 無訊號 → ok=false 不寫樣本（D22/OV#9：0.5 假中性會稀釋所有人的 EMA、
+// 讓 FairnessMinGap 在預設狀態永不觸發——無訊號不得混充中性訊號；
+// 這些成員的真訊號來源是餐後評分 rating）。
+// 命中定義沿用 memberLikes（engine.go）——與偏好因素同源（eng review D11）。
+func prefHit(m Member, r Restaurant) (float64, bool) {
+	if len(m.Cuisines) == 0 {
+		return 0, false
+	}
+	if memberLikes(m, r) {
+		return 1, true
+	}
+	return 0, true
+}
+
+// RecordDecision：房間 decided 時為每位成員寫一筆同席紀錄（ADR-0002）並更新 winner 曝光統計。
+// P3 起同時記下 pref_hit —— 滿足度樣本在成員跳過餐後評分時的後備值；空偏好寫 null。
+func RecordDecision(ctx context.Context, tx pgx.Tx, roomID string, members []Member, winner Restaurant) error {
+	ids := memberIDs(members)
+	hits := make([]*float64, len(members)) // nil = 無樣本（D22）；pgx 編碼為 float8[] 的 NULL
+	for i, m := range members {
+		if v, ok := prefHit(m, winner); ok {
+			hit := v
+			hits[i] = &hit
+		}
+	}
 	if _, err := tx.Exec(ctx, `
-		insert into dining_history (user_id, restaurant_id, room_id)
-		select u, $2, $1 from unnest($3::uuid[]) u
+		insert into dining_history (user_id, restaurant_id, room_id, pref_hit)
+		select u, $2, $1, h from unnest($3::uuid[], $4::float8[]) as t(u, h)
 		on conflict (room_id, user_id) do nothing`,
-		roomID, winnerID, memberIDs); err != nil {
+		roomID, winner.ID, ids, hits); err != nil {
 		return err
 	}
 	_, err := tx.Exec(ctx, `
@@ -196,8 +220,49 @@ func RecordDecision(ctx context.Context, tx pgx.Tx, roomID string, memberIDs []s
 		select u, $1, 1, now() from unnest($2::uuid[]) u
 		on conflict (user_id, restaurant_id) do update
 		  set chosen_count = exposure_stats.chosen_count + 1, last_chosen_at = now()`,
-		winnerID, memberIDs)
+		winner.ID, ids)
 	return err
+}
+
+// LoadSatisfaction：每位成員取最近 EMASampleWindow 筆樣本（rating 優先、否則 pref_hit），
+// 由舊到新折入 EMA。兩者皆缺的歷史列（0009 之前的資料）跳過。
+// ponytail: window 掃無專屬索引（dining_history_recency 中段的 restaurant_id 用不上排序）；
+// 個人量級夠用，量大加 (user_id, decided_at desc) 索引
+func LoadSatisfaction(ctx context.Context, q querier, memberIDs []string) (map[string]float64, error) {
+	// decided_at 可能同值；window 選樣本與 EMA 折入皆以 id 作穩定 tie-break。
+	rows, err := q.Query(ctx, `
+		select user_id, sample::float8 from (
+			select user_id,
+			       id,
+			       coalesce((rating - 1) / 4.0, pref_hit) as sample,
+			       decided_at,
+			       row_number() over (partition by user_id order by decided_at desc, id desc) as rn
+			from dining_history
+			where user_id = any($1::uuid[])
+			  and (rating is not null or pref_hit is not null)
+		) t where rn <= $2
+		order by user_id, decided_at, id`, memberIDs, EMASampleWindow)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	samples := map[string][]float64{}
+	for rows.Next() {
+		var uid string
+		var s float64
+		if err := rows.Scan(&uid, &s); err != nil {
+			return nil, err
+		}
+		samples[uid] = append(samples[uid], s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := map[string]float64{}
+	for uid, ss := range samples {
+		out[uid] = satisfactionEMA(ss)
+	}
+	return out, nil
 }
 
 // UpsertRestaurants 寫入快取並回填 DB uuid 到 rs[i].ID

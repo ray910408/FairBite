@@ -10,6 +10,8 @@ export const CUISINE_OPTIONS: [string, string][] = [
   ['sichuan', '川味'], ['hotpot', '火鍋'], ['seafood', '海鮮'], ['ramen', '拉麵'],
 ]
 
+export const CUISINE_LABEL = Object.fromEntries(CUISINE_OPTIONS)
+
 export const DIETARY_OPTIONS: [string, string][] = [
   ['vegetarian', '素食'], ['no_beef', '不吃牛'], ['no_pork', '不吃豬'], ['halal', '清真'],
 ]

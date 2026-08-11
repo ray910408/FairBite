@@ -320,6 +320,11 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusInternalServerError, "讀取曝光統計失敗")
 		return
 	}
+	satisfaction, err := LoadSatisfaction(ctx, tx, memberIDs(members))
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "讀取滿足度失敗")
+		return
+	}
 	baseline := map[string]int{}
 	// DB-loaded Restaurant.ID == rkey(r)，故此處 restaurant ID keys 與 engine baseline lookup 完全一致。
 	for restaurantID, counted := range exposureCounted {
@@ -330,7 +335,8 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 	// state machine 保證每房只 search 一次，0006 又在 search 後凍結成員；search 時 counted 候選的本房 +1 精確為 len(members)。
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Weather: wx, Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: baseline, Exploration: room.Exploration})
+		Weather: wx, Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: baseline,
+		Satisfaction: satisfaction, Exploration: room.Exploration})
 	if err := ReplaceCandidates(ctx, tx, room.ID, result, exposureCounted); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
 		return
@@ -527,9 +533,14 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusInternalServerError, "讀取曝光統計失敗")
 		return
 	}
+	satisfaction, err := LoadSatisfaction(ctx, tx, memberIDs(members))
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "讀取滿足度失敗")
+		return
+	}
 	result := Evaluate(EngineInput{Restaurants: found, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Weather: wx, Recency: recency, Exposure: exposure, Exploration: room.Exploration})
+		Weather: wx, Recency: recency, Exposure: exposure, Satisfaction: satisfaction, Exploration: room.Exploration})
 
 	if len(result.Kept) == 0 {
 		byKind := map[string]int{}
@@ -621,6 +632,11 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusInternalServerError, "讀取曝光統計失敗")
 		return
 	}
+	satisfaction, err := LoadSatisfaction(ctx, tx, memberIDs(members))
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "讀取滿足度失敗")
+		return
+	}
 	baseline := map[string]int{}
 	// DB-loaded Restaurant.ID == rkey(r)，故此處 restaurant ID keys 與 engine baseline lookup 完全一致。
 	for restaurantID, counted := range exposureCounted {
@@ -632,7 +648,8 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 	// spec §5.5：抽選前權威重算；pre-tx center_* 永遠、exploration 在 lobby 外由 guard_room_columns 凍結
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
 		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Weather: wx, Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: baseline, Exploration: room.Exploration})
+		Weather: wx, Votes: votes, Recency: recency, Exposure: exposure, ExposureBaseline: baseline,
+		Satisfaction: satisfaction, Exploration: room.Exploration})
 	if len(result.Kept) == 0 {
 		for _, e := range result.Excluded {
 			if hasKind(e.Kinds, "veto") {
@@ -663,7 +680,14 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
-	if err := RecordDecision(ctx, tx, room.ID, memberIDs(members), winner); err != nil {
+	var winnerRest Restaurant
+	for _, c := range result.Kept {
+		if c.Restaurant.ID == winner {
+			winnerRest = c.Restaurant
+			break
+		}
+	}
+	if err := RecordDecision(ctx, tx, room.ID, members, winnerRest); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入同席紀錄失敗")
 		return
 	}

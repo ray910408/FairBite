@@ -101,7 +101,7 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await a.getByRole('button', { name: '探索', exact: true }).click()
     const memberExplore = b.getByRole('button', { name: '探索', exact: true })
     await expect(memberExplore).toHaveAttribute('aria-pressed', 'true')
-    await expect(b.getByText('最近去過的店降更多，鼓勵換口味（由房主設定）', { exact: true })).toBeVisible()
+    await expect(b.getByText('沒去過的店加成加倍、常中選的店降權，鼓勵換口味（由房主設定）', { exact: true })).toBeVisible()
     for (const label of ['熟悉', '平均', '探索']) {
       await expect(b.getByRole('button', { name: label, exact: true })).toBeDisabled()
     }
@@ -224,6 +224,17 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     const navigationName = /^用 Google Maps 導航（.+）$/
     await expect(a.getByRole('link', { name: navigationName })).toBeVisible({ timeout: 30_000 })
     await expect(b.getByRole('link', { name: navigationName })).toBeVisible({ timeout: 30_000 })
+
+    // P3 餐後評分雙觸點：A 在房內評 4 星；B 不在房內評，回首頁從「最近 1 筆未評」提示評 5 星
+    // （既有 spec 的兩個 Page 變數名就是 a / b —— OV#24）
+    await a.getByRole('button', { name: '4 顆星' }).click()
+    await expect(a.getByText('已評分 4 顆星')).toBeVisible()
+    await b.goto('/')
+    await expect(b.getByText(/滿意嗎？/)).toBeVisible()
+    await b.getByRole('button', { name: '5 顆星' }).click()
+    await expect(b.getByText(/滿意嗎？/)).toBeHidden()
+    await b.reload()
+    await expect(b.getByText(/滿意嗎？/)).toBeHidden()
   } finally {
     await ctxA.close()
     await ctxB.close()

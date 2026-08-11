@@ -10,6 +10,7 @@ import ConditionsForm from '../components/ConditionsForm'
 import CandidateList from '../components/CandidateList'
 import Wheel from '../components/Wheel'
 import ResultCard from '../components/ResultCard'
+import RatingPrompt from '../components/RatingPrompt'
 import { Alert, Check, Copy, Logo, Spinner, Users } from '../components/icons'
 
 const STEPS = [
@@ -278,11 +279,15 @@ export default function RoomPage() {
               <Wheel rows={candidates} winnerId={draw.winner_restaurant_id}
                 onDone={() => setSpun(true)} />
             ) : (
-              <ResultCard draw={draw} candidates={candidates} me={me} />
+              <>
+                <ResultCard draw={draw} candidates={candidates} me={me} />
+                <RatingPrompt roomId={room.id} />
+              </>
             )}
             {candidates.some(c => c.status === 'kept' && isGoogleSourced(c.restaurants.place_id)) && (
               <p className="text-xs text-fg-muted">餐廳資料 Powered by Google</p>
             )}
+            <p className="text-xs text-fg-muted">天氣資料 Open-Meteo.com（CC BY 4.0）</p>
           </div>
         )}
       </main>

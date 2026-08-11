@@ -48,6 +48,73 @@ func (failingWeather) Current(context.Context, float64, float64) (Weather, error
 }
 func (failingWeather) CurrentCached(float64, float64) (Weather, bool) { return Weather{}, false }
 
+type countingWeatherProvider struct {
+	currentCalls atomic.Int32
+	cachedCalls  atomic.Int32
+	weather      Weather
+}
+
+func (p *countingWeatherProvider) Current(context.Context, float64, float64) (Weather, error) {
+	p.currentCalls.Add(1)
+	return p.weather, nil
+}
+
+func (p *countingWeatherProvider) CurrentCached(float64, float64) (Weather, bool) {
+	p.cachedCalls.Add(1)
+	return p.weather, true
+}
+
+func seedVotingRoomCandidate(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
+	hostID, roomID, restaurantID, email, placeID string,
+) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `delete from auth.users where id = $1`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `delete from public.restaurants where id = $1`, restaurantID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID); err != nil {
+			t.Errorf("cleanup room: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `delete from auth.users where id = $1`, hostID); err != nil {
+			t.Errorf("cleanup user: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `delete from public.restaurants where id = $1`, restaurantID); err != nil {
+			t.Errorf("cleanup restaurant: %v", err)
+		}
+	})
+
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email) values ($1, $2)`, hostID, email); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.rooms
+		(id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'voting', 25.0478, 121.5170)`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		values ($1, $2, 500, '["japanese"]', 2000, 'walking')`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.restaurants
+		(id, place_id, name, cuisine_tags, price_level, lat, lng, opening_hours)
+		values ($1, $2, 'Weather test restaurant', '["japanese"]', 1, 25.0478, 121.5171,
+			'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}')`, restaurantID, placeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.room_candidates
+		(room_id, restaurant_id, status, probability, exposure_counted)
+		values ($1, $2, 'kept', 1, false)`, roomID, restaurantID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type fixedProvider []Restaurant
 
 func (p fixedProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
@@ -398,6 +465,8 @@ func TestSearchAndDrawHappyPathExposureBaseline(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.dining_history where room_id = $1`, roomID)
+		pool.Exec(ctx, `delete from public.dining_history where user_id = $1 and room_id is null`, hostID)
 		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
 		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
 	})
@@ -1157,14 +1226,17 @@ func TestSearchDrawRecordsHistory(t *testing.T) {
 	if w := do("/api/rooms/" + roomID + "/draw"); w.Code != http.StatusOK {
 		t.Fatalf("draw: want 200 got %d body %s", w.Code, w.Body.String())
 	}
-	var histCount, chosenCount int
+	var histCount, prefHitCount, chosenCount int
 	if err := pool.QueryRow(ctx,
-		`select count(*) from public.dining_history where room_id = $1 and user_id = $2`,
-		roomID, hostID).Scan(&histCount); err != nil {
+		`select count(*), count(pref_hit) from public.dining_history where room_id = $1 and user_id = $2`,
+		roomID, hostID).Scan(&histCount, &prefHitCount); err != nil {
 		t.Fatal(err)
 	}
 	if histCount != 1 {
 		t.Fatalf("draw 後每位成員應有 1 筆同席紀錄，got %d", histCount)
+	}
+	if prefHitCount != 1 {
+		t.Fatalf("有偏好成員的同席紀錄應寫入 pref_hit，got %d", prefHitCount)
 	}
 	if err := pool.QueryRow(ctx,
 		`select count(*) from public.exposure_stats
@@ -1657,5 +1729,106 @@ func TestSearchSurvivesWeatherOutage(t *testing.T) {
 		if e.Factor == "weather" {
 			t.Fatalf("天氣失敗時不得產生 weather trace：%+v", e)
 		}
+	}
+}
+
+func TestVoteUsesCachedWeatherWithoutNetwork(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const (
+		hostID       = "37373737-3737-4373-8373-373737373737"
+		roomID       = "38383838-3838-4383-8383-383838383838"
+		restaurantID = "39393939-3939-4393-8393-393939393939"
+	)
+	seedVotingRoomCandidate(t, ctx, pool, hostID, roomID, restaurantID,
+		"vote-weather@test.dev", "vote-weather-place")
+
+	weather := &countingWeatherProvider{weather: Weather{RainMM: 2}}
+	h := newTestAppWithWeather(t, pool, NewMockProvider(), weather)
+	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
+	body := fmt.Sprintf(`{"restaurant_id":%q,"kind":"up","op":"cast"}`, restaurantID)
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/vote", strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("vote: want 200 got %d body %s", w.Code, w.Body.String())
+	}
+	if got := weather.currentCalls.Load(); got != 0 {
+		t.Fatalf("vote 不得呼叫 blocking Current：got %d calls", got)
+	}
+	if got := weather.cachedCalls.Load(); got < 1 {
+		t.Fatalf("vote 必須呼叫 CurrentCached，證明 weather wiring 有啟用：got %d calls", got)
+	}
+}
+
+func TestDrawSurvivesWeatherOutage(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const (
+		hostID       = "40404040-4040-4040-8040-404040404040"
+		roomID       = "41414141-4141-4141-8141-414141414141"
+		restaurantID = "42424242-4242-4242-8242-424242424242"
+	)
+	seedVotingRoomCandidate(t, ctx, pool, hostID, roomID, restaurantID,
+		"draw-weather@test.dev", "draw-weather-place")
+
+	h := newTestAppWithWeather(t, pool, NewMockProvider(), failingWeather{})
+	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/draw", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("天氣故障不得阻斷 draw：want 200 got %d body %s", w.Code, w.Body.String())
+	}
+
+	rows, err := pool.Query(ctx, `select weight_breakdown::text from public.room_candidates
+		where room_id = $1 and status = 'kept' order by restaurant_id`, roomID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	kept := 0
+	for rows.Next() {
+		kept++
+		var rawTrace string
+		if err := rows.Scan(&rawTrace); err != nil {
+			t.Fatal(err)
+		}
+		var trace []TraceEntry
+		if err := json.Unmarshal([]byte(rawTrace), &trace); err != nil {
+			t.Fatalf("kept candidate trace 無法解析：%v %s", err, rawTrace)
+		}
+		for _, entry := range trace {
+			if entry.Factor == "weather" {
+				t.Fatalf("天氣失敗時 kept candidate 不得產生 weather trace：%+v", entry)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if kept == 0 {
+		t.Fatal("draw 後至少必須保留一個 candidate")
 	}
 }

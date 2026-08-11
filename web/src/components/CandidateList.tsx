@@ -96,6 +96,9 @@ export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; 
       {showGoogleAttribution && (
         <p className="text-xs text-fg-muted">餐廳資料 Powered by Google</p>
       )}
+      {rows.some(c => c.weight_breakdown.some(e => e.factor === 'weather')) && (
+        <p className="text-xs text-fg-muted">天氣資料 Open-Meteo.com（CC BY 4.0）</p>
+      )}
     </div>
   )
 }
