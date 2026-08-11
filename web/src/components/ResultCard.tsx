@@ -21,7 +21,7 @@ export default function ResultCard({ draw, candidates, me }: {
         抽中機率 <span className="font-mono font-semibold text-fg">{formatPercent(prob)}</span>
       </p>
       <a className="btn btn-accent w-full"
-        href={buildMapsUrl(r.lat, r.lng, r.place_id, me?.transport ?? 'walking')}
+        href={buildMapsUrl(r.lat, r.lng, r.place_id, r.source, me?.transport ?? 'walking')}
         target="_blank" rel="noreferrer">
         <MapPin className="h-5 w-5" />
         用 Google Maps 導航（{TRANSPORT_LABELS[me?.transport ?? 'walking']}）

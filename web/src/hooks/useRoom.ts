@@ -19,7 +19,7 @@ export function useRoom(roomId: string) {
       supabase.from('rooms').select('*').eq('id', roomId).single(),
       supabase.from('room_members').select('*, profiles(display_name)').eq('room_id', roomId),
       supabase.from('room_candidates')
-        .select('*, restaurants(name, lat, lng, place_id)').eq('room_id', roomId)
+        .select('*, restaurants(name, lat, lng, place_id, source)').eq('room_id', roomId)
         .order('restaurant_id'),
       supabase.from('draws').select('*').eq('room_id', roomId).maybeSingle(),
       supabase.from('votes').select('*').eq('room_id', roomId),

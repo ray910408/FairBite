@@ -37,6 +37,9 @@ func newTestAppWithWeather(t *testing.T, pool *pgxpool.Pool, places PlacesProvid
 
 type failingProvider struct{}
 
+// "mock" 維持既有語意：非 google 出身 → fallback 不過濾 mock 快取。
+func (failingProvider) Source() string { return "mock" }
+
 func (failingProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
 	return nil, fmt.Errorf("simulated outage")
 }
@@ -117,6 +120,8 @@ func seedVotingRoomCandidate(t *testing.T, ctx context.Context, pool *pgxpool.Po
 
 type fixedProvider []Restaurant
 
+func (fixedProvider) Source() string { return "mock" }
+
 func (p fixedProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
 	return p, nil
 }
@@ -127,6 +132,8 @@ type conditionUpdateProvider struct {
 	userID      string
 	restaurants []Restaurant
 }
+
+func (conditionUpdateProvider) Source() string { return "mock" }
 
 func (p conditionUpdateProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) ([]Restaurant, error) {
 	if _, err := p.pool.Exec(ctx, `update room_members set budget_max = 100, max_distance_m = 300
@@ -143,6 +150,8 @@ type radiusGrowthProvider struct {
 	restaurants []Restaurant
 }
 
+func (radiusGrowthProvider) Source() string { return "mock" }
+
 func (p radiusGrowthProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) ([]Restaurant, error) {
 	if _, err := p.pool.Exec(ctx, `update room_members set max_distance_m = 2000
 		where room_id = $1 and user_id = $2`, p.roomID, p.userID); err != nil {
@@ -157,6 +166,8 @@ type blockingProvider struct {
 	releaseFirst chan struct{}
 	restaurants  []Restaurant
 }
+
+func (*blockingProvider) Source() string { return "mock" }
 
 func (p *blockingProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
 	if p.calls.Add(1) == 1 {
@@ -1125,11 +1136,13 @@ func TestGoogleSearchDoesNotFallbackToMockCache(t *testing.T) {
 		values ($1, $2, 500, '[]', 2000, 'walking') on conflict do nothing`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
+	// source='mock' 需顯式指定：0013 後過濾依 source 欄而非 place_id 前綴，
+	// 本列模擬的正是 mock provider 寫入的快取。
 	if _, err = pool.Exec(ctx, `insert into public.restaurants
-		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, fetched_at)
+		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
 		values ($1, '不可供 Google 使用的 mock 快取', '[]', 1, 23.5685, 119.5660,
-		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', now())
-		on conflict (place_id) do update set fetched_at = now()`, placeID); err != nil {
+		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'mock', now())
+		on conflict (place_id) do update set source = excluded.source, fetched_at = now()`, placeID); err != nil {
 		t.Fatal(err)
 	}
 	nearbyCache, err := LoadCachedRestaurants(ctx, pool, 23.5685, 119.5660, 2000, false)

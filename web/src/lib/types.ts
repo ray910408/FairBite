@@ -27,6 +27,8 @@ export type RestaurantRef = {
   lat: number
   lng: number
   place_id: string
+  // 出身欄位（restaurants.source，migration 0013）：'google' | 'mock'
+  source: string
 }
 
 export type CandidateRow = {

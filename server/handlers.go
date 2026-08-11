@@ -350,7 +350,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		log.Printf("places provider failed, falling back to cache: %v", err)
 		// provider 內已重試一次（spec §8）；此處 fallback 30 天內快取
 		// Google fallback 不可混入先前 mock provider 寫入的罐頭資料。
-		_, isGoogle := places.(*googleProvider)
+		isGoogle := places.Source() == "google"
 		found, err = LoadCachedRestaurants(ctx, pool, room.CenterLat, room.CenterLng, fetchedRadius, isGoogle)
 		if err != nil || len(found) == 0 {
 			jsonError(w, http.StatusBadGateway, "餐廳搜尋失敗，且沒有可用的快取資料，請稍後再試")
@@ -390,7 +390,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
 			return
 		}
-		if err := UpsertRestaurants(ctx, txCache, found); err != nil {
+		if err := UpsertRestaurants(ctx, txCache, found, places.Source()); err != nil {
 			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
 			return
 		}

@@ -5,7 +5,7 @@ import type { CandidateRow } from './types'
 const excluded = (kinds: string[]): CandidateRow => ({
   room_id: 'r', restaurant_id: kinds.join('-') || 'none', status: 'excluded',
   probability: null, weight_breakdown: [], exclusion_reason: null, exclusion_kinds: kinds,
-  restaurants: { name: 'x', lat: 0, lng: 0, place_id: 'p' },
+  restaurants: { name: 'x', lat: 0, lng: 0, place_id: 'p', source: 'google' },
 })
 
 test('含 veto kind → 否決死路', () =>

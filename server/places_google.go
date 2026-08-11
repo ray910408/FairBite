@@ -80,6 +80,8 @@ type gPlace struct {
 	} `json:"regularOpeningHours"`
 }
 
+func (*googleProvider) Source() string { return "google" }
+
 func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, radiusM int) ([]Restaurant, error) {
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ { // spec §8：失敗重試一次

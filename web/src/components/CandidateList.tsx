@@ -17,7 +17,7 @@ export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; 
   const percents = formatPercents(kept.map(c => c.probability ?? 0))
   const excluded = sortExcluded(rows)
   const max = Math.max(...kept.map(c => c.probability ?? 0), 0.0001)
-  const showGoogleAttribution = rows.some(c => isGoogleSourced(c.restaurants.place_id))
+  const showGoogleAttribution = rows.some(c => isGoogleSourced(c.restaurants.source))
 
   return (
     <div className="space-y-3">

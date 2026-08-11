@@ -5,7 +5,7 @@ import type { CandidateRow } from './types'
 const cand = (p: number | null, status: 'kept' | 'excluded' = 'kept'): CandidateRow => ({
   room_id: 'r', restaurant_id: String(p), status, probability: p,
   weight_breakdown: [], exclusion_reason: null, exclusion_kinds: [],
-  restaurants: { name: 'x', lat: 0, lng: 0, place_id: 'p' },
+  restaurants: { name: 'x', lat: 0, lng: 0, place_id: 'p', source: 'google' },
 })
 
 test('P2 新因素有中文標籤', () => {

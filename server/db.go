@@ -265,22 +265,24 @@ func LoadSatisfaction(ctx context.Context, q querier, memberIDs []string) (map[s
 	return out, nil
 }
 
-// UpsertRestaurants 寫入快取並回填 DB uuid 到 rs[i].ID
-func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant) error {
+// UpsertRestaurants 寫入快取並回填 DB uuid 到 rs[i].ID。
+// source 是寫入 provider 的出身（PlacesProvider.Source）；conflict 時一併更新——
+// 同一列被不同 provider 重抓時，provenance 跟著最新寫入者走。
+func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant, source string) error {
 	for i := range rs {
 		tags, _ := json.Marshal(rs[i].CuisineTags)
 		hours, _ := json.Marshal(rs[i].Hours)
 		err := tx.QueryRow(ctx, `
-			insert into restaurants (place_id, name, cuisine_tags, price_level, lat, lng, address, opening_hours, rating, fetched_at)
-			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+			insert into restaurants (place_id, name, cuisine_tags, price_level, lat, lng, address, opening_hours, rating, source, fetched_at)
+			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
 			on conflict (place_id) do update set
 			  name = excluded.name, cuisine_tags = excluded.cuisine_tags,
 			  price_level = excluded.price_level, lat = excluded.lat, lng = excluded.lng,
 			  address = excluded.address, opening_hours = excluded.opening_hours,
-			  rating = excluded.rating, fetched_at = now()
+			  rating = excluded.rating, source = excluded.source, fetched_at = now()
 			returning id`,
 			rs[i].PlaceID, rs[i].Name, tags, rs[i].PriceLevel, rs[i].Lat, rs[i].Lng,
-			rs[i].Address, hours, rs[i].Rating).Scan(&rs[i].ID)
+			rs[i].Address, hours, rs[i].Rating, source).Scan(&rs[i].ID)
 		if err != nil {
 			return fmt.Errorf("upsert %s: %w", rs[i].PlaceID, err)
 		}
@@ -304,7 +306,7 @@ func LoadCachedRestaurants(ctx context.Context, q querier, lat, lng float64, rad
 		select id, place_id, name, cuisine_tags, price_level, lat, lng, address, opening_hours, coalesce(rating, 0)
 		from restaurants where fetched_at > now() - interval '30 days'`
 	if excludeMock {
-		query += ` and place_id not like 'mock-%'`
+		query += ` and source <> 'mock'`
 	}
 	// Deterministic order pins exposure upsert lock order, matching the fresh-path sort.
 	query += ` order by place_id`
