@@ -40,8 +40,8 @@ type failingProvider struct{}
 // "mock" 維持既有語意：非 google 出身 → fallback 不過濾 mock 快取。
 func (failingProvider) Source() string { return "mock" }
 
-func (failingProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
-	return nil, fmt.Errorf("simulated outage")
+func (failingProvider) SearchNearby(context.Context, float64, float64, int) (PlacesSearchResult, error) {
+	return PlacesSearchResult{}, fmt.Errorf("simulated outage")
 }
 
 type failingWeather struct{}
@@ -122,8 +122,18 @@ type fixedProvider []Restaurant
 
 func (fixedProvider) Source() string { return "mock" }
 
-func (p fixedProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
-	return p, nil
+func (p fixedProvider) SearchNearby(context.Context, float64, float64, int) (PlacesSearchResult, error) {
+	return PlacesSearchResult{Restaurants: p}, nil
+}
+
+type resultProvider struct {
+	result PlacesSearchResult
+}
+
+func (resultProvider) Source() string { return "google" }
+
+func (p resultProvider) SearchNearby(context.Context, float64, float64, int) (PlacesSearchResult, error) {
+	return p.result, nil
 }
 
 type conditionUpdateProvider struct {
@@ -135,12 +145,12 @@ type conditionUpdateProvider struct {
 
 func (conditionUpdateProvider) Source() string { return "mock" }
 
-func (p conditionUpdateProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) ([]Restaurant, error) {
+func (p conditionUpdateProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) (PlacesSearchResult, error) {
 	if _, err := p.pool.Exec(ctx, `update room_members set budget_max = 100, max_distance_m = 300
 		where room_id = $1 and user_id = $2`, p.roomID, p.userID); err != nil {
-		return nil, err
+		return PlacesSearchResult{}, err
 	}
-	return append([]Restaurant(nil), p.restaurants...), nil
+	return PlacesSearchResult{Restaurants: append([]Restaurant(nil), p.restaurants...)}, nil
 }
 
 type radiusGrowthProvider struct {
@@ -152,12 +162,12 @@ type radiusGrowthProvider struct {
 
 func (radiusGrowthProvider) Source() string { return "mock" }
 
-func (p radiusGrowthProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) ([]Restaurant, error) {
+func (p radiusGrowthProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) (PlacesSearchResult, error) {
 	if _, err := p.pool.Exec(ctx, `update room_members set max_distance_m = 2000
 		where room_id = $1 and user_id = $2`, p.roomID, p.userID); err != nil {
-		return nil, err
+		return PlacesSearchResult{}, err
 	}
-	return append([]Restaurant(nil), p.restaurants...), nil
+	return PlacesSearchResult{Restaurants: append([]Restaurant(nil), p.restaurants...)}, nil
 }
 
 type blockingProvider struct {
@@ -169,12 +179,12 @@ type blockingProvider struct {
 
 func (*blockingProvider) Source() string { return "mock" }
 
-func (p *blockingProvider) SearchNearby(context.Context, float64, float64, int) ([]Restaurant, error) {
+func (p *blockingProvider) SearchNearby(context.Context, float64, float64, int) (PlacesSearchResult, error) {
 	if p.calls.Add(1) == 1 {
 		close(p.firstStarted)
 		<-p.releaseFirst
 	}
-	return append([]Restaurant(nil), p.restaurants...), nil
+	return PlacesSearchResult{Restaurants: append([]Restaurant(nil), p.restaurants...)}, nil
 }
 
 func TestSearchRequiresAuth(t *testing.T) {
@@ -891,7 +901,7 @@ func TestSearchFallsBackToCache(t *testing.T) {
 	}
 }
 
-func TestSearchClosedPlaceTombstonesCache(t *testing.T) {
+func TestSearchRejectedAndClosedPlacesTombstoneCache(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
@@ -904,11 +914,12 @@ func TestSearchClosedPlaceTombstonesCache(t *testing.T) {
 	t.Cleanup(func() { pool.Close() })
 
 	const (
-		hostID         = "71717171-7171-7171-7171-717171717171"
-		freshRoomID    = "72727272-7272-7272-7272-727272727272"
-		fallbackRoomID = "73737373-7373-7373-7373-737373737373"
-		closedPlaceID  = "round12-closed-place"
-		openPlaceID    = "round12-open-place"
+		hostID          = "71717171-7171-7171-7171-717171717171"
+		freshRoomID     = "72727272-7272-7272-7272-727272727272"
+		fallbackRoomID  = "73737373-7373-7373-7373-737373737373"
+		closedPlaceID   = "round12-closed-place"
+		rejectedPlaceID = "round7-rejected-place"
+		openPlaceID     = "round12-open-place"
 	)
 	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
 		values ($1, 'closed-cache@test.dev') on conflict do nothing`, hostID); err != nil {
@@ -935,15 +946,26 @@ func TestSearchClosedPlaceTombstonesCache(t *testing.T) {
 		on conflict (place_id) do update set fetched_at = now()`, closedPlaceID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = pool.Exec(ctx, `insert into public.restaurants
+		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
+		values ($1, '主類型被拒絕的快取列', '[]', 1, 24.1988, 121.6543,
+		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'google', now())
+		on conflict (place_id) do update set fetched_at = now()`, rejectedPlaceID); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
 		pool.Exec(ctx, `delete from public.rooms where id in ($1, $2)`, freshRoomID, fallbackRoomID)
-		pool.Exec(ctx, `delete from public.restaurants where place_id in ($1, $2)`, closedPlaceID, openPlaceID)
+		pool.Exec(ctx, `delete from public.restaurants where place_id in ($1, $2, $3)`, closedPlaceID, rejectedPlaceID, openPlaceID)
 	})
 
-	var closedRestaurantID string
+	var closedRestaurantID, rejectedRestaurantID string
 	if err := pool.QueryRow(ctx, `select id from public.restaurants where place_id = $1`, closedPlaceID).
 		Scan(&closedRestaurantID); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select id from public.restaurants where place_id = $1`, rejectedPlaceID).
+		Scan(&rejectedRestaurantID); err != nil {
 		t.Fatal(err)
 	}
 	open := Restaurant{
@@ -962,7 +984,7 @@ func TestSearchClosedPlaceTombstonesCache(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w
 	}
-	assertClosedAbsent := func(w *httptest.ResponseRecorder, degraded bool) {
+	assertStaleAbsent := func(w *httptest.ResponseRecorder, degraded bool) {
 		t.Helper()
 		if w.Code != http.StatusOK {
 			t.Fatalf("search: want 200 got %d body %s", w.Code, w.Body.String())
@@ -979,24 +1001,31 @@ func TestSearchClosedPlaceTombstonesCache(t *testing.T) {
 		if body.Degraded != degraded {
 			t.Fatalf("degraded = %v, want %v body %s", body.Degraded, degraded, w.Body.String())
 		}
+		staleRestaurantIDs := map[string]bool{closedRestaurantID: true, rejectedRestaurantID: true}
 		for _, kept := range body.Kept {
-			if kept.RestaurantID == closedRestaurantID {
-				t.Fatalf("closed restaurant %s must be absent: %s", closedRestaurantID, w.Body.String())
+			if staleRestaurantIDs[kept.RestaurantID] {
+				t.Fatalf("stale restaurant %s must be absent: %s", kept.RestaurantID, w.Body.String())
 			}
 		}
 	}
 
-	assertClosedAbsent(doSearch(newTestAppWithProvider(t, pool, fixedProvider{closed, open}), freshRoomID), false)
-	var fetchedAt time.Time
-	if err := pool.QueryRow(ctx, `select fetched_at from public.restaurants where place_id = $1`, closedPlaceID).
-		Scan(&fetchedAt); err != nil {
-		t.Fatal(err)
-	}
-	if !fetchedAt.Before(time.Now().Add(-30 * 24 * time.Hour)) {
-		t.Fatalf("closed restaurant fetched_at must be older than 30 days, got %s", fetchedAt)
+	provider := resultProvider{result: PlacesSearchResult{
+		Restaurants:      []Restaurant{closed, open},
+		RejectedPlaceIDs: []string{rejectedPlaceID},
+	}}
+	assertStaleAbsent(doSearch(newTestAppWithProvider(t, pool, provider), freshRoomID), false)
+	for _, placeID := range []string{closedPlaceID, rejectedPlaceID} {
+		var fetchedAt time.Time
+		if err := pool.QueryRow(ctx, `select fetched_at from public.restaurants where place_id = $1`, placeID).
+			Scan(&fetchedAt); err != nil {
+			t.Fatal(err)
+		}
+		if !fetchedAt.Before(time.Now().Add(-30 * 24 * time.Hour)) {
+			t.Fatalf("stale restaurant %s fetched_at must be older than 30 days, got %s", placeID, fetchedAt)
+		}
 	}
 
-	assertClosedAbsent(doSearch(newTestAppWithProvider(t, pool, failingProvider{}), fallbackRoomID), true)
+	assertStaleAbsent(doSearch(newTestAppWithProvider(t, pool, failingProvider{}), fallbackRoomID), true)
 }
 
 func TestSearchFallbackAllExcludedIncludesDegraded(t *testing.T) {

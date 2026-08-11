@@ -90,8 +90,13 @@ type Restaurant struct {
 	Closed bool
 }
 
+type PlacesSearchResult struct {
+	Restaurants      []Restaurant
+	RejectedPlaceIDs []string // provider 已辨識但拒絕的列；handler 用既有 tombstone 路徑逐出快取
+}
+
 type PlacesProvider interface {
-	SearchNearby(ctx context.Context, lat, lng float64, radiusM int) ([]Restaurant, error)
+	SearchNearby(ctx context.Context, lat, lng float64, radiusM int) (PlacesSearchResult, error)
 	// Source 是出身識別——寫入 restaurants.source 與快取 fallback 過濾都以此為準，
 	// 勿再比對 place_id 前綴或 type assert。
 	Source() string
@@ -112,12 +117,12 @@ func NewMockProvider() PlacesProvider { return mockProvider{} }
 
 func (mockProvider) Source() string { return "mock" }
 
-func (mockProvider) SearchNearby(_ context.Context, lat, lng float64, radiusM int) ([]Restaurant, error) {
+func (mockProvider) SearchNearby(_ context.Context, lat, lng float64, radiusM int) (PlacesSearchResult, error) {
 	var out []Restaurant
 	for _, r := range mockRestaurants {
 		if Haversine(lat, lng, r.Lat, r.Lng) <= float64(radiusM) {
 			out = append(out, r)
 		}
 	}
-	return out, nil
+	return PlacesSearchResult{Restaurants: out}, nil
 }

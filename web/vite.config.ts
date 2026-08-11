@@ -3,6 +3,19 @@ import basicSsl from '@vitejs/plugin-basic-ssl'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+const proxy = {
+  '/api': {
+    target: 'http://127.0.0.1:8787',
+    changeOrigin: true,
+  },
+  '/supabase': {
+    target: 'http://127.0.0.1:54321',
+    changeOrigin: true,
+    ws: true,
+    rewrite: (path: string) => path.replace(/^\/supabase/, ''),
+  },
+}
+
 export default defineConfig({
   plugins: [basicSsl(), react(), tailwindcss()],
   // host: 綁 0.0.0.0 讓同網段手機連得到；open: 啟動完成後自動開瀏覽器。
@@ -10,19 +23,9 @@ export default defineConfig({
   server: {
     host: true,
     open: true,
-    proxy: {
-      '/api': {
-        target: 'http://127.0.0.1:8787',
-        changeOrigin: true,
-      },
-      '/supabase': {
-        target: 'http://127.0.0.1:54321',
-        changeOrigin: true,
-        ws: true,
-        rewrite: path => path.replace(/^\/supabase/, ''),
-      },
-    },
+    proxy,
   },
+  preview: { proxy },
   test: {
     exclude: [...configDefaults.exclude, 'e2e/**'],
   },

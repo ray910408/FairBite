@@ -343,9 +343,12 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	fetchedRadius := minimumMemberRadius(members)
 	// Provider fetch envelope 採 call-time 成員最小距離；tx 內重讀若縮小，會在 Evaluate 前重濾。
 	// 若期間放寬，既有 fetch envelope 只會 under-fetch，不會錯誤納入更遠餐廳。
-	found, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, fetchedRadius)
+	searchResult, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, fetchedRadius)
+	found := searchResult.Restaurants
 	degraded := false
 	var closedIDs []string
+	// 只涵蓋本次 provider 看見並拒絕的 ID；被 request blocklist 擋住的歷史快取需另行清理或等 TTL。
+	rejectedIDs := searchResult.RejectedPlaceIDs
 	if err != nil {
 		log.Printf("places provider failed, falling back to cache: %v", err)
 		// provider 內已重試一次（spec §8）；此處 fallback 30 天內快取
@@ -379,14 +382,15 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	}
 	// 快取寫入獨立交易先 commit：即使零候選 rollback，真 API 的呼叫成果仍留作快取。
 	// fallback 的 found 已含 DB uuid 且本來就出自快取，因此跳過重寫。
-	if !degraded && (len(found) > 0 || len(closedIDs) > 0) {
+	if !degraded && (len(found) > 0 || len(closedIDs) > 0 || len(rejectedIDs) > 0) {
 		txCache, err := pool.Begin(ctx)
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 			return
 		}
 		defer txCache.Rollback(ctx)
-		if err := StaleOutRestaurants(ctx, txCache, closedIDs); err != nil {
+		staleIDs := append(closedIDs, rejectedIDs...)
+		if err := StaleOutRestaurants(ctx, txCache, staleIDs); err != nil {
 			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
 			return
 		}

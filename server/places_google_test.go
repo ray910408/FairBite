@@ -115,6 +115,24 @@ func gServer(t *testing.T, fail1st bool) *httptest.Server {
 		if !strings.Contains(r.Header.Get("X-Goog-FieldMask"), "places.primaryType") {
 			t.Errorf("FieldMask missing places.primaryType: %q", r.Header.Get("X-Goog-FieldMask"))
 		}
+		var requestBody struct {
+			ExcludedPrimaryTypes []string `json:"excludedPrimaryTypes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		excluded := make(map[string]bool, len(requestBody.ExcludedPrimaryTypes))
+		for _, primaryType := range requestBody.ExcludedPrimaryTypes {
+			excluded[primaryType] = true
+		}
+		for _, primaryType := range []string{
+			"hypermarket", "hotel", "store", "supermarket", "department_store",
+			"convenience_store", "grocery_store", "shopping_mall",
+		} {
+			if !excluded[primaryType] {
+				t.Errorf("request excludedPrimaryTypes missing %q: %v", primaryType, requestBody.ExcludedPrimaryTypes)
+			}
+		}
 		if fail1st && calls.Add(1) == 1 {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -128,12 +146,12 @@ func TestGoogleProviderMapping(t *testing.T) {
 	srv := gServer(t, false)
 	defer srv.Close()
 	p := NewGooglePlacesProvider("test-key", srv.URL)
-	rs, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000)
-	if err != nil || len(rs) != 8 {
-		t.Fatalf("want 8 restaurants, got %d err %v", len(rs), err)
+	result, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000)
+	if err != nil || len(result.Restaurants) != 8 {
+		t.Fatalf("want 8 restaurants, got %d err %v", len(result.Restaurants), err)
 	}
 	byPID := map[string]Restaurant{}
-	for _, r := range rs {
+	for _, r := range result.Restaurants {
 		byPID[r.PlaceID] = r
 	}
 	for _, excludedID := range []string{"gp-hypermarket", "gp-hotel", "gp-missing-primary"} {
@@ -143,6 +161,15 @@ func TestGoogleProviderMapping(t *testing.T) {
 	}
 	if _, ok := byPID["gp-noodle"]; !ok {
 		t.Error("primaryType=noodle_shop 必須保留")
+	}
+	rejected := make(map[string]bool, len(result.RejectedPlaceIDs))
+	for _, rejectedID := range result.RejectedPlaceIDs {
+		rejected[rejectedID] = true
+	}
+	for _, rejectedID := range []string{"gp-hypermarket", "gp-hotel", "gp-missing-primary"} {
+		if !rejected[rejectedID] {
+			t.Errorf("client 端拒絕的 %s 必須回傳供快取逐出：%v", rejectedID, result.RejectedPlaceIDs)
+		}
 	}
 	closed, ok := byPID["gp-7"]
 	if !ok || !closed.Closed {
@@ -230,8 +257,8 @@ func TestGoogleProviderRetries(t *testing.T) {
 	srv := gServer(t, true)
 	defer srv.Close()
 	p := NewGooglePlacesProvider("test-key", srv.URL)
-	rs, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000)
-	if err != nil || len(rs) == 0 {
+	result, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000)
+	if err != nil || len(result.Restaurants) == 0 {
 		t.Fatalf("第一次 500 應重試成功：err %v", err)
 	}
 }

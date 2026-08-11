@@ -70,6 +70,20 @@ var googleMealPrimaryTypes = map[string]struct{}{
 	"steak_house":    {},
 }
 
+// request 端 blocklist 只負責在 Google 套用 20 筆上限前提高名額效率，不是正確性判準。
+// 清單刻意可以不完整；漏網者仍由 gIsMealPrimaryType 這個唯一正確性閘門 fail-closed。
+// 不可改成 includedPrimaryTypes：Google 上限為 50，而允許的餐飲 primary types 遠超過上限。
+var googleRequestExcludedPrimaryTypes = []string{
+	"hypermarket",
+	"hotel",
+	"store",
+	"supermarket",
+	"department_store",
+	"convenience_store",
+	"grocery_store",
+	"shopping_mall",
+}
+
 var gPriceLevels = map[string]int{
 	"PRICE_LEVEL_FREE": 0, "PRICE_LEVEL_INEXPENSIVE": 1, "PRICE_LEVEL_MODERATE": 2,
 	"PRICE_LEVEL_EXPENSIVE": 3, "PRICE_LEVEL_VERY_EXPENSIVE": 4,
@@ -105,7 +119,7 @@ type gPlace struct {
 
 func (*googleProvider) Source() string { return "google" }
 
-func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, radiusM int) ([]Restaurant, error) {
+func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, radiusM int) (PlacesSearchResult, error) {
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ { // spec §8：失敗重試一次
 		rs, err := g.call(ctx, lat, lng, radiusM)
@@ -114,14 +128,15 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 		}
 		lastErr = err
 	}
-	return nil, lastErr
+	return PlacesSearchResult{}, lastErr
 }
 
-func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int) ([]Restaurant, error) {
+func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int) (PlacesSearchResult, error) {
 	body, _ := json.Marshal(map[string]any{
-		"includedTypes":  []string{"restaurant"},
-		"maxResultCount": 20, // API 上限
-		"languageCode":   "zh-TW",
+		"includedTypes":        []string{"restaurant"},
+		"excludedPrimaryTypes": googleRequestExcludedPrimaryTypes,
+		"maxResultCount":       20, // API 上限
+		"languageCode":         "zh-TW",
 		"locationRestriction": map[string]any{
 			"circle": map[string]any{
 				"center": map[string]float64{"latitude": lat, "longitude": lng},
@@ -132,7 +147,7 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 	req, err := http.NewRequestWithContext(ctx, "POST",
 		g.baseURL+"/v1/places:searchNearby", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return PlacesSearchResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Goog-Api-Key", g.apiKey)
@@ -141,29 +156,30 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 			"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours,places.servesVegetarianFood")
 	resp, err := g.client.Do(req)
 	if err != nil {
-		return nil, err
+		return PlacesSearchResult{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("places api status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+		return PlacesSearchResult{}, fmt.Errorf("places api status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}
 	var out struct {
 		Places []gPlace `json:"places"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
+		return PlacesSearchResult{}, err
 	}
-	rs := make([]Restaurant, 0, len(out.Places))
+	result := PlacesSearchResult{Restaurants: make([]Restaurant, 0, len(out.Places))}
 	filtered := 0
 	for _, p := range out.Places {
 		if !gIsMealPrimaryType(p.PrimaryType) {
 			filtered++
+			result.RejectedPlaceIDs = append(result.RejectedPlaceIDs, p.ID)
 			continue
 		}
 		// Absent status is common, so only explicit closure carries the tombstone signal.
 		closed := p.BusinessStatus == "CLOSED_TEMPORARILY" || p.BusinessStatus == "CLOSED_PERMANENTLY"
-		rs = append(rs, Restaurant{
+		result.Restaurants = append(result.Restaurants, Restaurant{
 			PlaceID:     p.ID,
 			Closed:      closed,
 			Name:        p.DisplayName.Text,
@@ -179,7 +195,7 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 	if filtered > 0 {
 		log.Printf("primaryType 過濾掉 %d 筆非餐廳", filtered)
 	}
-	return rs, nil
+	return result, nil
 }
 
 func gIsMealPrimaryType(primaryType string) bool {
