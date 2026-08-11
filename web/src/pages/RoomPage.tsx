@@ -287,6 +287,7 @@ export default function RoomPage() {
             {candidates.some(c => c.status === 'kept' && isGoogleSourced(c.restaurants.place_id)) && (
               <p className="text-xs text-fg-muted">餐廳資料 Powered by Google</p>
             )}
+            <p className="text-xs text-fg-muted">天氣資料 Open-Meteo.com（CC BY 4.0）</p>
           </div>
         )}
       </main>

@@ -51,6 +51,7 @@ flowchart TB
 handlers 改用快取並在回應標記 `degraded`，前端顯示降級橫幅。已歇業的店家
 （`businessStatus` 非營業中）會在快取中留下 tombstone，之後不再進入候選。
 資料來源為 Google 的候選會自動顯示「餐廳資料 Powered by Google」歸因。
+天氣因素使用免金鑰的 Open-Meteo；天氣資料：Open-Meteo.com（CC BY 4.0）。
 
 ## 本地啟動（三個終端）
 

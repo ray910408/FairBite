@@ -2,11 +2,18 @@
 
 ## P2 eng review 新增（2026-08-06）
 
-- 舊房間（>30 天）重開時仍顯示過期的 Google 快取內容 — 與快取條款衝突；需要產品決策（過期房顯示什麼：以 place_id 重刷或改為僅顯示店名+導航連結），留待 P3。
+- ~~舊房間（>30 天）重開時仍顯示過期的 Google 快取內容~~ 已結案：產品決策（2026-08-10）不支援舊房重開（ADR-0004），不實作重刷或過期標註。
 
 - Google currentOpeningHours（假日/特別時段）與 30 天快取條款結構性衝突 — date-specific 時段需要獨立的短效快取語意，留待 P3 設計（regularOpeningHours 的假日誤差為本期接受的限制）。
+  P3 明確排除：需要獨立的短效快取設計輪。
 
-- **dining_history 刪除語意：** `dining_history.room_id` 目前 `on delete cascade`（0003 migration），與 ADR-0002「紀錄跟人」矛盾——未來做房間清理/保留政策時改為 nullable + `on delete set null`，避免刪房抹掉成員同席紀錄。
+- ~~**dining_history 刪除語意：** `dining_history.room_id` 目前 `on delete cascade`（0003 migration），與 ADR-0002「紀錄跟人」矛盾~~ 已解決：migration 0011 改為 nullable + `on delete set null`（本 commit）。
+
+- **restaurants.cuisine_tags 無 jsonb 元素型別 CHECK：** 0001 連 array CHECK 都沒有；D5 的論證同樣適用，但僅 service role 寫入且來源為 Google Places，風險低。下次修改 `restaurants` schema 時順手補。
+
+- **晚餐/其他時段 × 菜系加成：** 待 provider tag 詞彙擴充、`googleTypeTags` 有真實對映後回歸；新增 slot 的前置條件已註記於 `server/weights.go`（P3 eng review D23）。
+
+- **均勻倍率 chip 策略：** timeslot 全場命中、rain 全場飽和、「推薦過但尚未中選」穩態 chip 三案併為一次決策：由引擎 guard 或 web 端過濾（P3 batch 1 final review）。
 
 ### Google Places attribution logo 確認（正式上線前）
 
@@ -79,7 +86,7 @@ feat/phase-1 全分支 final review 的 DEFER-P2 批次。前三項優先（安�
 11. 並發 draw 的 23505 / transition conflict 無實測（僅狀態前置檢查覆蓋）。
 12. `[]` / `null` 契約無測試斷言（現有測試 excluded/kept 皆非空）。
 13. createRoom 錯誤訊息透傳 raw message，與 join 不對稱。
-14. 條件表單輸入框無 label，僅 placeholder。（/qa 2026-08-06 已處理：slider 原本就有 label 包裹；toggle 群補 aria-pressed（1be41dd）、auth/home 文字框補 aria-label（f204a5a）。殘留：料理/禁忌群組標題與按鈕群無 role="group" 程式化關聯，留待完整 a11y pass。）
+14. **UI 元件測試基建（@testing-library + jsdom）一次性補全** — slider label、toggle `aria-pressed`、auth/home `aria-label` 已於 2026-08-06 /qa 處理；殘留料理/禁忌群組的程式化關聯，與 RatingPrompt、RecentRatingPrompt、偏好建議橫幅、`applyDefaultPrefs` 的元件層零自動化覆蓋一次補全。偏好建議橫幅 UI 膠水依既有 test-plan artifact 手動 QA，不另上 E2E（P3 eng review D14/D15）。
 15. unmount 未清 debounce timer。
 16. ~~搜尋鈕無 in-flight guard（可連按）~~ — 已解決：`RoomPage.tsx` 的 `searchInFlight` ref 擋連按（7e322c4），伺服器端另有 per-room single-flight（`TestSearchSingleFlightPerRoom`），E2E 斷言快速連點只送一次 request。
 17. ~~首次掛載期的暫時性讀取失敗會閃「找不到房間」頁 — 應三態化（loading / notFound / ok）~~ — 已解決：`useRoom.ts` 回傳 `notFound`，`RoomPage.tsx:53` 僅在 `notFound` 為真時顯示該頁。
