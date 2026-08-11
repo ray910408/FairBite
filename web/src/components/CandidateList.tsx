@@ -1,15 +1,16 @@
-import type { CandidateRow, VoteRow } from '../lib/types'
+import type { CandidateRow } from '../lib/types'
 import { isGoogleSourced } from '../lib/placesSource'
 import { chipLabel, formatPercents, sortExcluded, sortKept } from '../lib/probability'
+import { VETO_QUOTA } from '../lib/votes'
 import { Chevron } from './icons'
 
+// 純顯示：票數/我的票/剩餘額度都由 useRoom 算好傳入，這裡不碰 raw votes
 type VotingProps = {
-  votes: VoteRow[]
-  myUserId: string
+  myVote: (rid: string) => 'up' | 'veto' | null
+  ups: Record<string, number>
+  vetoesRemaining: number
   onToggle: (restaurantId: string, kind: 'up' | 'veto') => void
 }
-
-const VETO_QUOTA = 2 // UI 顯示常數，與 Go VetoQuota 一致
 
 export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; voting?: VotingProps }) {
   const kept = sortKept(rows)
@@ -18,17 +19,12 @@ export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; 
   const max = Math.max(...kept.map(c => c.probability ?? 0), 0.0001)
   const showGoogleAttribution = rows.some(c => isGoogleSourced(c.restaurants.place_id))
 
-  const ups = (rid: string) => voting!.votes.filter(v => v.restaurant_id === rid && v.kind === 'up').length
-  const mine = (rid: string, kind: VoteRow['kind']) =>
-    voting!.votes.some(v => v.restaurant_id === rid && v.user_id === voting!.myUserId && v.kind === kind)
-  const myVetoes = voting ? voting.votes.filter(v => v.user_id === voting.myUserId && v.kind === 'veto').length : 0
-
   return (
     <div className="space-y-3">
       <div className="flex items-baseline justify-between">
         <h2 className="text-base font-semibold">候選餐廳（{kept.length}）</h2>
         {voting && (
-          <span className="text-xs text-fg-muted">否決額度 {VETO_QUOTA - myVetoes}/{VETO_QUOTA}（可收回）</span>
+          <span className="text-xs text-fg-muted">否決額度 {voting.vetoesRemaining}/{VETO_QUOTA}（可收回）</span>
         )}
       </div>
       {kept.map((c, ci) => (
@@ -56,13 +52,13 @@ export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; 
           </div>
           {voting && (
             <div className="flex gap-2 border-t border-border pt-2">
-              <button type="button" aria-pressed={mine(c.restaurant_id, 'up')}
-                className={`btn flex-1 text-sm ${mine(c.restaurant_id, 'up') ? 'btn-primary' : 'btn-quiet'}`}
+              <button type="button" aria-pressed={voting.myVote(c.restaurant_id) === 'up'}
+                className={`btn flex-1 text-sm ${voting.myVote(c.restaurant_id) === 'up' ? 'btn-primary' : 'btn-quiet'}`}
                 onClick={() => voting.onToggle(c.restaurant_id, 'up')}>
-                👍 贊成{ups(c.restaurant_id) > 0 ? `（${ups(c.restaurant_id)}）` : ''}
+                👍 贊成{(voting.ups[c.restaurant_id] ?? 0) > 0 ? `（${voting.ups[c.restaurant_id]}）` : ''}
               </button>
-              <button type="button" aria-pressed={mine(c.restaurant_id, 'veto')}
-                disabled={!mine(c.restaurant_id, 'veto') && myVetoes >= VETO_QUOTA}
+              <button type="button" aria-pressed={voting.myVote(c.restaurant_id) === 'veto'}
+                disabled={voting.myVote(c.restaurant_id) !== 'veto' && voting.vetoesRemaining <= 0}
                 className="btn btn-quiet flex-1 text-sm text-danger disabled:opacity-40"
                 onClick={() => voting.onToggle(c.restaurant_id, 'veto')}>
                 否決
@@ -82,7 +78,7 @@ export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; 
               <li key={c.restaurant_id} className="flex items-center gap-2 text-sm text-fg-muted">
                 <span className="flex-1 line-through">{c.restaurants.name}</span>
                 <span className="text-xs">{c.exclusion_reason}</span>
-                {voting && mine(c.restaurant_id, 'veto') && (
+                {voting && voting.myVote(c.restaurant_id) === 'veto' && (
                   <button type="button" className="btn btn-quiet shrink-0 px-2 py-1 text-xs"
                     onClick={() => voting.onToggle(c.restaurant_id, 'veto')}>
                     收回否決

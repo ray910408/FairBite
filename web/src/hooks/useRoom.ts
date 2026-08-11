@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { voteRoom } from '../lib/api'
 import { supabase } from '../lib/supabase'
 import type { CandidateRow, DrawRow, MemberRow, Room, VoteRow } from '../lib/types'
+import { VETO_QUOTA, applyVoteMirror, myVetoCount, myVoteKind, upCounts } from '../lib/votes'
 
 export function useRoom(roomId: string) {
   const [room, setRoom] = useState<Room | null>(null)
@@ -72,5 +74,25 @@ export function useRoom(roomId: string) {
     }
   }, [roomId, refetch])
 
-  return { room, members, candidates, draw, votes, setVotes, myUserId, connected, notFound, refetch }
+  const voteInFlight = useRef(false)
+  // 投票唯一入口：算 op、打 API、成功才做本地鏡射；失敗回伺服器訊息字串給呼叫端顯示
+  async function toggleVote(restaurantId: string, kind: 'up' | 'veto'): Promise<string | null> {
+    if (voteInFlight.current) return null // D6：連點鎖 —— 慢網路下不重送、不閃假錯誤
+    voteInFlight.current = true
+    const op = myVoteKind(votes, myUserId, restaurantId) === kind ? 'retract' : 'cast'
+    const msg = await voteRoom(roomId, restaurantId, kind, op)
+      .catch(() => '投票失敗：無法連線到伺服器')
+    voteInFlight.current = false
+    if (msg) return msg
+    // D6：本地先行 merge —— 按鈕 aria-pressed 立即反應，不等 Realtime round-trip（votes.ts）
+    setVotes(vs => applyVoteMirror(vs, myUserId, roomId, restaurantId, kind, op))
+    return null
+  }
+
+  const myVote = (rid: string) => myVoteKind(votes, myUserId, rid)
+  const ups = upCounts(votes)
+  const vetoesRemaining = VETO_QUOTA - myVetoCount(votes, myUserId)
+
+  return { room, members, candidates, draw, myUserId, connected, notFound, refetch,
+    toggleVote, myVote, ups, vetoesRemaining }
 }
