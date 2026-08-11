@@ -465,6 +465,8 @@ func TestSearchAndDrawHappyPathExposureBaseline(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.dining_history where room_id = $1`, roomID)
+		pool.Exec(ctx, `delete from public.dining_history where user_id = $1 and room_id is null`, hostID)
 		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
 		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
 	})
