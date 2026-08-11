@@ -8,13 +8,13 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var ErrConflict = errors.New("status conflict")
 
 // D2/D15：讀取函式吃 querier（*pgxpool.Pool 與 pgx.Tx 皆滿足），
 // vote 交易才能在 room row lock 之後於 tx 內讀，杜絕 stale 讀寫競態
+// 寫入函式（TransitionRoom/ReplaceCandidates/RecordExposure/RecordDecision/UpsertRestaurants）刻意吃 pgx.Tx——型別即「必須與呼叫端其他寫入同交易」的不變式，勿放寬成 querier。
 type querier interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
@@ -30,9 +30,9 @@ type RoomRow struct {
 	Exploration string
 }
 
-func LoadRoom(ctx context.Context, pool *pgxpool.Pool, roomID string) (RoomRow, error) {
+func LoadRoom(ctx context.Context, q querier, roomID string) (RoomRow, error) {
 	var r RoomRow
-	err := pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), exploration
 		 from rooms where id = $1`, roomID).
 		Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.Exploration)
@@ -299,7 +299,7 @@ func StaleOutRestaurants(ctx context.Context, q querier, placeIDs []string) erro
 
 // LoadCachedRestaurants：快取 fallback（spec §8）。只取 30 天內（快取條款：fetched_at 為準）。
 // ponytail: 全量掃 + Go 端 haversine 過濾；快取量級小，夠用，量大再改 SQL bounding box
-func LoadCachedRestaurants(ctx context.Context, pool *pgxpool.Pool, lat, lng float64, radiusM int, excludeMock bool) ([]Restaurant, error) {
+func LoadCachedRestaurants(ctx context.Context, q querier, lat, lng float64, radiusM int, excludeMock bool) ([]Restaurant, error) {
 	query := `
 		select id, place_id, name, cuisine_tags, price_level, lat, lng, address, opening_hours, coalesce(rating, 0)
 		from restaurants where fetched_at > now() - interval '30 days'`
@@ -308,7 +308,7 @@ func LoadCachedRestaurants(ctx context.Context, pool *pgxpool.Pool, lat, lng flo
 	}
 	// Deterministic order pins exposure upsert lock order, matching the fresh-path sort.
 	query += ` order by place_id`
-	rows, err := pool.Query(ctx, query)
+	rows, err := q.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}

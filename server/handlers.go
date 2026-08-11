@@ -25,8 +25,6 @@ type limiterStore struct {
 	burst  int
 }
 
-var searchInFlight sync.Map
-
 func newLimiterStore(perSec rate.Limit, burst int) *limiterStore {
 	return &limiterStore{m: map[string]*rate.Limiter{}, perSec: perSec, burst: burst}
 }
@@ -54,13 +52,15 @@ func rateLimit(store *limiterStore, next http.Handler) http.Handler {
 }
 
 func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider, rl *limiterStore) http.Handler {
+	// single-flight 狀態綁在路由實例上，避免跨測試/跨實例透過 process 全域耦合
+	var searchInFlight sync.Map
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, map[string]bool{"ok": true})
 	})
 	api := http.NewServeMux()
 	api.HandleFunc("POST /api/rooms/{id}/search", func(w http.ResponseWriter, r *http.Request) {
-		handleSearch(w, r, pool, places, weather)
+		handleSearch(w, r, pool, places, weather, &searchInFlight)
 	})
 	api.HandleFunc("POST /api/rooms/{id}/start-voting", func(w http.ResponseWriter, r *http.Request) {
 		handleStartVoting(w, r, pool)
@@ -318,7 +318,7 @@ func minimumMemberRadius(members []Member) int {
 	return radius
 }
 
-func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider) {
+func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider, inFlight *sync.Map) {
 	ctx := r.Context()
 	room, ok := loadHostRoom(w, r, pool)
 	if !ok {
@@ -329,11 +329,11 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	// Places 呼叫付費，同房並發搜尋只放行一個。
-	if _, loaded := searchInFlight.LoadOrStore(room.ID, struct{}{}); loaded {
+	if _, loaded := inFlight.LoadOrStore(room.ID, struct{}{}); loaded {
 		jsonError(w, http.StatusConflict, "房間狀態已變更")
 		return
 	}
-	defer searchInFlight.Delete(room.ID)
+	defer inFlight.Delete(room.ID)
 	wx := loadWeather(ctx, weather, room.CenterLat, room.CenterLng)
 	members, err := LoadMembers(ctx, pool, room.ID)
 	if err != nil || len(members) == 0 {
