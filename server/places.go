@@ -80,6 +80,7 @@ type Restaurant struct {
 	ID          string
 	PlaceID     string
 	Name        string
+	PrimaryType string
 	CuisineTags []string
 	PriceLevel  int
 	Lat, Lng    float64

@@ -763,7 +763,7 @@ func TestSearchEdgeCases(t *testing.T) {
 
 	persistedPlaceID := "mock-cache-persistence-422"
 	strictRestaurant := Restaurant{
-		PlaceID: persistedPlaceID, Name: "零候選快取測試", PriceLevel: 0,
+		PlaceID: persistedPlaceID, Name: "零候選快取測試", PrimaryType: "restaurant", PriceLevel: 0,
 		Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
 	}
 	if _, err := pool.Exec(ctx, `delete from restaurants where place_id = $1`, persistedPlaceID); err != nil {
@@ -866,11 +866,11 @@ func TestSearchFallsBackToCache(t *testing.T) {
 	}
 	// 先種一筆 30 天內的快取（mock 資料座標圈內）
 	if _, err = pool.Exec(ctx, `
-		insert into public.restaurants (place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
-		values ('cached-1', '快取餐廳', '["japanese"]', 1, 25.0478, 121.5172,
+		insert into public.restaurants (place_id, name, primary_type, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
+		values ('cached-1', '快取餐廳', 'restaurant', '["japanese"]', 1, 25.0478, 121.5172,
 		        '{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}',
 		        'google', now())
-		on conflict (place_id) do update set fetched_at = now()`); err != nil {
+		on conflict (place_id) do update set primary_type = excluded.primary_type, fetched_at = now()`); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -940,17 +940,17 @@ func TestSearchRejectedAndClosedPlacesTombstoneCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(ctx, `insert into public.restaurants
-		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
-		values ($1, '已歇業快取餐廳', '[]', 1, 24.1988, 121.6543,
+		(place_id, name, primary_type, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
+		values ($1, '已歇業快取餐廳', 'restaurant', '[]', 1, 24.1988, 121.6543,
 		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'google', now())
-		on conflict (place_id) do update set fetched_at = now()`, closedPlaceID); err != nil {
+		on conflict (place_id) do update set primary_type = excluded.primary_type, fetched_at = now()`, closedPlaceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(ctx, `insert into public.restaurants
-		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
-		values ($1, '主類型被拒絕的快取列', '[]', 1, 24.1988, 121.6543,
+		(place_id, name, primary_type, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
+		values ($1, '主類型被拒絕的快取列', 'restaurant', '[]', 1, 24.1988, 121.6543,
 		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'google', now())
-		on conflict (place_id) do update set fetched_at = now()`, rejectedPlaceID); err != nil {
+		on conflict (place_id) do update set primary_type = excluded.primary_type, fetched_at = now()`, rejectedPlaceID); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -969,11 +969,11 @@ func TestSearchRejectedAndClosedPlacesTombstoneCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	open := Restaurant{
-		PlaceID: openPlaceID, Name: "仍營業餐廳", PriceLevel: 1,
+		PlaceID: openPlaceID, Name: "仍營業餐廳", PrimaryType: "restaurant", PriceLevel: 1,
 		Lat: 24.1988, Lng: 121.6543, Hours: daily([2]int{0, 1440}),
 	}
 	closed := Restaurant{
-		PlaceID: closedPlaceID, Name: "已歇業快取餐廳", PriceLevel: 1,
+		PlaceID: closedPlaceID, Name: "已歇業快取餐廳", PrimaryType: "restaurant", PriceLevel: 1,
 		Lat: 24.1988, Lng: 121.6543, Hours: daily([2]int{0, 1440}), Closed: true,
 	}
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
@@ -1060,10 +1060,10 @@ func TestSearchFallbackAllExcludedIncludesDegraded(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(ctx, `insert into public.restaurants
-		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
-		values ($1, '降級全排除快取', '[]', 1, 23.9911, 121.6112,
+		(place_id, name, primary_type, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
+		values ($1, '降級全排除快取', 'restaurant', '[]', 1, 23.9911, 121.6112,
 		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'google', now())
-		on conflict (place_id) do update set fetched_at = now()`, placeID); err != nil {
+		on conflict (place_id) do update set primary_type = excluded.primary_type, fetched_at = now()`, placeID); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -1170,17 +1170,17 @@ func TestGoogleSearchDoesNotFallbackToMockCache(t *testing.T) {
 	// source='mock' 需顯式指定：0013 後過濾依 source 欄而非 place_id 前綴，
 	// 本列模擬的正是 mock provider 寫入的快取。
 	if _, err = pool.Exec(ctx, `insert into public.restaurants
-		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
-		values ($1, '不可供 Google 使用的 mock 快取', '[]', 1, 23.5685, 119.5660,
+		(place_id, name, primary_type, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
+		values ($1, '不可供 Google 使用的 mock 快取', 'restaurant', '[]', 1, 23.5685, 119.5660,
 		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'mock', now())
-		on conflict (place_id) do update set source = excluded.source, fetched_at = now()`, placeID); err != nil {
+		on conflict (place_id) do update set primary_type = excluded.primary_type, source = excluded.source, fetched_at = now()`, placeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(ctx, `insert into public.restaurants
-		(place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
-		values ($1, '前綴不像 mock 的 mock 快取', '[]', 1, 23.5685, 119.5660,
+		(place_id, name, primary_type, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
+		values ($1, '前綴不像 mock 的 mock 快取', 'restaurant', '[]', 1, 23.5685, 119.5660,
 		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'mock', now())
-		on conflict (place_id) do update set source = excluded.source, fetched_at = now()`, crossPlaceID); err != nil {
+		on conflict (place_id) do update set primary_type = excluded.primary_type, source = excluded.source, fetched_at = now()`, crossPlaceID); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {

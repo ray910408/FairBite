@@ -50,24 +50,23 @@ var googleTypeTags = map[string][]string{
 }
 
 // Google 的 includedTypes 會比對所有 types；只有 primaryType 能表示場所的主要用途。
-// 這份正面表列只收能構成一餐的供餐場所：正餐場域、熟食專賣，及提供完整餐點的外帶/外送。
+// 這份正面表列只收能構成一餐的供餐場所：正餐場域、熟食專賣，及提供完整餐點的外帶。
 // cafe、bakery、bar（以及非 _restaurant 的甜點、飲料、零食類型）刻意排除；這是產品判斷，不是遺漏。
+// meal_delivery、pizza_delivery 也刻意排除：本產品是內用／前往取餐導向，會計算交通時間並導航。
 var googleMealPrimaryTypes = map[string]struct{}{
-	"bar_and_grill":  {},
-	"bistro":         {},
-	"cafeteria":      {},
-	"deli":           {},
-	"diner":          {},
-	"food_court":     {},
-	"hot_dog_stand":  {},
-	"kebab_shop":     {},
-	"meal_delivery":  {},
-	"meal_takeaway":  {},
-	"noodle_shop":    {},
-	"pizza_delivery": {},
-	"salad_shop":     {},
-	"sandwich_shop":  {},
-	"steak_house":    {},
+	"bar_and_grill": {},
+	"bistro":        {},
+	"cafeteria":     {},
+	"deli":          {},
+	"diner":         {},
+	"food_court":    {},
+	"hot_dog_stand": {},
+	"kebab_shop":    {},
+	"meal_takeaway": {},
+	"noodle_shop":   {},
+	"salad_shop":    {},
+	"sandwich_shop": {},
+	"steak_house":   {},
 }
 
 // request 端 blocklist 只負責在 Google 套用 20 筆上限前提高名額效率，不是正確性判準。
@@ -183,6 +182,7 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 			PlaceID:     p.ID,
 			Closed:      closed,
 			Name:        p.DisplayName.Text,
+			PrimaryType: p.PrimaryType,
 			CuisineTags: gTags(p),
 			PriceLevel:  gPrice(p.PriceLevel),
 			Lat:         p.Location.Latitude,

@@ -99,6 +99,17 @@ const gSample = `{"places":[
     "location":{"latitude":25.0483,"longitude":121.5174}}
 ]}`
 
+func TestGoogleMealPrimaryTypeExcludesDeliveryOnly(t *testing.T) {
+	for _, primaryType := range []string{"meal_delivery", "pizza_delivery"} {
+		if gIsMealPrimaryType(primaryType) {
+			t.Errorf("%s 是純外送類型，不得進入前往用餐候選", primaryType)
+		}
+	}
+	if !gIsMealPrimaryType("meal_takeaway") {
+		t.Error("meal_takeaway 有可前往取餐的地點，仍應保留")
+	}
+}
+
 func gServer(t *testing.T, fail1st bool) *httptest.Server {
 	t.Helper()
 	var calls atomic.Int32
@@ -184,6 +195,9 @@ func TestGoogleProviderMapping(t *testing.T) {
 	}
 	if sushi.Name != "山本壽司" || sushi.PriceLevel != 2 || sushi.Rating != 4.3 {
 		t.Errorf("基本欄位對映錯誤：%+v", sushi)
+	}
+	if sushi.PrimaryType != "sushi_restaurant" {
+		t.Errorf("primaryType 必須帶入快取判斷欄位，got %q", sushi.PrimaryType)
 	}
 	if !hasTag(sushi.CuisineTags, "japanese") || !hasTag(sushi.CuisineTags, "sushi") {
 		t.Errorf("types 應映到 japanese+sushi：%v", sushi.CuisineTags)

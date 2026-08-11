@@ -107,6 +107,11 @@ func TestMockProviderRadius(t *testing.T) {
 	if err != nil || len(all.Restaurants) < 10 {
 		t.Fatalf("2km 內應有至少 10 家，got %d err %v", len(all.Restaurants), err)
 	}
+	for _, r := range all.Restaurants {
+		if !gIsMealPrimaryType(r.PrimaryType) {
+			t.Errorf("mock 餐廳 %s 缺少合格 primaryType：%q", r.PlaceID, r.PrimaryType)
+		}
+	}
 	near, _ := p.SearchNearby(context.Background(), 25.0478, 121.5170, 300)
 	if len(near.Restaurants) == 0 || len(near.Restaurants) >= len(all.Restaurants) {
 		t.Fatalf("300m 應為非空真子集，got %d / %d", len(near.Restaurants), len(all.Restaurants))
