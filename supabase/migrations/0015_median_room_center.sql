@@ -45,11 +45,17 @@ grant select (id, code, host_id, status, exploration, created_at)
 -- 把差值映射進 [-180, 180) 的純數學小函式（359.998 -> -0.002、-359.998 -> 0.002、180 -> -180）。
 -- 不用 % 運算子：Postgres 的取模對 double precision 沒有實作，floor() 就夠。
 -- 只在下面的 definer function 內部呼叫，照慣例不對外開。
+-- 明列 authenticated 不是因為它現在有這支的 execute（實測沒有），而是不讓「內部函式不可
+-- 外呼」這個安全屬性依賴 default privileges 的版本行為：revoke from public 只拿掉 PUBLIC
+-- 那一筆，拿不掉任何明確的 role 授權（join_room 走同一句 revoke 卻仍有 authenticated=X，
+-- 就是因為它後面另有一句 grant）。哪天 Supabase 的 default privileges 改成也 grant execute
+-- 給 authenticated，少了這個字的 revoke 就會靜默地把內部函式開給每一個登入者。
+-- service_role 刻意不 revoke：那是 Go 後端的身分，不是客戶端角色。
 create or replace function public.wrap180(d double precision)
 returns double precision language sql immutable as $$
   select d - 360 * floor((d + 180) / 360);
 $$;
-revoke execute on function public.wrap180(double precision) from anon, public;
+revoke execute on function public.wrap180(double precision) from anon, authenticated, public;
 
 create or replace function public.recompute_room_center(p_room_id uuid)
 returns void language plpgsql security definer set search_path = public as $$
@@ -75,7 +81,9 @@ begin
 end $$;
 -- 只由下面的 join_room 內部呼叫（definer 內 current_user 已是 owner），不對外開。
 -- create_room 不呼叫：n=1 的中位數就是房主自己，直接寫 center_* 即可。
-revoke execute on function public.recompute_room_center from anon, public;
+-- authenticated 明列的理由同 wrap180，而且這支更要緊：它是 security definer，直接開給
+-- 登入者等於讓任何人對任意 room_id 觸發重算。參數型別補上讓簽章明確，日後有重載也不會打錯。
+revoke execute on function public.recompute_room_center(uuid) from anon, authenticated, public;
 
 -- create_room：房主的座標同時進 location 表。單人中位數就是房主自己，
 -- center_* 維持直接寫入，不必多跑一次 recompute。

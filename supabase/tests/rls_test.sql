@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(61);
+select plan(62);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -150,6 +150,28 @@ select results_eq(
   $$,
   $$ values ('code'), ('created_at'), ('exploration'), ('host_id'), ('id'), ('status') $$,
   'rooms 的 SELECT 欄級 grant 精確等於預期欄位集合（center_* 加回去即紅）');
+
+-- 0015：內部函式不可外呼。recompute_room_center 是 security definer，開給 authenticated
+-- 等於讓任何登入者對任意 room_id 觸發重算；wrap180 只是它的內部小工具。0015 的 revoke
+-- 已明列 authenticated，但那個安全屬性不能只靠 migration 寫對——Supabase 的 default
+-- privileges 若哪天改成也 grant execute 給 authenticated，這條就是唯一會紅的地方。
+-- 用 has_function_privilege 而不是 role_routine_grants：前者連 PUBLIC 繼承來的權限都算進去，
+-- 後者只看得到 grantee = 'authenticated' 那幾筆，grant to public 會整個漏掉。
+-- join_room 是正面對照，不是湊數：少了它，整條查詢壞掉（schema 打錯、權限字串打錯）回空集合
+-- 時這條照樣綠。權限直接放進結果集而不是拿去 where 過濾，也是同一個理由的延伸——過濾式寫法
+-- 下，任一支函式改名或被刪，該列只是從結果裡消失，斷言仍綠；連著 proname 一起比，三支裡
+-- 少一支就對不上。
+select results_eq(
+  $$
+    select p.proname::text collate "default",
+           has_function_privilege('authenticated', p.oid, 'EXECUTE')
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname in ('wrap180', 'recompute_room_center', 'join_room')
+    order by 1
+  $$,
+  $$ values ('join_room', true), ('recompute_room_center', false), ('wrap180', false) $$,
+  'authenticated 只叫得動 join_room，叫不動 wrap180 與 recompute_room_center');
 
 select is(
   (select count(*) from information_schema.role_table_grants
