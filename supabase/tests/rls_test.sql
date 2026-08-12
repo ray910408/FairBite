@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(37);
+select plan(47);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -22,7 +22,8 @@ select results_eq(
       ('restaurants','SELECT'),
       ('room_candidates','SELECT'),
       ('room_members','SELECT'), ('room_members','UPDATE'),
-      ('rooms','SELECT'),
+      -- rooms 兩種權限都已是欄級（SELECT 見 0015、UPDATE 見 0003），
+      -- 欄級 grant 不會出現在 role_table_grants，改由下面兩條 role_column_grants 釘住
       ('votes','SELECT')
     order by 1, 2
   $$,
@@ -134,6 +135,21 @@ select results_eq(
   $$,
   $$ values ('exploration') $$,
   'rooms 的 UPDATE 欄級 grant 僅 exploration');
+
+-- 0015：rooms 的 SELECT 也收成欄級。center_lat/center_lng 不在清單裡是刻意的——
+-- 圓心是全員座標的中位數，兩人房時就是中點，任一方 other = 2 * center - own
+-- 就反推出另一人的精確 GPS，等於繞過 room_member_locations 的零 grant。
+-- 這條把欄位清單釘死：日後有人把 center_* 加回去（或整表 grant select）就會紅。
+select results_eq(
+  $$
+    select column_name::text collate "default"
+    from information_schema.role_column_grants
+    where grantee = 'authenticated' and table_schema = 'public'
+      and table_name = 'rooms' and privilege_type = 'SELECT'
+    order by 1
+  $$,
+  $$ values ('code'), ('created_at'), ('exploration'), ('host_id'), ('id'), ('status') $$,
+  'rooms 的 SELECT 欄級 grant 精確等於預期欄位集合（center_* 加回去即紅）');
 
 select is(
   (select count(*) from information_schema.role_table_grants
@@ -260,6 +276,12 @@ select throws_ok(
   $$select count(*) from public.room_member_locations$$,
   '42501', null,
   'room_member_locations 對 authenticated 無任何 grant：座標不外流給同房成員');
+-- 把座標關進零 grant 的表還不夠：圓心本身就是反推管道。兩人房的圓心即中點，
+-- 任一方 other = 2 * center - own 就得到另一人的精確座標。
+select throws_ok(
+  $$select center_lat from public.rooms$$,
+  '42501', null,
+  '同房成員也讀不到 rooms.center_lat：欄級 grant 切斷「從圓心反推他人座標」');
 
 -- 座標刻意選 2 的冪次組合，中位數在 double 下可精確表示，不用容差比較
 reset role;
@@ -269,6 +291,50 @@ select is(
 select is(
   (select center_lng from public.rooms where id = (select id from ctx2)),
   121.625::double precision, '圓心經度取全員中位數');
+
+-- 非法座標視同沒給座標，不 raise（同 D25 的理由）：raise 會把同一交易裡剛寫的
+-- join_attempts 一起 rollback，攻擊者拿非法座標就能無限打房號而限流永遠加不上去，
+-- 順帶做出「合法房號 raise / 非法房號回 null」的房號存在性 oracle。
+insert into auth.users (id, email) values
+  ('00000000-0000-0000-0000-0000000000f6', 'f@test.dev');
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000f6","role":"authenticated"}';
+select lives_ok(
+  format($$select public.join_room(%L, 999, 121.9)$$, (select code from ctx2)),
+  'F 帶非法座標加入不 raise');
+reset role;
+select is(
+  (select count(*) from public.room_members
+    where room_id = (select id from ctx2)
+      and user_id = '00000000-0000-0000-0000-0000000000f6')::int,
+  1, 'F 照樣加得進房：非法座標不擋人');
+select is(
+  (select center_lat from public.rooms where id = (select id from ctx2)),
+  25.25::double precision, '非法座標不進中位數，圓心不受影響');
+select is(
+  (select count(*) from public.join_attempts
+    where user_id = '00000000-0000-0000-0000-0000000000f6')::int,
+  1, '非法座標的嘗試仍留痕：不 raise 才不會連限流紀錄一起 rollback');
+
+-- 已有座標的成員再次加入卻沒帶座標（回首頁重輸房號、這次拒絕定位）：
+-- 舊座標要跟著清掉，否則過期位置繼續把圓心拉過去
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000e5","role":"authenticated"}';
+select isnt(
+  (select public.join_room((select code from ctx2))), null,
+  'E 再次加入，這次沒帶座標');
+reset role;
+select is(
+  (select count(*) from public.room_member_locations
+    where room_id = (select id from ctx2)
+      and user_id = '00000000-0000-0000-0000-0000000000e5')::int,
+  0, 'E 的舊座標被清掉，不再列入中位數');
+select is(
+  (select center_lat from public.rooms where id = (select id from ctx2)),
+  25.0::double precision, '圓心退回只剩 D 的位置（緯度）');
+select is(
+  (select center_lng from public.rooms where id = (select id from ctx2)),
+  121.5::double precision, '圓心退回只剩 D 的位置（經度）');
 
 select * from finish();
 rollback;
