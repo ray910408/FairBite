@@ -230,12 +230,19 @@ func TestDistOverheadAndSlowest(t *testing.T) {
 // Candidate.Trace），也是 search/vote HTTP 回應裡的 trace（handlers.go resultJSON）。
 // 兩條路都對同房成員開放，而 distance/weather 的倍率與 reason 都是「候選到圓心距離」的
 // 單調確定性函數 → 反推 dist → 三角定位還原圓心 → 兩人房還原另一人的精確 GPS。
-// 這裡同時釘住兩個不變式：對外的值只能還原到 TraceDistGridM 網格，而機率不受量化影響。
-func TestTraceQuantizedButScoreExact(t *testing.T) {
+// 這裡釘住的是：所有圓心衍生的公開值都同源於量化距離。
+//
+// 2026-08-12 翻面：上一輪這條測試釘的是「計分必須用全精度、量化只准發生在 trace」。那個
+// 決定錯了，reviewer 指出它留了側門——probability 同樣是公開值（room_candidates.probability
+// 對同房成員可讀、HTTP 回應、draws.probabilities），而它是 Score 的正規化，Score 是各因素
+// 倍率的乘積。trace 裡其他因素（preference、timeslot、closing_soon、recency…）本來就是
+// 精確值，除掉之後 probability_i / probability_j 就還原出 (dist_i × weather_i) 的精確比值，
+// 三家以上候選 → 兩條方程式兩個未知數 → 解出圓心，量化過的 trace 直接被繞過去。
+func TestCenterDerivedPublicValuesShareQuantizedDist(t *testing.T) {
 	a := rest(func(r *Restaurant) { r.PlaceID = "a"; r.Lat = 25.0568 }) // 距圓心 ~1001m → 網格 900
 	b := rest(func(r *Restaurant) { r.PlaceID = "b"; r.Lat = 25.0595 }) // ~1301m → 網格 1200
-	// 兩家除了位置以外完全相同（同 tags/價位/營業時間、無投票與曝光/近期資料），
-	// 其餘因素在比值裡對消，機率比值就是距離衍生倍率的比值。下雨讓 weather 那條通道也上場。
+	// 兩家除了位置以外完全相同（同 tags/價位/營業時間、無投票與曝光/近期資料）。
+	// 下雨讓 weather 那條通道也上場。
 	in := EngineInput{Restaurants: []Restaurant{a, b}, Members: []Member{member(nil)},
 		Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
 		Weather: &Weather{RainMM: 2.0}}
@@ -243,55 +250,106 @@ func TestTraceQuantizedButScoreExact(t *testing.T) {
 	if len(res.Kept) != 2 {
 		t.Fatalf("兩家都應保留，got excluded %+v", res.Excluded)
 	}
-	prob := map[string]float64{}
+	prob, score := map[string]float64{}, map[string]float64{}
+	traceProduct := map[string]float64{}
 	trace := map[string]map[string]TraceEntry{}
 	for _, c := range res.Kept {
-		prob[c.PlaceID] = c.Probability
+		prob[c.PlaceID], score[c.PlaceID], traceProduct[c.PlaceID] = c.Probability, c.Score, 1
 		trace[c.PlaceID] = map[string]TraceEntry{}
 		for _, e := range c.Trace {
 			trace[c.PlaceID][e.Factor] = e
+			traceProduct[c.PlaceID] *= e.Mult
 		}
 	}
 
-	distOf := func(r Restaurant) float64 { return Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng) }
-	for _, r := range []Restaurant{a, b} {
-		dist := distOf(r)
-		snapped := snapTraceDist(dist)
-		if snapped == dist {
-			t.Fatalf("測試幾何無效：%s 剛好落在量化網格上，量化前後分辨不出來", r.PlaceID)
+	// 手算對照（刻意不呼叫 distFactor/rainFactor，否則對照會跟著實作一起漂）：
+	// a 量化後 900m，單一步行成員（75 公尺/分、overhead 0）→ 12 分鐘。
+	//   distance：1.2 + (0.7-1.2)*(12-5)/20 = 1.025
+	//   weather ：1 - (1-0.7)*(12-5)/15     = 0.86
+	// 全精度的 ~1001m 會是 13.35 分鐘 → 0.9913 / 0.8330，且 reason 會寫「13 分鐘」。
+	for _, c := range []struct {
+		factor string
+		mult   float64
+		reason string
+	}{
+		{"distance", 1.025, "平均交通約 12 分鐘（最慢 12 分鐘，步行）"},
+		{"weather", 0.86, ""},
+	} {
+		got := trace["a"][c.factor]
+		if math.Abs(got.Mult-c.mult) > 1e-9 {
+			t.Errorf("a 的 %s 倍率 = %v，量化到 900m 應為 %v", c.factor, got.Mult, c.mult)
 		}
-		for _, c := range []struct {
-			factor      string
-			want, exact TraceEntry
-		}{
-			{"distance", distFactorAt(snapped, in), distFactorAt(dist, in)},
-			{"weather", rainFactorAt(snapped, in), rainFactorAt(dist, in)},
-		} {
-			got := trace[r.PlaceID][c.factor]
-			if got == c.exact {
-				t.Errorf("%s 的 %s 仍是全精度值 %+v：dist 可反推到公尺級", r.PlaceID, c.factor, got)
-			}
-			// 整個 entry 比對而不只 Mult：reason 的「平均交通約 N 分鐘」是第二條旁通道，
-			// 必須同源於量化距離，否則量化 mult 沒有意義。
-			if got != c.want {
-				t.Errorf("%s 的 %s = %+v，應為量化距離重算的 %+v", r.PlaceID, c.factor, got, c.want)
-			}
+		// reason 的「平均交通約 N 分鐘」是第二條旁通道（步行約 ±80 公尺），必須同源於量化距離。
+		if c.reason != "" && got.Reason != c.reason {
+			t.Errorf("a 的 %s reason = %q，應為 %q", c.factor, got.Reason, c.reason)
 		}
 	}
 
-	// 量化只准發生在對外的 trace：機率仍由全精度倍率算出。
-	ratio := func(d func(Restaurant) float64) float64 {
-		m := func(r Restaurant) float64 { return distFactorAt(d(r), in).Mult * rainFactorAt(d(r), in).Mult }
-		return m(a) / m(b)
+	// 同源不變式：Score（→ Probability）只能是 trace 裡那些倍率的乘積，不准有第二個版本。
+	// 上一輪的全精度計分正是在這裡露餡：trace 是量化值、Score 是全精度值，對不起來。
+	for _, id := range []string{"a", "b"} {
+		if math.Abs(score[id]-traceProduct[id]) > 1e-12 {
+			t.Errorf("%s 的 Score %v ≠ trace 倍率乘積 %v：計分與 trace 不同源，機率比值會洩漏網格以下的距離",
+				id, score[id], traceProduct[id])
+		}
 	}
-	exact := ratio(distOf)
-	coarse := ratio(func(r Restaurant) float64 { return snapTraceDist(distOf(r)) })
-	if math.Abs(exact-coarse) < 1e-6 {
-		t.Fatalf("測試幾何無效：量化前後比值相同（%v），分辨不出計分有沒有吃到量化值", exact)
+	if got, want := prob["a"]/prob["b"], traceProduct["a"]/traceProduct["b"]; math.Abs(got-want) > 1e-12 {
+		t.Errorf("機率比值 %v 應等於 trace 倍率比值 %v", got, want)
 	}
-	if got := prob["a"] / prob["b"]; math.Abs(got-exact) > 1e-12 {
-		t.Errorf("機率比值 %v 應為全精度倍率比值 %v（量化不得改變 probability），量化值會給出 %v",
-			got, exact, coarse)
+	// 幾何有效性：兩家落在不同網格，距離因素確實還有分辨力（否則上面全是零假設）。
+	if trace["a"]["distance"] == trace["b"]["distance"] {
+		t.Fatalf("測試幾何無效：兩家應落在不同網格")
+	}
+}
+
+// 本輪的核心不變式：距離差在一個網格內的兩家候選，對外必須完全分辨不出來——trace 的
+// distance/weather entry 相同，機率也必須「完全相同」。機率是 Score 的正規化，Score 只要
+// 吃到全精度距離，同房成員拿 probability 比值就能把距離細分到網格以下，等於量化白做。
+func TestSameGridCandidatesIndistinguishable(t *testing.T) {
+	// 兩家都落在 [750,1050) 這一格（量化後皆 900m），但真實距離差 ~267 公尺：
+	// 差距在一格以內，卻大到任何更細的網格都會把它們分開。
+	near := rest(func(r *Restaurant) { r.PlaceID = "near"; r.Lat = 25.0547 }) // ~767m
+	far := rest(func(r *Restaurant) { r.PlaceID = "far"; r.Lat = 25.0571 })   // ~1034m
+	in := EngineInput{Restaurants: []Restaurant{near, far}, Members: []Member{member(nil)},
+		Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+		Weather: &Weather{RainMM: 2.0}}
+
+	dNear := Haversine(in.CenterLat, in.CenterLng, near.Lat, near.Lng)
+	dFar := Haversine(in.CenterLat, in.CenterLng, far.Lat, far.Lng)
+	if snapCenterDist(dNear) != snapCenterDist(dFar) {
+		t.Fatalf("測試幾何無效：兩家不在同一格（%.0fm→%.0f、%.0fm→%.0f）",
+			dNear, snapCenterDist(dNear), dFar, snapCenterDist(dFar))
+	}
+	if math.Abs(dNear-dFar) < 200 {
+		t.Fatalf("測試幾何無效：真實距離只差 %.0f 公尺，量化與否分辨不出來", math.Abs(dNear-dFar))
+	}
+
+	res := Evaluate(in)
+	if len(res.Kept) != 2 {
+		t.Fatalf("兩家都應保留，got excluded %+v", res.Excluded)
+	}
+	byID := map[string]Candidate{}
+	for _, c := range res.Kept {
+		byID[c.PlaceID] = c
+	}
+	entry := func(c Candidate, factor string) TraceEntry {
+		for _, e := range c.Trace {
+			if e.Factor == factor {
+				return e
+			}
+		}
+		t.Fatalf("%s 缺少 %s trace", c.PlaceID, factor)
+		return TraceEntry{}
+	}
+	for _, f := range []string{"distance", "weather"} {
+		if n, g := entry(byID["near"], f), entry(byID["far"], f); n != g {
+			t.Errorf("同一網格的兩家 %s entry 不同：%+v vs %+v（可反推到網格以下的距離）", f, n, g)
+		}
+	}
+	// 全等而非近似：兩家除了位置外完全相同，量化後每個因素都逐位相同，機率也該逐位相同。
+	if byID["near"].Probability != byID["far"].Probability {
+		t.Errorf("同一網格的兩家機率不同：%v vs %v（probability 比值可細分距離，量化等於白做）",
+			byID["near"].Probability, byID["far"].Probability)
 	}
 }
 

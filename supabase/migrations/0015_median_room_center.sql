@@ -59,7 +59,13 @@ begin
   -- 圓心不會隨掃描順序在等價解之間跳動。
   select lng into v_ref from room_member_locations
    where room_id = p_room_id order by user_id limit 1;
-  -- 空集合就原地不動（原本由 where ... and c.lat is not null 守著，語意不變）
+  -- 零座標時的明定 fallback：保留房間最後一次算出來的圓心，不清空、不改。
+  -- 這是刻意的，不是「忘了處理」——零座標代表沒有任何資訊可以算新圓心，另外兩條路都更糟：
+  -- 把 center_* 設為 null，Go 端 coalesce(center_lat, 0) 會讓搜尋跑到幾內亞灣；
+  -- 讓房間變成不可搜尋，則任何一位成員只要不帶座標重新加入就能讓全房卡死。
+  -- 代價要說清楚：最後一位有座標的成員撤回座標之後，圓心仍停在他撤回前的位置，直到有人
+  -- 送出新座標為止。撤回只保證「不再參與往後的重算」與「精確座標不再留存」，不保證
+  -- 回溯抹除他對已經算出來的那個聚合值的貢獻——那個值對成員也讀不到（欄級 grant）。
   if v_ref is null then return; end if;
   select percentile_cont(0.5) within group (order by lat),
          percentile_cont(0.5) within group (order by v_ref + wrap180(lng - v_ref))

@@ -96,14 +96,26 @@ const (
 	DistBestMin   = 5.0  // ≤5 分鐘 → DistMultBest
 	DistWorstMin  = 25.0 // ≥25 分鐘 → DistMultWorst
 
-	// TraceDistGridM：trace 對外公開時，「候選到圓心距離」的量化網格（公尺）。
+	// CenterDistGridM：「候選到圓心距離」的量化網格（公尺）。所有圓心衍生的訊號一律走它。
 	// 0015 把 rooms.center_lat/center_lng 收成欄級 grant，但 weight_breakdown 對同房成員
 	// 可讀（room_candidates 有 table-level SELECT grant + candidates_select policy），而
 	// distFactor/rainFactor 的倍率都是該距離的單調確定性函數；成員的 transport（room_members
 	// 有 table-level SELECT grant）與候選的 lat/lng（0005 restaurants_select）也都讀得到。
 	// 全精度倍率 → 反推 dist → 三家以上候選三角定位出圓心 → 兩人房用 other = 2*center - own
-	// 還原另一人的精確 GPS，欄級 grant 等於白鎖。對策見 engine.go publicEntry：公開值一律用
-	// 量化到本網格的距離重算，計分仍走全精度，機率不變。
+	// 還原另一人的精確 GPS，欄級 grant 等於白鎖。
+	//
+	// 只量化 trace 不夠：probability 同樣公開（room_candidates.probability、HTTP 回應、
+	// draws.probabilities），而它是 Score 的正規化，Score 又是各因素倍率的乘積。trace 裡
+	// 其他因素（preference、closing_soon、recency…）本來就是精確值，除掉之後
+	// probability_i / probability_j 就還原出距離倍率的精確比值，三家候選兩條方程式一樣解得出
+	// 圓心——量化 trace 卻用全精度計分等於關前門留側窗。對策見 engine.go snapCenterDist：
+	// 距離在因素內就先量化，計分、機率、trace 因此是同一個量化距離的函數，
+	// 殘餘不確定性恆等於網格寬度，不會被任何公開出口細分。
+	//
+	// 代價：抽獎機率也走量化距離，相距一個網格以內的兩家候選距離權重相同。以下方常數換算，
+	// 300 公尺（全員步行）對應距離倍率階距 0.10、範圍 1.2–0.7，最多影響單一候選權重約 ±0.05。
+	// 這是軟性偏好權重不是硬性過濾，接受。硬性半徑過濾（freeze.go 重濾、provider fetch
+	// envelope）仍用真實距離——那條不洩漏，候選集合本身就已經是公開的粗略旁通道。
 	//
 	// 網格寬度由實際常數推算，取倍率對距離最敏感的情境（全員步行，TransportMetersPerMin 最小）：
 	//   distance：minutes = 0 + dist/75、frac = (minutes-5)/20、mult = 1.2 - 0.5*frac
@@ -114,7 +126,7 @@ const (
 	// 殘餘不確定性只會比全員步行更大。
 	// 300 公尺網格 ⇒ 最壞情況下 distance 倍率階距 0.10、weather 0.08，殘餘不確定性
 	// = 網格寬度 = 300 公尺（單一候選）。
-	TraceDistGridM = 300.0
+	CenterDistGridM = 300.0
 
 	ClosingSoonMinutes  = 60
 	ClosingSoonMult     = 0.6
