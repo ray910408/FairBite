@@ -99,7 +99,7 @@ const gSample = `{"places":[
     "location":{"latitude":25.0483,"longitude":121.5174}}
 ]}`
 
-func TestGoogleMealPrimaryTypeExcludesDeliveryOnly(t *testing.T) {
+func TestCuisinePrimaryTypeProductBoundaries(t *testing.T) {
 	for _, primaryType := range []string{"meal_delivery", "pizza_delivery"} {
 		if gIsMealPrimaryType(primaryType) {
 			t.Errorf("%s 是純外送類型，不得進入前往用餐候選", primaryType)
@@ -107,6 +107,43 @@ func TestGoogleMealPrimaryTypeExcludesDeliveryOnly(t *testing.T) {
 	}
 	if !gIsMealPrimaryType("meal_takeaway") {
 		t.Error("meal_takeaway 有可前往取餐的地點，仍應保留")
+	}
+	for _, primaryType := range []string{"dessert_restaurant", "ice_cream_shop", "dessert_shop"} {
+		if !gIsMealPrimaryType(primaryType) {
+			t.Errorf("擁有者決定納入甜點候選，%s 必須保留", primaryType)
+		}
+	}
+	for _, primaryType := range []string{"cafe", "bakery", "bar"} {
+		if gIsMealPrimaryType(primaryType) {
+			t.Errorf("未納入的邊界類型 %s 必須維持排除", primaryType)
+		}
+	}
+}
+
+func TestCuisineTagsFastFoodAndDessert(t *testing.T) {
+	tests := []struct {
+		name  string
+		types []string
+		want  []string
+	}{
+		{
+			name:  "麥當勞同時是速食與西式",
+			types: []string{"fast_food_restaurant", "hamburger_restaurant", "american_restaurant"},
+			want:  []string{"fast_food", "western"},
+		},
+		{name: "甜點餐廳", types: []string{"dessert_restaurant"}, want: []string{"dessert"}},
+		{name: "冰淇淋店", types: []string{"ice_cream_shop"}, want: []string{"dessert"}},
+		{name: "甜品店", types: []string{"dessert_shop"}, want: []string{"dessert"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tags := gTags(gPlace{Types: tc.types})
+			for _, want := range tc.want {
+				if !hasTag(tags, want) {
+					t.Errorf("types %v 應產生 %q，got %v", tc.types, want, tags)
+				}
+			}
+		})
 	}
 }
 

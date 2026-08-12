@@ -14,8 +14,6 @@ import (
 
 // Places API (New) Nearby Search。快取條款：place_id 永存、其餘欄位 30 天內刷新
 // （restaurants.fetched_at 把關，見 LoadCachedRestaurants）。
-// 注意：Google 無可靠清真認證訊號 → 不產 halal_certified；清真成員因 DietaryRequires
-// 的正向認證設計會排除全部 Google 結果 — 誠實行為，非 bug（ADR-0001 精神）。
 type googleProvider struct {
 	apiKey  string
 	baseURL string
@@ -29,7 +27,8 @@ func NewGooglePlacesProvider(apiKey, baseURL string) PlacesProvider {
 	return &googleProvider{apiKey, baseURL, &http.Client{Timeout: 10 * time.Second}}
 }
 
-// Google type → 本專案 cuisine tags（詞彙見 CONTEXT.md；未列入者不產 tag，只影響偏好不影響排除）
+// Google type → 本專案 cuisine tags（詞彙見 CONTEXT.md；未列入者不產 tag，只影響偏好不影響排除）。
+// hamburger_restaurant 維持 western，不一律推定為速食；麥當勞另有 fast_food_restaurant，會同時取得兩個 tag。
 var googleTypeTags = map[string][]string{
 	"japanese_restaurant":   {"japanese"},
 	"ramen_restaurant":      {"japanese", "ramen"},
@@ -43,7 +42,11 @@ var googleTypeTags = map[string][]string{
 	"italian_restaurant":    {"western"},
 	"french_restaurant":     {"western"},
 	"hamburger_restaurant":  {"western"},
+	"fast_food_restaurant":  {"fast_food"},
 	"pizza_restaurant":      {"western"},
+	"dessert_restaurant":    {"dessert"},
+	"ice_cream_shop":        {"dessert"},
+	"dessert_shop":          {"dessert"},
 	"breakfast_restaurant":  {"breakfast"},
 	"vegetarian_restaurant": {"vegetarian_friendly"},
 	"vegan_restaurant":      {"vegetarian_friendly"},
@@ -51,22 +54,25 @@ var googleTypeTags = map[string][]string{
 
 // Google 的 includedTypes 會比對所有 types；只有 primaryType 能表示場所的主要用途。
 // 這份正面表列只收能構成一餐的供餐場所：正餐場域、熟食專賣，及提供完整餐點的外帶。
-// cafe、bakery、bar（以及非 _restaurant 的甜點、飲料、零食類型）刻意排除；這是產品判斷，不是遺漏。
+// 2026-08-12 擁有者決定納入「吃冰／甜點」目的地，因此明列非 _restaurant 的甜品店與冰淇淋店。
+// cafe、bakery、bar 仍刻意排除；擁有者未要求納入，這是產品判斷，不是遺漏。
 // meal_delivery、pizza_delivery 也刻意排除：本產品是內用／前往取餐導向，會計算交通時間並導航。
 var googleMealPrimaryTypes = map[string]struct{}{
-	"bar_and_grill": {},
-	"bistro":        {},
-	"cafeteria":     {},
-	"deli":          {},
-	"diner":         {},
-	"food_court":    {},
-	"hot_dog_stand": {},
-	"kebab_shop":    {},
-	"meal_takeaway": {},
-	"noodle_shop":   {},
-	"salad_shop":    {},
-	"sandwich_shop": {},
-	"steak_house":   {},
+	"bar_and_grill":  {},
+	"bistro":         {},
+	"cafeteria":      {},
+	"deli":           {},
+	"dessert_shop":   {},
+	"diner":          {},
+	"food_court":     {},
+	"hot_dog_stand":  {},
+	"ice_cream_shop": {},
+	"kebab_shop":     {},
+	"meal_takeaway":  {},
+	"noodle_shop":    {},
+	"salad_shop":     {},
+	"sandwich_shop":  {},
+	"steak_house":    {},
 }
 
 // request 端 blocklist 只負責在 Google 套用 20 筆上限前提高名額效率，不是正確性判準。
