@@ -17,6 +17,9 @@ const proxy = {
 }
 
 export default defineConfig({
+  // GitHub Pages 是 project site（/FairBite/ 子路徑），相對 base 讓資產不綁死路徑；
+  // Vite 對 './' 有特例：dev 仍當成 '/'，只影響 build 產物。
+  base: './',
   plugins: [basicSsl(), react(), tailwindcss()],
   // host: 綁 0.0.0.0 讓同網段手機連得到；open: 啟動完成後自動開瀏覽器。
   // open 只會開 localhost（Vite 的 open 字串是 pathname 不是完整 URL），手機端仍需手動輸入區網 IP。

@@ -1,0 +1,30 @@
+# Render Blueprint：Go API。目前的正式服務是在 Dashboard 手動建的（New Web Service），
+# 本檔是那份設定的版控備份，重建服務時 New → Blueprint 指向這個 repo 即可還原。
+# sync: false 的變數不進版控，套用時由 Render 問你要填什麼。
+services:
+  - type: web
+    name: fairbite
+    runtime: go
+    plan: free
+    region: singapore
+    rootDir: server
+    buildCommand: go build -o app .
+    startCommand: ./app
+    healthCheckPath: /healthz
+    envVars:
+      # go.mod 是 1.25，Render 原生 builder 的預設版本可能較舊
+      - key: GO_VERSION
+        value: 1.25.0
+      # CORS 只吃單一來源，且不含路徑：GitHub Pages 的 origin 是 user site 根網域
+      - key: WEB_ORIGIN
+        value: https://ray910408.github.io
+      # Supabase → Project Settings → Database → Connection pooling 的字串
+      # （必須用 pooler，直連是 IPv6-only，Render free 連不到）
+      - key: SUPABASE_DB_URL
+        sync: false
+      # https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json
+      - key: SUPABASE_JWKS_URL
+        sync: false
+      # 留空則走 14 家 mock 餐廳
+      - key: GOOGLE_PLACES_API_KEY
+        sync: false

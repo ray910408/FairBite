@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+// HashRouter：GitHub Pages 是純靜態，/room/:id 深連結在 BrowserRouter 下會 404，
+// hash 路由不需要 404.html 轉址 hack。
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
 import { Spinner } from './components/icons'
@@ -39,12 +41,12 @@ function Guard({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/" element={<Guard><HomePage /></Guard>} />
         <Route path="/room/:id" element={<Guard><RoomPage /></Guard>} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   )
 }

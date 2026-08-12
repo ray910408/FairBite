@@ -2,7 +2,7 @@
 
 多人房間 + 條件過濾 + 加權可解釋機率 + 伺服器抽選。詞彙表見 `CONTEXT.md`，
 決策紀錄見 `docs/adr/`，三分鐘雙瀏覽器展示流程見 `docs/demo-script.md`，
-待辦與已知限制見 `TODOS.md`。（設計文件與 SDD ledger 在 `docs/superpowers/`，
+待辦與已知限制見 `TODOS.md`，上線部署步驟見 `docs/deploy.md`。（設計文件與 SDD ledger 在 `docs/superpowers/`，
 未納入版控，僅存在於本機工作目錄。）
 
 ## 架構
