@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(59);
+select plan(61);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -366,7 +366,9 @@ select ok(
 
 -- 0015：精確座標的 24 小時 TTL。freeze.go 只在凍結成立時整房刪座標，一直留在 lobby 的
 -- 房間（被放生、或每次搜尋都撞 422/502/零候選）走不到那條路徑，靠 create_room 順手掃。
--- 計齡看座標自己的 updated_at，不看房間的 created_at：老房間裡也會有剛送出的新座標。
+-- 計齡以整房的 max(updated_at) 為單位、整房一起刪：老房間裡也會有剛送出的新座標，
+-- 而逐列刪會留下「圓心含著已刪座標」的混合態（掃描不重算圓心，重算會把圓心跳到唯一的
+-- 新鮮座標上，等於把位置舊一點的成員踢出計算）。
 reset role;
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000c9', 'i@test.dev'),
@@ -408,13 +410,17 @@ set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000d0",
 select lives_ok($$select public.create_room(24.5, 120.5)$$, 'J 建新房，觸發 TTL 掃描');
 
 reset role;
+-- 這條的預期在第六輪翻面（原本斷言 I 那筆 25 小時前的座標被「單獨」掃掉）：
+-- 逐列刪會讓這間還開著的房間留下混合態——I 的座標沒了，rooms.center_* 卻仍是含著它算出
+-- 來的中位數，掃描不重算，房主下次搜尋拿到的還是那個舊聚合值。改成逐房 all-or-nothing 之
+-- 後，K 剛送出的新座標把整房年齡拉回新鮮，I 這筆舊座標就跟著整房一起留下。
 select is(
   (select count(*) from public.room_member_locations
     where room_id = (select id from ctx4)
       and user_id = '00000000-0000-0000-0000-0000000000c9')::int,
-  0, '超過 24 小時沒更新的座標被掃掉');
--- 這條才是逐列計齡的重點：房間本身超過 TTL，但 K 的座標是剛送出的，必須存活。
--- 改用 rooms.created_at 計齡會連它一起刪，之後 recompute_room_center 看不到 K，圓心算錯。
+  1, '老房間有新鮮座標：整房不清，那筆 25 小時前的舊座標也留著');
+-- 房間本身超過 TTL，但 K 的座標是剛送出的，必須存活。改用 rooms.created_at 計齡會連它一起
+-- 刪；join_room 的 on conflict 漏掉 updated_at = now() 也會讓整房年齡停在過去而一起被刪。
 select is(
   (select count(*) from public.room_member_locations
     where room_id = (select id from ctx4)
@@ -431,6 +437,25 @@ select is(
   (select count(*) from public.room_member_locations
     where room_id = (select id from ctx3))::int,
   2, '掃描當下就存在的新鮮房間，座標一列都沒少');
+
+-- 本輪的核心不變式，用同一間房、同樣兩列走完兩種狀態：上面那次掃描整房都留（K 是新鮮的），
+-- 現在把整房座標（含 K 那筆）一起放到 25 小時前再掃一次，兩列必須一起消失。只有「全在」與
+-- 「全沒了」兩種狀態，就不會出現「rooms.center_* 含著已刪座標」的不一致——全沒了的時候，
+-- center_* 剛好就是那批被刪座標算出來的聚合值，所以掃描不需要重算圓心。
+reset role;
+update public.room_member_locations set updated_at = now() - interval '25 hours'
+  where room_id = (select id from ctx4);
+
+-- 掃描跑在 create_room 寫入自己那列之前，所以 I 新開的這間不會掃到自己
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000c9","role":"authenticated"}';
+select lives_ok($$select public.create_room(24.9, 120.9)$$, 'I 另開一房，觸發第二次 TTL 掃描');
+
+reset role;
+select is(
+  (select count(*) from public.room_member_locations
+    where room_id = (select id from ctx4))::int,
+  0, '整房座標都過期：兩列一起清空，不留混合態');
 
 select * from finish();
 rollback;

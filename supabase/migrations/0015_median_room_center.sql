@@ -10,8 +10,9 @@ create table public.room_member_locations (
   user_id uuid not null references public.profiles(id) on delete cascade,
   lat double precision not null check (lat between -90 and 90),
   lng double precision not null check (lng between -180 and 180),
-  -- 座標自己的時間，給 create_room 的 TTL 掃描逐列計齡。房間年齡代表不了座標年齡：
-  -- 一間放了一天的 lobby 房間，成員隨時可能重新加入並送出幾分鐘前的新座標。
+  -- 座標自己的時間，給 create_room 的 TTL 掃描算整房年齡（max(updated_at)）。房間的
+  -- created_at 代表不了座標年齡：一間放了一天的 lobby 房間，成員隨時可能重新加入並
+  -- 送出幾分鐘前的新座標。
   updated_at timestamptz not null default now(),
   primary key (room_id, user_id)
 );
@@ -84,15 +85,34 @@ begin
   -- 不掃就是把每人一列的精確 GPS 無限期留著。做法照抄 join_room 清 join_attempts 那條。
   -- 只掛在 create_room、不掛 join_room：每一場都是從建房開始，這個呼叫點的涵蓋率已經夠，
   -- 少一個掃描點就少一份成本。
-  -- 計齡看座標自己的 updated_at，不看房間的 created_at：房間老不代表座標老。一間超過 24
-  -- 小時但還在 lobby 的房間，成員剛重新加入送出的座標是幾分鐘前的資料，用房間年齡去判就會
-  -- 把它一起掃掉，之後 recompute_room_center 看不到這個人，圓心算錯。逐列計齡之後，被掃掉
-  -- 的必定是真的超過 24 小時沒更新過的座標，倖存的必定是新鮮的，與所在房間的年齡無關。
+  -- 計齡以「整房的 max(updated_at)」為單位，整房一起刪，不逐列也不刪一半：
+  -- 1. 不看房間的 created_at：房間老不代表座標老。一間超過 24 小時但還在 lobby 的房間，
+  --    成員剛重新加入送出的座標是幾分鐘前的資料，用房間年齡去判就會把它一起掃掉，
+  --    之後 recompute_room_center 看不到這個人，圓心算錯。改看 max(updated_at)，那筆新
+  --    座標會把整房的年齡拉回新鮮，整房都不刪，新座標照樣存活。
+  -- 2. 不逐列刪：rooms.center_lat/center_lng 是「當時那批座標」算出來的中位數，掃描不會
+  --    重算。逐列刪會讓還開著的房間留下混合態——部分座標已刪，圓心卻仍是含著那些座標
+  --    算出來的值，房主下次搜尋經由 LoadRoom 拿到的還是這個舊聚合值，說好過期的座標其實
+  --    還在影響搜尋圓心。
+  -- 3. 也不改成「刪完重算圓心」：那會把只剩一個新鮮座標的房間圓心整個跳到那個人身上，
+  --    等於把還在房裡、只是位置舊一點的成員踢出計算。TTL 的本意是「不要無限期保留精確
+  --    GPS」，不是「這個人不算數了」。
+  -- 逐房 all-or-nothing 之後，一間房的座標集合只有「全在」或「全沒了」兩種狀態：全沒了時
+  -- center_* 剛好就是那批被刪座標算出來的聚合值，一致，不必重算；下一個人帶座標加入時
+  -- recompute_room_center 會從新集合重算，而空集合的 fallback 早就在（v_ref is null 就
+  -- return，圓心原地不動）。
+  -- 代價：活躍房間裡某個成員的舊座標不會被單獨清掉，得等整間房閒置滿 24 小時才一起清。
+  -- 這是刻意的取捨——那間房還活著，保留有正當性；真被放生之後整房會一起 purge。
   -- 24 小時：一場聚餐決策是幾分鐘到幾小時的事，24 小時遠超任何真實 session；
-  -- 撐過 TTL 都沒再更新過的座標，那個人的位置本來就已經過期。
-  -- ponytail: 全表掃描、無索引；資料量大了改成 room_member_locations(updated_at) 上的索引
-  -- 或獨立排程工作
-  delete from room_member_locations where updated_at < now() - interval '24 hours';
+  -- 整房撐過 TTL 都沒有人更新過座標，那間房的位置本來就已經過期。
+  -- ponytail: 全表掃描加 group by、無索引；資料量大了改成 room_member_locations(updated_at)
+  -- 上的索引或獨立排程工作
+  delete from room_member_locations
+   where room_id in (
+     select room_id from room_member_locations
+      group by room_id
+     having max(updated_at) < now() - interval '24 hours'
+   );
   insert into rooms (host_id, center_lat, center_lng)
   values (auth.uid(), p_lat, p_lng) returning id into v_room_id;
   insert into room_members (room_id, user_id) values (v_room_id, auth.uid());
@@ -136,8 +156,9 @@ begin
   if p_lat between -90 and 90 and p_lng between -180 and 180 then
     insert into room_member_locations (room_id, user_id, lat, lng)
     values (v_room_id, auth.uid(), p_lat, p_lng)
-    -- updated_at = now() 是 TTL 逐列計齡的前提：漏了它，重複加入的人座標時間永遠停在
-    -- 第一次，送出的新座標會被下一次 create_room 的掃描當成過期資料刪掉。
+    -- updated_at = now() 是 TTL 計齡的前提：漏了它，重複加入的人座標時間永遠停在第一次，
+    -- 老房間的 max(updated_at) 也就跟著停在過去，下一次 create_room 的掃描會把整房連同
+    -- 這筆剛送出的新座標一起刪掉。
     on conflict (room_id, user_id) do update
       set lat = excluded.lat, lng = excluded.lng, updated_at = now();
   else
