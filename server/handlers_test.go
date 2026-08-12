@@ -170,6 +170,29 @@ func (p radiusGrowthProvider) SearchNearby(ctx context.Context, _ float64, _ flo
 	return PlacesSearchResult{Restaurants: append([]Restaurant(nil), p.restaurants...)}, nil
 }
 
+// 重現「搜尋期間有成員帶座標加入 → 中位數圓心被挪走」的競態：副作用先改圓心，
+// 再回傳空結果（fail=true 時改回傳錯誤，走 provider 失敗 + 快取為空那條 502）。
+type centerMoveProvider struct {
+	pool   *pgxpool.Pool
+	roomID string
+	lat    float64
+	lng    float64
+	fail   bool
+}
+
+func (centerMoveProvider) Source() string { return "mock" }
+
+func (p centerMoveProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) (PlacesSearchResult, error) {
+	if _, err := p.pool.Exec(ctx, `update public.rooms set center_lat = $2, center_lng = $3 where id = $1`,
+		p.roomID, p.lat, p.lng); err != nil {
+		return PlacesSearchResult{}, err
+	}
+	if p.fail {
+		return PlacesSearchResult{}, fmt.Errorf("simulated outage")
+	}
+	return PlacesSearchResult{}, nil
+}
+
 type blockingProvider struct {
 	calls        atomic.Int32
 	firstStarted chan struct{}
@@ -314,6 +337,13 @@ func TestSearchBouncesWhenRadiusGrowsDuringProviderCall(t *testing.T) {
 		on conflict (room_id, user_id) do update set max_distance_m = 300`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
+	// 凍結時會刪除成員座標，但那個刪除在同一個 tx 內；本測試走的正是 rollback 路徑，
+	// 所以座標必須原封不動留著——否則房間還在 lobby，圓心卻已失去重算依據。
+	if _, err = pool.Exec(ctx, `insert into public.room_member_locations (room_id, user_id, lat, lng)
+		values ($1, $2, 25.0478, 121.5170)
+		on conflict (room_id, user_id) do update set lat = 25.0478, lng = 121.5170`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
 		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
@@ -342,6 +372,225 @@ func TestSearchBouncesWhenRadiusGrowsDuringProviderCall(t *testing.T) {
 	}
 	if w.Code != http.StatusConflict || body.Error != message || status != "lobby" {
 		t.Fatalf("搜尋半徑變大時應回 409 並 rollback 回 lobby：status %d body %s room.status %q", w.Code, w.Body.String(), status)
+	}
+	var locations int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from public.room_member_locations where room_id = $1`, roomID).Scan(&locations); err != nil {
+		t.Fatal(err)
+	}
+	if locations != 1 {
+		t.Fatalf("凍結 rollback 後成員座標必須跟著回滾留下，got %d 列", locations)
+	}
+}
+
+// 凍結成立後，房間永遠離不開 candidates 回 lobby，join_room 不會再收人，
+// recompute_room_center 也不會再被呼叫 —— 每位成員的精確 GPS 至此再無用途，
+// 而 repo 內沒有任何 production 刪房路徑，不在凍結時刪就是無限期留著。
+func TestSearchFreezeDeletesMemberLocations(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const (
+		hostID = "63636363-6363-6363-6363-636363636363"
+		roomID = "64646464-6464-6464-6464-646464646464"
+	)
+	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+		values ($1, 'location-purge@test.dev') on conflict do nothing`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `insert into public.rooms
+		(id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 25.0478, 121.5170)
+		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		values ($1, $2, 500, '["japanese"]', 2000, 'walking') on conflict do nothing`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `insert into public.room_member_locations (room_id, user_id, lat, lng)
+		values ($1, $2, 25.0478, 121.5170)
+		on conflict (room_id, user_id) do update set lat = 25.0478, lng = 121.5170`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+	})
+
+	var seeded int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from public.room_member_locations where room_id = $1`, roomID).Scan(&seeded); err != nil {
+		t.Fatal(err)
+	}
+	if seeded != 1 {
+		t.Fatalf("test precondition requires one seeded location row, got %d", seeded)
+	}
+
+	h := newTestApp(t, pool)
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("search: want 200 got %d body %s", w.Code, w.Body.String())
+	}
+
+	var remaining int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from public.room_member_locations where room_id = $1`, roomID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("凍結成功後成員精確座標應刪除，仍剩 %d 列", remaining)
+	}
+	// 圓心是凍結後唯一該留下的聚合值，不可被連帶清成 null。
+	var centerLat, centerLng float64
+	if err := pool.QueryRow(ctx,
+		`select coalesce(center_lat, 0), coalesce(center_lng, 0) from public.rooms where id = $1`,
+		roomID).Scan(&centerLat, &centerLng); err != nil {
+		t.Fatal(err)
+	}
+	if centerLat != 25.0478 || centerLng != 121.5170 {
+		t.Fatalf("刪除座標不可動到 rooms.center_*：got %v, %v", centerLat, centerLng)
+	}
+}
+
+// 成員在 SearchNearby 進行中帶座標加入 → 中位數圓心被挪走 → 舊圓心的搜尋回 0 筆。
+// 這兩條 early return 都在凍結交易之前，若照原樣回 422/502，使用者會被叫去
+// 「調整位置或縮小距離」，但真正該做的是再搜一次。
+func TestSearchBouncesWhenCenterMovesBeforeEmptyResult(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const (
+		hostID  = "67676767-6767-6767-6767-676767676767"
+		roomID  = "68686868-6868-6868-6868-686868686868"
+		message = "成員條件已於搜尋期間變更，請再按一次開始搜尋"
+	)
+	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+		values ($1, 'center-move-empty@test.dev') on conflict do nothing`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `insert into public.rooms
+		(id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 25.0478, 121.5170)
+		on conflict (id) do update set status = 'lobby', center_lat = 25.0478, center_lng = 121.5170`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		values ($1, $2, 500, '[]', 2000, 'walking')
+		on conflict (room_id, user_id) do update set max_distance_m = 2000`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+	})
+
+	// 台中：離舊圓心夠遠，確定不是浮點誤差等級的差異。
+	provider := centerMoveProvider{pool: pool, roomID: roomID, lat: 24.1477, lng: 120.6736}
+	h := newTestAppWithProvider(t, pool, provider)
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusConflict || body.Error != message {
+		t.Fatalf("圓心於搜尋期間變動且零結果時應回 409 而非 422：status %d body %s", w.Code, w.Body.String())
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "lobby" {
+		t.Fatalf("圓心變動的 409 走在凍結之前，房間必須還在 lobby：got %q", status)
+	}
+}
+
+func TestSearchBouncesWhenCenterMovesBeforeCacheMiss(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const (
+		hostID  = "69696969-6969-6969-6969-696969696969"
+		roomID  = "6a6a6a6a-6a6a-6a6a-6a6a-6a6a6a6a6a6a"
+		message = "成員條件已於搜尋期間變更，請再按一次開始搜尋"
+	)
+	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+		values ($1, 'center-move-502@test.dev') on conflict do nothing`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	// 快取圈外的座標（高雄）→ 30 天內快取為空，與 TestSearchNoCacheReturns502 同一組前提。
+	if _, err = pool.Exec(ctx, `insert into public.rooms
+		(id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 22.6273, 120.3014)
+		on conflict (id) do update set status = 'lobby', center_lat = 22.6273, center_lng = 120.3014`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		values ($1, $2, 500, '[]', 2000, 'walking')
+		on conflict (room_id, user_id) do update set max_distance_m = 2000`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+	})
+
+	// provider 失敗 + 舊圓心（高雄）快取為空 → 原本走 502；圓心已被挪走，該回 409。
+	provider := centerMoveProvider{pool: pool, roomID: roomID, lat: 25.0478, lng: 121.5170, fail: true}
+	h := newTestAppWithProvider(t, pool, provider)
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusConflict || body.Error != message {
+		t.Fatalf("圓心於搜尋期間變動且快取落空時應回 409 而非 502：status %d body %s", w.Code, w.Body.String())
 	}
 }
 

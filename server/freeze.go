@@ -59,5 +59,17 @@ func freezeAndLoadMembers(ctx context.Context, tx pgx.Tx, room *RoomRow, fetched
 		}
 		found = withinReloadedRadius
 	}
+	// 凍結成立 → 精確座標不再需要，就地刪除。房間離開 lobby 後 join_room（只吃 lobby）
+	// 不會再有人加入，而 recompute_room_center 全 repo 只有 join_room 一個 caller，
+	// 這些每人一列的精確 GPS 之後永遠不會再被讀；rooms.center_* 已保有需要的聚合值。
+	// 而 delete from rooms 只存在於測試，沒有 production 刪房路徑，不刪就是無限期留著。
+	// 必須在同一個 tx：上面每條錯誤路徑（ErrConflict、ErrMembersChanged）都由呼叫端的
+	// deferred rollback 把房間留在 lobby，刪除也得跟著回滾——否則房間還在 lobby 但座標
+	// 沒了，下一次搜尋的圓心就錯了。也因此這段只能放在所有檢查通過之後。
+	// 交叉檢查：日後若有人在 freeze 之後呼叫 recompute_room_center，空集合會走
+	// `if v_ref is null then return`（0015），圓心原地不動，不會被清成 null。
+	if _, err := tx.Exec(ctx, `delete from room_member_locations where room_id = $1`, room.ID); err != nil {
+		return nil, nil, fmt.Errorf("凍結清除成員座標: %w", err)
+	}
 	return members, found, nil
 }
