@@ -51,7 +51,7 @@ async function createAndJoinRoom(a: Page, b: Page) {
 async function setConditionsAndReady(page: Page, budget: number) {
   await page.getByRole('slider', { name: /每人預算上限/ }).fill(String(budget))
   await expect(page.getByText(`NT$${budget}`, { exact: true })).toBeVisible()
-  await page.getByRole('slider', { name: /可接受距離/ }).fill('3000')
+  await page.getByRole('slider', { name: /距離偏好/ }).fill('3000')
   await expect(page.getByText('3000 公尺', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '我準備好了' }).click()
   await expect(page.getByRole('button', { name: '已準備（點擊取消）' })).toBeVisible()
