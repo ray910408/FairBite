@@ -47,7 +47,13 @@ var googleTypeTags = map[string][]string{
 	"dessert_restaurant":    {"dessert"},
 	"ice_cream_shop":        {"dessert"},
 	"dessert_shop":          {"dessert"},
+	"sandwich_shop":         {"light_meal"},
+	"salad_shop":            {"light_meal"},
+	"deli":                  {"light_meal"},
+	"cafe":                  {"light_meal"},
+	"coffee_shop":           {"light_meal"},
 	"breakfast_restaurant":  {"breakfast"},
+	"brunch_restaurant":     {"breakfast"},
 	"vegetarian_restaurant": {"vegetarian_friendly"},
 	"vegan_restaurant":      {"vegetarian_friendly"},
 }
@@ -55,12 +61,16 @@ var googleTypeTags = map[string][]string{
 // Google 的 includedTypes 會比對所有 types；只有 primaryType 能表示場所的主要用途。
 // 這份正面表列只收能構成一餐的供餐場所：正餐場域、熟食專賣，及提供完整餐點的外帶。
 // 2026-08-12 擁有者決定納入「吃冰／甜點」目的地，因此明列非 _restaurant 的甜品店與冰淇淋店。
-// cafe、bakery、bar 仍刻意排除；擁有者未要求納入，這是產品判斷，不是遺漏。
+// 2026-08-12 擁有者再決定咖啡店算輕食，cafe/coffee_shop 一併納入並標 light_meal；
+// 已知代價：不供餐的純咖啡吧也會成為候選，這是擁有者接受的取捨，不是遺漏。
+// bakery、bar 仍刻意排除；擁有者未要求納入，這是產品判斷，不是遺漏。
 // meal_delivery、pizza_delivery 也刻意排除：本產品是內用／前往取餐導向，會計算交通時間並導航。
 var googleMealPrimaryTypes = map[string]struct{}{
 	"bar_and_grill":  {},
 	"bistro":         {},
+	"cafe":           {},
 	"cafeteria":      {},
+	"coffee_shop":    {},
 	"deli":           {},
 	"dessert_shop":   {},
 	"diner":          {},
@@ -139,7 +149,7 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int) (PlacesSearchResult, error) {
 	body, _ := json.Marshal(map[string]any{
 		// includedTypes 只擴大 Google 的召回範圍；正確性仍由 gIsMealPrimaryType 單一把關。
-		"includedTypes":        []string{"restaurant", "ice_cream_shop", "dessert_shop"},
+		"includedTypes":        []string{"restaurant", "ice_cream_shop", "dessert_shop", "cafe", "coffee_shop"},
 		"excludedPrimaryTypes": googleRequestExcludedPrimaryTypes,
 		"maxResultCount":       20, // API 上限
 		"languageCode":         "zh-TW",

@@ -23,4 +23,5 @@ var mockRestaurants = []Restaurant{
 	{PlaceID: "mock-012", Name: "藏壽司", PrimaryType: "sushi_restaurant", CuisineTags: []string{"japanese", "sushi", "seafood"}, PriceLevel: 2, Lat: 25.0490, Lng: 121.5165, Address: "中正區市民大道一段", Hours: daily([2]int{660, 1320}), Rating: 4.0},
 	{PlaceID: "mock-013", Name: "復興清粥小菜", PrimaryType: "restaurant", CuisineTags: []string{"taiwanese", "vegetarian_friendly"}, PriceLevel: 1, Lat: 25.0465, Lng: 121.5205, Address: "中正區忠孝東路一段", Hours: daily([2]int{0, 1440}), Rating: 4.0},
 	{PlaceID: "mock-014", Name: "站前甜品屋", PrimaryType: "dessert_restaurant", CuisineTags: []string{"dessert"}, PriceLevel: 1, Lat: 25.0476, Lng: 121.5168, Address: "中正區忠孝西路一段", Hours: daily([2]int{660, 1320}), Rating: 4.3},
+	{PlaceID: "mock-015", Name: "館前輕食吧", PrimaryType: "sandwich_shop", CuisineTags: []string{"light_meal"}, PriceLevel: 1, Lat: 25.0472, Lng: 121.5145, Address: "中正區館前路", Hours: daily([2]int{420, 1140}), Rating: 4.1},
 }

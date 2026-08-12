@@ -8,7 +8,7 @@ export const CUISINE_OPTIONS: [string, string][] = [
   ['taiwanese', '台式'], ['japanese', '日式'], ['korean', '韓式'],
   ['cantonese', '港式'], ['western', '西式'], ['fast_food', '速食'], ['indian', '印度'],
   ['sichuan', '川味'], ['hotpot', '火鍋'], ['seafood', '海鮮'], ['ramen', '拉麵'],
-  ['dessert', '甜點'],
+  ['dessert', '甜點'], ['light_meal', '輕食'], ['breakfast', '早午餐'],
 ]
 
 export const CUISINE_LABEL = Object.fromEntries(CUISINE_OPTIONS)
