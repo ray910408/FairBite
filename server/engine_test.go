@@ -229,7 +229,7 @@ func TestDistOverheadAndSlowest(t *testing.T) {
 // trace 是 room_candidates.weight_breakdown 的內容（db.go ReplaceCandidates 原樣 marshal
 // Candidate.Trace），也是 search/vote HTTP 回應裡的 trace（handlers.go resultJSON）。
 // 兩條路都對同房成員開放，而 distance/weather 的倍率與 reason 都是「候選到圓心距離」的
-// 單調確定性函數 → 反推 dist → 三角定位還原圓心 → 兩人房還原另一人的精確 GPS。
+// 單調確定性函數 → 反推 dist → 三家以上候選三角定位還原圓心 = 房主建房當下的精確位置。
 // 這裡釘住的是：所有圓心衍生的公開值都同源於「量化後的圓心」。
 //
 // 2026-08-12 翻面（其二）：上一輪這條測試釘的是「量化每個候選到圓心的距離」。reviewer 指出

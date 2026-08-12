@@ -100,12 +100,13 @@ const (
 	// 一律先把 in.CenterLat/CenterLng 捨入到網格點，再從那個點算距離，之後不對距離做任何
 	// 捨入（見 engine.go snapCenter）。
 	//
-	// 威脅模型：0015 把 rooms.center_lat/center_lng 收成欄級 grant，但 weight_breakdown 對
-	// 同房成員可讀（room_candidates 有 table-level SELECT grant + candidates_select policy），
-	// 而 distFactor/rainFactor 的倍率都是「候選到圓心距離」的單調確定性函數；成員的 transport
-	// （room_members 有 table-level SELECT grant）與候選的 lat/lng（0005 restaurants_select）
-	// 也都讀得到。全精度倍率 → 反推 dist → 三家以上候選三角定位出圓心 → 兩人房用
-	// other = 2*center - own 還原另一人的精確 GPS，欄級 grant 等於白鎖。
+	// 威脅模型：搜尋圓心就是房主建房當下的精確位置，0015 因此把 rooms.center_lat/center_lng
+	// 收成欄級 grant，同房成員讀不到。但 weight_breakdown 對同房成員可讀（room_candidates 有
+	// table-level SELECT grant + candidates_select policy），而 distFactor/rainFactor 的倍率都是
+	// 「候選到圓心距離」的單調確定性函數；成員的 transport（room_members 有 table-level SELECT
+	// grant）與候選的 lat/lng（0005 restaurants_select）也都讀得到。全精度倍率 → 反推 dist →
+	// 三家以上候選三角定位出圓心 = 房主的精確位置，欄級 grant 等於白鎖。
+	// 攻擊者門檻只是「拿到邀請碼並加入房間」，而邀請碼會被轉貼、截圖、群組外流。
 	//
 	// 只量化 trace 不夠：probability 同樣公開（room_candidates.probability、HTTP 回應、
 	// draws.probabilities），而它是 Score 的正規化，Score 又是各因素倍率的乘積。trace 裡
@@ -126,7 +127,7 @@ const (
 	// 約 212 公尺），距離權重因此可能比舊做法再偏一點。這是軟性偏好權重不是硬性過濾，接受。
 	// 硬性半徑過濾（handlers.go 的 provider fetch envelope、freeze.go 重濾）仍用真實圓心：
 	// 那條不是數值管道，改用量化圓心會讓候選集合與使用者設定的距離上限對不起來。SQL 端
-	// recompute_room_center 寫進 rooms.center_* 的也仍是真實圓心，量化只發生在 Go 引擎計分側。
+	// create_room 寫進 rooms.center_* 的也仍是真實圓心，量化只發生在 Go 引擎計分側。
 	//
 	// 代價二（倍率偏移量級）：取倍率對距離最敏感的情境（全員步行，TransportMetersPerMin 最小）：
 	//   distance：minutes = 0 + dist/75、frac = (minutes-5)/20、mult = 1.2 - 0.5*frac

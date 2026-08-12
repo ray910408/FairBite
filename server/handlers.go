@@ -308,34 +308,23 @@ func restaurantIDs(rs []Restaurant) []string {
 	return ids
 }
 
-func minimumMemberRadius(members []Member) int {
-	radius := members[0].MaxDistanceM
-	for _, member := range members[1:] {
-		if member.MaxDistanceM < radius {
-			radius = member.MaxDistanceM
-		}
+// averageMemberRadius：搜尋半徑取全員 max_distance_m 的平均（整數公尺，sum/len 截斷小數）。
+// 取平均而不是取最小值：最小值等於讓設得最緊的那一位獨自決定全房的搜尋圈，其他人的設定
+// 完全不算數——一個人填 300 公尺，全房就只看得到 300 公尺內的店。平均讓每個人的上限都
+// 對結果有貢獻，代價是它會超出某些成員的個人上限（距離仍在計分端以軟性權重反映，
+// 見 engine.go distFactor）。
+// 呼叫端保證 members 非空（handleSearch 的 len==0 回 500、freezeAndLoadMembers 回 error）。
+func averageMemberRadius(members []Member) int {
+	sum := 0
+	for _, member := range members {
+		sum += member.MaxDistanceM
 	}
-	return radius
+	return sum / len(members)
 }
 
-// 搜尋期間條件變動的統一回覆。三處共用同一個常數而非各自寫字面量：前端可能在比對字串，
-// 圓心變動與成員條件變動對 host 是同一件事（再按一次開始搜尋），訊息不可分岔。
+// 搜尋期間成員條件變動的統一回覆。抽成常數而非寫字面量：前端可能在比對字串，
+// 且 Go 測試以同一段文字釘住這條路徑。
 const searchConditionsChangedMessage = "成員條件已於搜尋期間變更，請再按一次開始搜尋"
-
-// 圓心自 0015 起在 lobby 是可變的：搜尋期間有成員帶座標加入就會重算中位數，把圓心挪走。
-// 凍結交易內已有同樣的比對（freeze.go），但 handleSearch 有兩條 early return 走在凍結
-// 之前——provider 失敗且快取為空的 502、零餐廳的 422——那裡拿到的空結果可能只是因為
-// 搜尋繞的是舊圓心。此時叫使用者「調整位置或縮小距離」是錯的診斷，該說的是圓心變了、
-// 再搜一次。所以這不是多餘的重複查詢，是那兩條 early return 唯一的圓心檢查。
-func roomCenterMoved(ctx context.Context, pool *pgxpool.Pool, room RoomRow) (bool, error) {
-	var centerLat, centerLng float64
-	if err := pool.QueryRow(ctx,
-		`select coalesce(center_lat, 0), coalesce(center_lng, 0) from rooms where id = $1`,
-		room.ID).Scan(&centerLat, &centerLng); err != nil {
-		return false, err
-	}
-	return centerLat != room.CenterLat || centerLng != room.CenterLng, nil
-}
 
 func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider, inFlight *sync.Map) {
 	ctx := r.Context()
@@ -359,9 +348,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
 		return
 	}
-	fetchedRadius := minimumMemberRadius(members)
-	// Provider fetch envelope 採 call-time 成員最小距離；tx 內重讀若縮小，會在 Evaluate 前重濾。
-	// 若期間放寬，既有 fetch envelope 只會 under-fetch，不會錯誤納入更遠餐廳。
+	fetchedRadius := averageMemberRadius(members)
+	// Provider fetch envelope 採 call-time 成員平均距離；tx 內重讀若縮小，會在 Evaluate 前重濾。
+	// 若期間放寬，既有 fetch envelope 只會 under-fetch，不會錯誤納入更遠餐廳（freeze.go 回 409）。
 	searchResult, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, fetchedRadius)
 	found := searchResult.Restaurants
 	degraded := false
@@ -375,14 +364,6 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		isGoogle := places.Source() == "google"
 		found, err = LoadCachedRestaurants(ctx, pool, room.CenterLat, room.CenterLng, fetchedRadius, isGoogle)
 		if err != nil || len(found) == 0 {
-			// 快取也繞的是舊圓心，圓心若已被挪走，「沒有可用的快取」是錯的診斷。
-			if moved, centerErr := roomCenterMoved(ctx, pool, room); centerErr != nil {
-				// 檢查本身失敗不遮蔽原本的錯誤，照常回 502。
-				log.Printf("center-moved check failed: %v", centerErr)
-			} else if moved {
-				jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
-				return
-			}
 			jsonError(w, http.StatusBadGateway, "餐廳搜尋失敗，且沒有可用的快取資料，請稍後再試")
 			return
 		}
@@ -433,16 +414,6 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	// 「附近根本沒資料」和「有資料但全被條件排除」是兩種不同的死路，
 	// 混成同一個 422 會叫使用者去放寬條件卻永遠沒用 — 分流才誠實
 	if len(found) == 0 {
-		// 零筆也可能只是因為搜尋繞的是舊圓心（成員在 SearchNearby 期間帶座標加入）。
-		// 這條檢查必須自己做一次，不能靠 SearchNearby 之後的單一檢查：那樣從檢查點到
-		// 這裡之間仍有殘留窗口，422 又會回到誤導使用者去調整位置的老路。
-		if moved, centerErr := roomCenterMoved(ctx, pool, room); centerErr != nil {
-			// 檢查本身失敗不遮蔽原本的結果，照常回 422。
-			log.Printf("center-moved check failed: %v", centerErr)
-		} else if moved {
-			jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		jsonOK(w, map[string]any{
