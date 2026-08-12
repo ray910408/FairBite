@@ -164,10 +164,23 @@ func gServer(t *testing.T, fail1st bool) *httptest.Server {
 			t.Errorf("FieldMask missing places.primaryType: %q", r.Header.Get("X-Goog-FieldMask"))
 		}
 		var requestBody struct {
+			IncludedTypes        []string `json:"includedTypes"`
 			ExcludedPrimaryTypes []string `json:"excludedPrimaryTypes"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
 			t.Errorf("decode request body: %v", err)
+		}
+		included := make(map[string]bool, len(requestBody.IncludedTypes))
+		for _, placeType := range requestBody.IncludedTypes {
+			included[placeType] = true
+		}
+		if len(requestBody.IncludedTypes) != 3 {
+			t.Errorf("request includedTypes = %v, want exactly restaurant, ice_cream_shop, dessert_shop", requestBody.IncludedTypes)
+		}
+		for _, placeType := range []string{"restaurant", "ice_cream_shop", "dessert_shop"} {
+			if !included[placeType] {
+				t.Errorf("request includedTypes missing %q: %v", placeType, requestBody.IncludedTypes)
+			}
 		}
 		excluded := make(map[string]bool, len(requestBody.ExcludedPrimaryTypes))
 		for _, primaryType := range requestBody.ExcludedPrimaryTypes {

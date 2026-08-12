@@ -116,6 +116,23 @@ func TestCuisineOptionsGoogleGapIsPinned(t *testing.T) {
 	}
 }
 
+// Mock provider 是本機開發、demo 與 E2E 的預設路徑；每個料理選項都必須能實際命中。
+// 預期缺口刻意釘為空集合，新增選項時不可再靜默漏掉對應的 mock tag。
+func TestCuisineOptionsMockGapIsPinned(t *testing.T) {
+	wantGap := []string{}
+	mock := mockProducibleTags()
+	gap := []string{}
+	for _, key := range webOptionKeys(t, "CUISINE_OPTIONS") {
+		if !mock[key] {
+			gap = append(gap, key)
+		}
+	}
+	sort.Strings(gap)
+	if !reflect.DeepEqual(gap, wantGap) {
+		t.Errorf("CUISINE_OPTIONS 的 mock 缺口 = %v，want %v；若是刻意缺口，請更新此測試並註明理由", gap, wantGap)
+	}
+}
+
 // DIETARY_OPTIONS 與 tag 不是 1:1：只有 DietaryRequires 子集（目前僅 vegetarian）
 // 要求餐廳具備正向認證 tag，才有「adapter 產得出來」的語意；
 // no_beef/no_pork 是負向衝突排除，不需要任何 tag 被產出，故不在本檢查範圍。

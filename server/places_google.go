@@ -138,7 +138,8 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 
 func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int) (PlacesSearchResult, error) {
 	body, _ := json.Marshal(map[string]any{
-		"includedTypes":        []string{"restaurant"},
+		// includedTypes 只擴大 Google 的召回範圍；正確性仍由 gIsMealPrimaryType 單一把關。
+		"includedTypes":        []string{"restaurant", "ice_cream_shop", "dessert_shop"},
 		"excludedPrimaryTypes": googleRequestExcludedPrimaryTypes,
 		"maxResultCount":       20, // API 上限
 		"languageCode":         "zh-TW",

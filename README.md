@@ -35,7 +35,7 @@ flowchart TB
   H --> E --> D
   H --> P
   P -->|"有 GOOGLE_PLACES_API_KEY"| GP
-  P -->|"未設：13 家 mock"| C
+  P -->|"未設：14 家 mock"| C
   GP -->|"失敗 → 降級改用快取 + 前端橫幅"| C
   C --> H
   H -->|"pgxpool（服務身分，不受 RLS 限制）"| T
@@ -134,4 +134,4 @@ npm run e2e
 
 E2E 尚未接入 CI，因為 CI 需額外編排整套 local stack；`TODOS.md` 保留後續 CI 編排評估。
 
-未設定 `GOOGLE_PLACES_API_KEY` 時使用台北車站周邊 13 家 mock 餐廳；設定後即切換至 Google Places provider。
+未設定 `GOOGLE_PLACES_API_KEY` 時使用台北車站周邊 14 家 mock 餐廳；設定後即切換至 Google Places provider。

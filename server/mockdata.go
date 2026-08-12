@@ -22,4 +22,5 @@ var mockRestaurants = []Restaurant{
 	{PlaceID: "mock-011", Name: "早安美芝城", PrimaryType: "breakfast_restaurant", CuisineTags: []string{"breakfast", "taiwanese", "fast_food"}, PriceLevel: 0, Lat: 25.0485, Lng: 121.5140, Address: "大同區太原路", Hours: daily([2]int{330, 840}), Rating: 3.9},
 	{PlaceID: "mock-012", Name: "藏壽司", PrimaryType: "sushi_restaurant", CuisineTags: []string{"japanese", "sushi", "seafood"}, PriceLevel: 2, Lat: 25.0490, Lng: 121.5165, Address: "中正區市民大道一段", Hours: daily([2]int{660, 1320}), Rating: 4.0},
 	{PlaceID: "mock-013", Name: "復興清粥小菜", PrimaryType: "restaurant", CuisineTags: []string{"taiwanese", "vegetarian_friendly"}, PriceLevel: 1, Lat: 25.0465, Lng: 121.5205, Address: "中正區忠孝東路一段", Hours: daily([2]int{0, 1440}), Rating: 4.0},
+	{PlaceID: "mock-014", Name: "站前甜品屋", PrimaryType: "dessert_restaurant", CuisineTags: []string{"dessert"}, PriceLevel: 1, Lat: 25.0476, Lng: 121.5168, Address: "中正區忠孝西路一段", Hours: daily([2]int{660, 1320}), Rating: 4.3},
 }
