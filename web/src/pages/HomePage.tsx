@@ -136,7 +136,11 @@ export default function HomePage() {
     setError('')
     setBusy(true)
     try {
-      const { data, error } = await supabase.rpc('join_room', { p_code: code })
+      // 座標拿不到就送 null：人照樣加得進來，只是不列入圓心中位數（migration 0015）
+      const pos = await getPosition(navigator.geolocation).catch(() => null)
+      const { data, error } = await supabase.rpc('join_room', {
+        p_code: code, p_lat: pos?.lat ?? null, p_lng: pos?.lng ?? null,
+      })
       if (error || !data) {
         setError(error?.message?.includes('頻繁')
           ? '嘗試過於頻繁，請稍後再試'
@@ -167,7 +171,7 @@ export default function HomePage() {
         <section className="card animate-rise space-y-3 bg-linear-to-b from-brand-soft to-surface">
           <h1 className="text-2xl font-bold tracking-tight">開一場聚餐決策</h1>
           <p className="text-sm text-fg-muted">
-            以你現在的位置為中心建立房間，把邀請碼給大家，各自設好條件就能開始搜尋。
+            先以你的位置開房，把邀請碼給大家。每個人帶著自己的位置加入後，搜尋圓心會落在全員的中位數。
           </p>
           <button onClick={createRoom} disabled={busy} className="btn btn-primary w-full">
             {busy && <Spinner className="h-5 w-5" />}

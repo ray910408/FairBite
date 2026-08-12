@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(32);
+select plan(37);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -239,6 +239,36 @@ select is(
   (select count(*) from public.dining_history
     where user_id = '00000000-0000-0000-0000-0000000000a1' and room_id is null)::int,
   1, '刪房後同席紀錄仍在，room_id 轉為 null');
+
+-- 0015：搜尋圓心 = 全員位置的中位數（房主的位置只是 n=1 的特例）
+reset role;
+insert into auth.users (id, email) values
+  ('00000000-0000-0000-0000-0000000000d4', 'd@test.dev'),
+  ('00000000-0000-0000-0000-0000000000e5', 'e@test.dev');
+
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}';
+select lives_ok($$select public.create_room(25.0, 121.5)$$, 'D 建房');
+create temp table ctx2 as
+  select id, code from public.rooms where host_id = '00000000-0000-0000-0000-0000000000d4';
+
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000e5","role":"authenticated"}';
+select isnt(
+  (select public.join_room((select code from ctx2), 25.5, 121.75)), null,
+  'E 帶著自己的座標加入');
+select throws_ok(
+  $$select count(*) from public.room_member_locations$$,
+  '42501', null,
+  'room_member_locations 對 authenticated 無任何 grant：座標不外流給同房成員');
+
+-- 座標刻意選 2 的冪次組合，中位數在 double 下可精確表示，不用容差比較
+reset role;
+select is(
+  (select center_lat from public.rooms where id = (select id from ctx2)),
+  25.25::double precision, '圓心緯度取全員中位數，不再釘在房主身上');
+select is(
+  (select center_lng from public.rooms where id = (select id from ctx2)),
+  121.625::double precision, '圓心經度取全員中位數');
 
 select * from finish();
 rollback;

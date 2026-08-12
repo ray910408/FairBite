@@ -16,7 +16,7 @@ var ErrMembersChanged = errors.New("member conditions changed during search")
 // 凍結 room 欄位、0003 擴充 guard 至 exploration、0005 is_room_lobby_locked 與
 // rooms→members 的鎖序、0006 join_room 對 rooms 的 for update。
 // 本函式在同一交易內：轉場 lobby→candidates（取得 room row lock、凍結生效）→
-// 鎖序一致地重讀 exploration 與成員（LoadMembersForUpdate 的 order by user_id 即鎖序 pin）→
+// 鎖序一致地重讀 exploration、圓心與成員（LoadMembersForUpdate 的 order by user_id 即鎖序 pin）→
 // 對照 call-time fetchedRadius 收斂半徑：放大代表 fetch envelope under-fetch，回
 // ErrMembersChanged 讓 host 重搜（deferred rollback 留在 lobby）；縮小則就地重濾 found。
 // 成功時就地更新 room.Exploration 並回傳權威成員與存活的 found。
@@ -25,9 +25,17 @@ func freezeAndLoadMembers(ctx context.Context, tx pgx.Tx, room *RoomRow, fetched
 		// ErrConflict 原樣透傳，呼叫端據以回 409。
 		return nil, nil, err
 	}
-	// exploration 在 lobby 仍可變，鎖定後重讀；center_* 由 guard 永凍毋需重讀
-	if err := tx.QueryRow(ctx, `select exploration from rooms where id = $1`, room.ID).Scan(&room.Exploration); err != nil {
+	// exploration 與 center_* 在 lobby 都可變（0015：新成員帶座標加入會重算中位數圓心），鎖定後重讀
+	var centerLat, centerLng float64
+	if err := tx.QueryRow(ctx,
+		`select exploration, coalesce(center_lat, 0), coalesce(center_lng, 0) from rooms where id = $1`,
+		room.ID).Scan(&room.Exploration, &centerLat, &centerLng); err != nil {
 		return nil, nil, fmt.Errorf("凍結重讀 exploration: %w", err)
+	}
+	// 圓心被搜尋期間加入的成員挪走：已抓到的餐廳是繞舊圓心的 envelope，重濾也救不回來，
+	// 和半徑放寬同樣處置——回 ErrMembersChanged 讓 host 重搜。
+	if centerLat != room.CenterLat || centerLng != room.CenterLng {
+		return nil, nil, ErrMembersChanged
 	}
 	members, err := LoadMembersForUpdate(ctx, tx, room.ID)
 	if err != nil {
