@@ -186,10 +186,13 @@ func gServer(t *testing.T, fail1st bool) *httptest.Server {
 		for _, placeType := range requestBody.IncludedTypes {
 			included[placeType] = true
 		}
-		if len(requestBody.IncludedTypes) != 5 {
-			t.Errorf("request includedTypes = %v, want exactly restaurant, ice_cream_shop, dessert_shop, cafe, coffee_shop", requestBody.IncludedTypes)
+		if len(requestBody.IncludedTypes) != 8 {
+			t.Errorf("request includedTypes = %v, want exactly restaurant, ice_cream_shop, dessert_shop, cafe, coffee_shop, sandwich_shop, salad_shop, deli", requestBody.IncludedTypes)
 		}
-		for _, placeType := range []string{"restaurant", "ice_cream_shop", "dessert_shop", "cafe", "coffee_shop"} {
+		for _, placeType := range []string{
+			"restaurant", "ice_cream_shop", "dessert_shop", "cafe", "coffee_shop",
+			"sandwich_shop", "salad_shop", "deli",
+		} {
 			if !included[placeType] {
 				t.Errorf("request includedTypes missing %q: %v", placeType, requestBody.IncludedTypes)
 			}

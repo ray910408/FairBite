@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(56);
+select plan(59);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -366,30 +366,60 @@ select ok(
 
 -- 0015：精確座標的 24 小時 TTL。freeze.go 只在凍結成立時整房刪座標，一直留在 lobby 的
 -- 房間（被放生、或每次搜尋都撞 422/502/零候選）走不到那條路徑，靠 create_room 順手掃。
+-- 計齡看座標自己的 updated_at，不看房間的 created_at：老房間裡也會有剛送出的新座標。
 reset role;
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000c9', 'i@test.dev'),
-  ('00000000-0000-0000-0000-0000000000d0', 'j@test.dev');
+  ('00000000-0000-0000-0000-0000000000d0', 'j@test.dev'),
+  ('00000000-0000-0000-0000-0000000000e1', 'k@test.dev');
 
 set local role authenticated;
 set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000c9","role":"authenticated"}';
 select lives_ok($$select public.create_room(24.0, 120.0)$$, 'I 建房，稍後假裝它被放生');
+-- 房號要在房主身分下抓：rooms 的 RLS 讓非成員讀不到這一列，K 自己 select 會拿到 null
+create temp table ctx4 as
+  select id, code from public.rooms where host_id = '00000000-0000-0000-0000-0000000000c9';
 
--- rooms 的 UPDATE 欄級 grant 只開 exploration，created_at 要 postgres 身分才改得動
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000e1","role":"authenticated"}';
+select isnt(
+  (select public.join_room((select code from ctx4), 24.1, 120.1)), null,
+  'K 加入 I 的房間');
+
+-- 房間與整間房的座標（含 K 的）一起放到 25 小時前。房間本身也要放老，這才是 reviewer 指出的
+-- 真實情境「老 lobby 房間 + 剛送出的新座標」；只放老座標的話，改回用 rooms.created_at 計齡
+-- 會因為房間還新而一列都不刪，下面那條關鍵斷言就擋不住這個退化。
+-- rooms 的 UPDATE 欄級 grant 只開 exploration，room_member_locations 沒開任何 authenticated
+-- grant，兩張表都要 postgres 身分才改得動
 reset role;
 update public.rooms set created_at = now() - interval '25 hours'
-  where host_id = '00000000-0000-0000-0000-0000000000c9';
+  where id = (select id from ctx4);
+update public.room_member_locations set updated_at = now() - interval '25 hours'
+  where room_id = (select id from ctx4);
 
+-- K 在這間老房間裡重新加入、送出新座標：on conflict 分支要把 updated_at 推回 now()。
+-- 少了那行，K 的座標時間永遠停在第一次加入，下面「新鮮座標存活」那條就會紅。
 set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000e1","role":"authenticated"}';
+select isnt(
+  (select public.join_room((select code from ctx4), 24.2, 120.2)), null,
+  'K 重新加入老房間，送出新座標');
+
 set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000d0","role":"authenticated"}';
 select lives_ok($$select public.create_room(24.5, 120.5)$$, 'J 建新房，觸發 TTL 掃描');
 
 reset role;
 select is(
   (select count(*) from public.room_member_locations
-    where room_id = (select id from public.rooms
-                      where host_id = '00000000-0000-0000-0000-0000000000c9'))::int,
-  0, '放生超過 24 小時的房間，其成員精確座標已被掃掉');
+    where room_id = (select id from ctx4)
+      and user_id = '00000000-0000-0000-0000-0000000000c9')::int,
+  0, '超過 24 小時沒更新的座標被掃掉');
+-- 這條才是逐列計齡的重點：房間本身超過 TTL，但 K 的座標是剛送出的，必須存活。
+-- 改用 rooms.created_at 計齡會連它一起刪，之後 recompute_room_center 看不到 K，圓心算錯。
+select is(
+  (select count(*) from public.room_member_locations
+    where room_id = (select id from ctx4)
+      and user_id = '00000000-0000-0000-0000-0000000000e1')::int,
+  1, '老房間裡剛更新過的座標存活');
 select is(
   (select count(*) from public.room_member_locations
     where room_id = (select id from public.rooms

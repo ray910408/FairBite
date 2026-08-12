@@ -148,8 +148,11 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 
 func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int) (PlacesSearchResult, error) {
 	body, _ := json.Marshal(map[string]any{
-		// includedTypes 只擴大 Google 的召回範圍；正確性仍由 gIsMealPrimaryType 單一把關。
-		"includedTypes":        []string{"restaurant", "ice_cream_shop", "dessert_shop", "cafe", "coffee_shop"},
+		// includedTypes 只擴大 Google 的召回範圍；正確性仍由 gIsMealPrimaryType 單一把關，
+		// 多列幾個類型不會放寬正確性閘門。反過來，沒列進來的類型只要店家 types 裡沒有
+		// restaurant 就會被這道 request 端過濾擋掉，永遠進不了候選——所以映射到 light_meal
+		// 與 dessert 的非 _restaurant 類型全部要列。
+		"includedTypes":        []string{"restaurant", "ice_cream_shop", "dessert_shop", "cafe", "coffee_shop", "sandwich_shop", "salad_shop", "deli"},
 		"excludedPrimaryTypes": googleRequestExcludedPrimaryTypes,
 		"maxResultCount":       20, // API 上限
 		"languageCode":         "zh-TW",
