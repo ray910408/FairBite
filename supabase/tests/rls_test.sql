@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(47);
+select plan(51);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -335,6 +335,34 @@ select is(
 select is(
   (select center_lng from public.rooms where id = (select id from ctx2)),
   121.5::double precision, '圓心退回只剩 D 的位置（經度）');
+
+-- 0015：跨反子午線的房間。逐維中位數直接算會給出 0（圓心從換日線跳到格林威治），
+-- 但 179.999 與 -179.999 這兩人實際只相距約 222 公尺，穩穩在搜尋半徑內——
+-- 這是正常房間不是病態輸入，所以圓心必須落在換日線上。
+reset role;
+insert into auth.users (id, email) values
+  ('00000000-0000-0000-0000-0000000000a7', 'g@test.dev'),
+  ('00000000-0000-0000-0000-0000000000b8', 'h@test.dev');
+
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000a7","role":"authenticated"}';
+select lives_ok($$select public.create_room(60.0, 179.999)$$, 'G 在換日線西側建房');
+create temp table ctx3 as
+  select id, code from public.rooms where host_id = '00000000-0000-0000-0000-0000000000a7';
+
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000b8","role":"authenticated"}';
+select isnt(
+  (select public.join_room((select code from ctx3), 60.5, -179.999)), null,
+  'H 在換日線東側加入');
+
+reset role;
+select is(
+  (select center_lat from public.rooms where id = (select id from ctx3)),
+  60.25::double precision, '緯度沒有環繞問題，中位數照算');
+-- 179.999 不是 2 的冪次，平移與折回會累積浮點誤差，經度用容差比而不是 is()
+select ok(
+  abs((select center_lng from public.rooms where id = (select id from ctx3)) - (-180)) < 1e-9,
+  '圓心經度折回換日線（-180），不是逐維中位數的 0');
 
 select * from finish();
 rollback;

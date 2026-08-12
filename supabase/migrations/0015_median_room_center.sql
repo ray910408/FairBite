@@ -32,22 +32,39 @@ grant select (id, code, host_id, status, exploration, created_at)
 
 -- ponytail: 逐維中位數（lat 算一次、lng 算一次），不是幾何中位數；偶數人數 percentile_cont
 -- 會內插，兩人時剛好等於連線中點。要真幾何中位數得跑 Weiszfeld 迭代，這裡不值得。
--- ponytail: 逐維中位數也不處理反子午線 —— lng 179 與 -179 會算成 0，圓心跑到格林威治。
--- 天花板：room_members.max_distance_m 的 CHECK 上限是 20000 公尺，跨反子午線的房間代表
--- 成員彼此相距約兩萬公里，搜尋圈永遠罩不到任何人，這個產品情境下不存在。
--- 升級時機：距離上限放寬到跨洋級別、或真要支援跨半球的房間。屆時把 lng 改成環形中位數
--- （轉成單位向量取角度，或以任一成員的 lng 為基準把其他人平移進 ±180 內算完再折回），
--- lat 維持現狀即可（緯度沒有環繞問題）。
-create or replace function public.recompute_room_center(p_room_id uuid)
-returns void language sql security definer set search_path = public as $$
-  update rooms r
-     set center_lat = c.lat, center_lng = c.lng
-    from (select percentile_cont(0.5) within group (order by lat) as lat,
-                 percentile_cont(0.5) within group (order by lng) as lng
-            from room_member_locations where room_id = p_room_id) c
-   where r.id = p_room_id and c.lat is not null;
+-- 經度是環形的，逐維中位數直接套上去會在反子午線崩掉：lng 179.999 與 -179.999 的算術
+-- 中位數是 0，圓心從換日線跳到格林威治。而那兩人實際只相距約 222 公尺，穩穩落在預設
+-- 搜尋半徑內——這不是「成員相距兩萬公里」的病態輸入，是換日線兩側一條街的正常房間。
+-- 解法是參考經度平移：取任一成員的 lng 當基準，把其他人的 lng 平移進基準的 ±180 內，
+-- 取完中位數再折回 [-180, 180)。lat 沒有環繞問題，維持原樣。
+
+-- 把差值映射進 [-180, 180) 的純數學小函式（359.998 -> -0.002、-359.998 -> 0.002、180 -> -180）。
+-- 不用 % 運算子：Postgres 的取模對 double precision 沒有實作，floor() 就夠。
+-- 只在下面的 definer function 內部呼叫，照慣例不對外開。
+create or replace function public.wrap180(d double precision)
+returns double precision language sql immutable as $$
+  select d - 360 * floor((d + 180) / 360);
 $$;
--- 只由下面兩支 definer function 內部呼叫（definer 內 current_user 已是 owner），不對外開
+revoke execute on function public.wrap180(double precision) from anon, public;
+
+create or replace function public.recompute_room_center(p_room_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare v_ref double precision; v_lat double precision; v_lng double precision;
+begin
+  -- order by user_id 只為了讓基準有決定性：同一組成員永遠平移到同一個基準，
+  -- 圓心不會隨掃描順序在等價解之間跳動。
+  select lng into v_ref from room_member_locations
+   where room_id = p_room_id order by user_id limit 1;
+  -- 空集合就原地不動（原本由 where ... and c.lat is not null 守著，語意不變）
+  if v_ref is null then return; end if;
+  select percentile_cont(0.5) within group (order by lat),
+         percentile_cont(0.5) within group (order by v_ref + wrap180(lng - v_ref))
+    into v_lat, v_lng
+    from room_member_locations where room_id = p_room_id;
+  update rooms set center_lat = v_lat, center_lng = wrap180(v_lng) where id = p_room_id;
+end $$;
+-- 只由下面的 join_room 內部呼叫（definer 內 current_user 已是 owner），不對外開。
+-- create_room 不呼叫：n=1 的中位數就是房主自己，直接寫 center_* 即可。
 revoke execute on function public.recompute_room_center from anon, public;
 
 -- create_room：房主的座標同時進 location 表。單人中位數就是房主自己，
