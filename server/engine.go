@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -235,7 +236,13 @@ func travelMinutes(m Member, distM float64) float64 {
 }
 
 func distFactor(r Restaurant, in EngineInput) TraceEntry {
-	dist := Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng)
+	return distFactorAt(Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng), in)
+}
+
+// distFactorAt：距離已算好的版本。dist 抽成參數是為了讓 publicEntry 能用量化距離重算出
+// 對外的 trace。reason 字串也一併吃這個 dist——它是比倍率更好用的旁通道（原本
+// 「平均交通約 %.0f 分鐘」把距離洩漏到分鐘級，步行約 ±80 公尺），必須和倍率同源才有意義。
+func distFactorAt(dist float64, in EngineInput) TraceEntry {
 	var sumMult, sumMin, worstMin float64
 	worstTransport := in.Members[0].Transport
 	for _, m := range in.Members {
@@ -260,10 +267,15 @@ func distFactor(r Restaurant, in EngineInput) TraceEntry {
 }
 
 func rainFactor(r Restaurant, in EngineInput) TraceEntry {
+	return rainFactorAt(Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng), in)
+}
+
+// rainFactorAt：同 distFactorAt，dist 抽成參數供 publicEntry 用量化距離重算。
+// 這裡的倍率同樣是圓心衍生的——雨天步行懲罰整條都是 dist 的函數。
+func rainFactorAt(dist float64, in EngineInput) TraceEntry {
 	if in.Weather == nil || in.Weather.RainMM < RainThresholdMM {
 		return TraceEntry{Mult: 1.0}
 	}
-	dist := Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng)
 	var sum float64
 	walkers := 0
 	for _, m := range in.Members {
@@ -423,6 +435,34 @@ func recencyFactor(r Restaurant, in EngineInput) TraceEntry {
 
 var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor, exposureFactor, rainFactor, timeSlotFactor}
 
+// publicEntry：trace 對外的版本。trace 有兩個出口——db.go ReplaceCandidates 原樣 marshal
+// 進 room_candidates.weight_breakdown，以及 handlers.go resultJSON 直接放進 HTTP 回應——
+// 兩者都只讀 Candidate.Trace，所以在這裡換掉就兩條都涵蓋，不必在各出口各改一次。
+// 圓心衍生的因素改用量化距離重算，其餘原樣；計分在 Evaluate 裡已先吃過全精度倍率（見
+// TraceDistGridM 的威脅模型與網格推算）。
+//
+// 關鍵：兩個因素必須共用同一個量化「距離」，不能各自在倍率空間四捨五入。各自取 0.1 的話，
+// 換算回距離是 300 公尺（distance）與 375 公尺（weather）兩張錯開的網格，兩者交集在
+// 1500 公尺的最小公倍數內細分出 37.5 公尺寬的格子（邊界落在 525 / 562.5 / 825 / 937.5 …），
+// 殘餘不確定性剩不到八分之一，量化等於白做。共用 snapTraceDist(dist) 之後，對外的一切
+// 都是同一個量化值的函數，殘餘不確定性恆等於網格寬度。
+//
+// 新增任何用到 in.CenterLat/CenterLng 的因素時必須一併加進來，否則又開一條旁通道。
+func publicEntry(e TraceEntry, r Restaurant, in EngineInput) TraceEntry {
+	if e.Factor != "distance" && e.Factor != "weather" {
+		return e
+	}
+	d := snapTraceDist(Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng))
+	if e.Factor == "distance" {
+		return distFactorAt(d, in)
+	}
+	return rainFactorAt(d, in)
+}
+
+func snapTraceDist(d float64) float64 {
+	return math.Round(d/TraceDistGridM) * TraceDistGridM
+}
+
 func Evaluate(in EngineInput) EngineResult {
 	var res EngineResult
 	survivors := make([]Restaurant, 0, len(in.Restaurants))
@@ -446,8 +486,9 @@ func Evaluate(in EngineInput) EngineResult {
 			if e.Factor == "" { // 未知資料可保持 neutral，且不產生虛構 trace。
 				continue
 			}
+			// 計分吃全精度倍率，量化只發生在對外的 trace：機率不受量化污染
 			c.Score *= e.Mult
-			c.Trace = append(c.Trace, e)
+			c.Trace = append(c.Trace, publicEntry(e, r, in))
 		}
 		res.Kept = append(res.Kept, c)
 	}

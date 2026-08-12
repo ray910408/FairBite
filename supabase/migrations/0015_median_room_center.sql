@@ -105,8 +105,34 @@ begin
   -- 這是刻意的取捨——那間房還活著，保留有正當性；真被放生之後整房會一起 purge。
   -- 24 小時：一場聚餐決策是幾分鐘到幾小時的事，24 小時遠超任何真實 session；
   -- 整房撐過 TTL 都沒有人更新過座標，那間房的位置本來就已經過期。
-  -- ponytail: 全表掃描加 group by、無索引；資料量大了改成 room_member_locations(updated_at)
-  -- 上的索引或獨立排程工作
+  -- 掃描與 join_room 的座標更新必須序列化，否則剛送出的新座標會被誤刪：READ COMMITTED 下
+  -- 單靠一條 DELETE 是不夠的。DELETE 以自己的快照選出「看起來過期」的 room_id 集合，同時
+  -- join_room 對其中一間房 upsert 了新座標；DELETE 卡在該列的 row lock，等 upsert commit 後
+  -- 做 EPQ 重檢——但重檢的謂詞只有 room_id in (那個集合)，集合來自舊快照，於是剛更新的新
+  -- 座標照樣被刪。那位成員從此不在中位數裡，圓心算錯，而且是靜默的。
+  -- 解法照既有鎖序（rooms → room_members/locations，見 0005 與 0006 的註解）先鎖 rooms，
+  -- 鎖到之後再重新評估集合：
+  -- 1. order by id 不可省：兩個並發的 create_room 掃到重疊集合時，沒有決定性鎖序會互鎖。
+  --    LockRows 在計畫樹上位於 Sort 之上，鎖是照排序後的順序取的。
+  -- 2. 鎖到 rooms 列之後，join_room 對那些房間的 select ... for update 會被擋住，下面那條
+  --    DELETE 的子查詢（READ COMMITTED 每條 statement 取新快照）看到的 max(updated_at)
+  --    才是穩定的；若期間有人剛更新過，重新評估就不會再選中那間房。
+  -- 3. 反向順序（已持有 rooms 鎖的 join_room 讓這裡等）也安全：join_room 不 UPDATE rooms
+  --    那一列，所以沒有 EPQ 重檢的問題，等到鎖之後 DELETE 的新快照就會看到新的 updated_at。
+  -- 4. 鎖序與 join_room 一致（rooms 先於 locations），不會與凍結交易的鎖序衝突。
+  -- 前提是「所有 room_member_locations 的寫入都在 rooms 的 row lock 底下」：join_room 先
+  -- select ... for update 才 upsert/delete，create_room 寫的是自己剛 insert 的新房，
+  -- freeze.go 走凍結交易，recompute_room_center 只讀。新增寫入點時要維持這個前提。
+  -- ponytail: 全表掃描加 group by、掃兩次、無索引；資料量大了改成
+  -- room_member_locations(updated_at) 上的索引或獨立排程工作
+  perform 1 from rooms
+   where id in (
+     select room_id from room_member_locations
+      group by room_id
+     having max(updated_at) < now() - interval '24 hours'
+   )
+   order by id
+   for update;
   delete from room_member_locations
    where room_id in (
      select room_id from room_member_locations

@@ -96,6 +96,26 @@ const (
 	DistBestMin   = 5.0  // ≤5 分鐘 → DistMultBest
 	DistWorstMin  = 25.0 // ≥25 分鐘 → DistMultWorst
 
+	// TraceDistGridM：trace 對外公開時，「候選到圓心距離」的量化網格（公尺）。
+	// 0015 把 rooms.center_lat/center_lng 收成欄級 grant，但 weight_breakdown 對同房成員
+	// 可讀（room_candidates 有 table-level SELECT grant + candidates_select policy），而
+	// distFactor/rainFactor 的倍率都是該距離的單調確定性函數；成員的 transport（room_members
+	// 有 table-level SELECT grant）與候選的 lat/lng（0005 restaurants_select）也都讀得到。
+	// 全精度倍率 → 反推 dist → 三家以上候選三角定位出圓心 → 兩人房用 other = 2*center - own
+	// 還原另一人的精確 GPS，欄級 grant 等於白鎖。對策見 engine.go publicEntry：公開值一律用
+	// 量化到本網格的距離重算，計分仍走全精度，機率不變。
+	//
+	// 網格寬度由實際常數推算，取倍率對距離最敏感的情境（全員步行，TransportMetersPerMin 最小）：
+	//   distance：minutes = 0 + dist/75、frac = (minutes-5)/20、mult = 1.2 - 0.5*frac
+	//             → d(mult)/d(dist) = -0.5/(20*75) = -1/3000 ≈ 3.33e-4 每公尺
+	//   weather ：minutes = dist/75、frac = (minutes-5)/15、mult = 1 - 0.3*frac
+	//             → d(mult)/d(dist) = -0.3/(15*75) = -1/3750 ≈ 2.67e-4 每公尺
+	// transit（1/8000）與 driving（1/20000）敏感度更低，混合交通取平均後也介於兩者之間，
+	// 殘餘不確定性只會比全員步行更大。
+	// 300 公尺網格 ⇒ 最壞情況下 distance 倍率階距 0.10、weather 0.08，殘餘不確定性
+	// = 網格寬度 = 300 公尺（單一候選）。
+	TraceDistGridM = 300.0
+
 	ClosingSoonMinutes  = 60
 	ClosingSoonMult     = 0.6
 	VoteBoostPerUp      = 0.10 // 每張贊成票 +10%（spec §5 投票加成）
