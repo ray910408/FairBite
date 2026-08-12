@@ -40,6 +40,12 @@ func cors(next http.Handler) http.Handler {
 }
 
 func main() {
+	location, err := loadAppLocationAfterDotenv()
+	if err != nil {
+		log.Fatal(err)
+	}
+	appLocation = location
+
 	verifier, err := NewVerifier()
 	if err != nil {
 		log.Fatal(err)

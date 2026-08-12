@@ -36,7 +36,7 @@ func TestGoogleHoursMultiDayClosingAtMidnight(t *testing.T) {
 }
 
 const gSample = `{"places":[
-  {"id":"gp-1","displayName":{"text":"山本壽司"},
+  {"id":"gp-1","primaryType":"sushi_restaurant","displayName":{"text":"山本壽司"},
    "businessStatus":"OPERATIONAL",
    "types":["sushi_restaurant","japanese_restaurant","restaurant"],
    "priceLevel":"PRICE_LEVEL_MODERATE",
@@ -45,47 +45,70 @@ const gSample = `{"places":[
    "servesVegetarianFood":false,
    "regularOpeningHours":{"periods":[
      {"open":{"day":1,"hour":11,"minute":0},"close":{"day":1,"hour":22,"minute":30}}]}},
-  {"id":"gp-2","displayName":{"text":"深夜食堂"},
+  {"id":"gp-2","primaryType":"restaurant","displayName":{"text":"深夜食堂"},
    "types":["restaurant"],
    "location":{"latitude":25.0480,"longitude":121.5175},
    "formattedAddress":"台北市中正區某路2號","rating":4.0,
    "servesVegetarianFood":true,
    "regularOpeningHours":{"periods":[
      {"open":{"day":5,"hour":17,"minute":0},"close":{"day":6,"hour":2,"minute":0}}]}},
-  {"id":"gp-3","displayName":{"text":"全日早餐"},
+  {"id":"gp-3","primaryType":"breakfast_restaurant","displayName":{"text":"全日早餐"},
    "types":["breakfast_restaurant"],
    "priceLevel":"PRICE_LEVEL_INEXPENSIVE",
    "location":{"latitude":25.0470,"longitude":121.5160},
    "formattedAddress":"台北市中正區某路3號","rating":3.9,
    "regularOpeningHours":{"periods":[{"open":{"day":0,"hour":0,"minute":0}}]}},
-  {"id":"gp-4","displayName":{"text":"週末長時段餐廳"},
+  {"id":"gp-4","primaryType":"restaurant","displayName":{"text":"週末長時段餐廳"},
    "types":["restaurant"],
    "priceLevel":"PRICE_LEVEL_INEXPENSIVE",
    "location":{"latitude":25.0472,"longitude":121.5162},
    "formattedAddress":"台北市中正區某路4號","rating":4.1,
    "regularOpeningHours":{"periods":[
      {"open":{"day":5,"hour":10,"minute":0},"close":{"day":6,"hour":12,"minute":0}}]}},
-  {"id":"gp-5","displayName":{"text":"跨週末餐廳"},
+  {"id":"gp-5","primaryType":"restaurant","displayName":{"text":"跨週末餐廳"},
     "types":["restaurant"],
     "priceLevel":"PRICE_LEVEL_INEXPENSIVE",
     "location":{"latitude":25.0474,"longitude":121.5164},
     "formattedAddress":"台北市中正區某路5號","rating":4.2,
     "regularOpeningHours":{"periods":[
       {"open":{"day":5,"hour":17,"minute":0},"close":{"day":0,"hour":2,"minute":0}}]}},
-  {"id":"gp-6","displayName":{"text":"營業時間未知餐廳"},
+  {"id":"gp-6","primaryType":"restaurant","displayName":{"text":"營業時間未知餐廳"},
     "types":["restaurant"],
     "priceLevel":"PRICE_LEVEL_INEXPENSIVE",
     "location":{"latitude":25.0476,"longitude":121.5166},
     "formattedAddress":"台北市中正區某路6號","rating":4.0},
-  {"id":"gp-7","displayName":{"text":"Closed Restaurant"},
+  {"id":"gp-7","primaryType":"restaurant","displayName":{"text":"Closed Restaurant"},
     "businessStatus":"CLOSED_PERMANENTLY",
     "types":["restaurant"],
     "priceLevel":"PRICE_LEVEL_INEXPENSIVE",
     "location":{"latitude":25.0477,"longitude":121.5167},
     "formattedAddress":"Taipei","rating":4.8,
     "regularOpeningHours":{"periods":[
-      {"open":{"day":1,"hour":0,"minute":0}}]}}
+      {"open":{"day":1,"hour":0,"minute":0}}]}},
+  {"id":"gp-hypermarket","primaryType":"hypermarket","displayName":{"text":"唐吉訶德式商場"},
+    "types":["hypermarket","restaurant"],
+    "location":{"latitude":25.0479,"longitude":121.5171}},
+  {"id":"gp-hotel","primaryType":"hotel","displayName":{"text":"附餐旅館"},
+    "types":["hotel","restaurant"],
+    "location":{"latitude":25.0481,"longitude":121.5172}},
+  {"id":"gp-noodle","primaryType":"noodle_shop","displayName":{"text":"麵線店"},
+    "types":["noodle_shop","restaurant"],
+    "location":{"latitude":25.0482,"longitude":121.5173}},
+  {"id":"gp-missing-primary","displayName":{"text":"未知主類型"},
+    "types":["restaurant"],
+    "location":{"latitude":25.0483,"longitude":121.5174}}
 ]}`
+
+func TestGoogleMealPrimaryTypeExcludesDeliveryOnly(t *testing.T) {
+	for _, primaryType := range []string{"meal_delivery", "pizza_delivery"} {
+		if gIsMealPrimaryType(primaryType) {
+			t.Errorf("%s 是純外送類型，不得進入前往用餐候選", primaryType)
+		}
+	}
+	if !gIsMealPrimaryType("meal_takeaway") {
+		t.Error("meal_takeaway 有可前往取餐的地點，仍應保留")
+	}
+}
 
 func gServer(t *testing.T, fail1st bool) *httptest.Server {
 	t.Helper()
@@ -100,6 +123,27 @@ func gServer(t *testing.T, fail1st bool) *httptest.Server {
 		if !strings.Contains(r.Header.Get("X-Goog-FieldMask"), "places.businessStatus") {
 			t.Errorf("FieldMask missing places.businessStatus: %q", r.Header.Get("X-Goog-FieldMask"))
 		}
+		if !strings.Contains(r.Header.Get("X-Goog-FieldMask"), "places.primaryType") {
+			t.Errorf("FieldMask missing places.primaryType: %q", r.Header.Get("X-Goog-FieldMask"))
+		}
+		var requestBody struct {
+			ExcludedPrimaryTypes []string `json:"excludedPrimaryTypes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		excluded := make(map[string]bool, len(requestBody.ExcludedPrimaryTypes))
+		for _, primaryType := range requestBody.ExcludedPrimaryTypes {
+			excluded[primaryType] = true
+		}
+		for _, primaryType := range []string{
+			"hypermarket", "hotel", "store", "supermarket", "department_store",
+			"convenience_store", "grocery_store", "shopping_mall",
+		} {
+			if !excluded[primaryType] {
+				t.Errorf("request excludedPrimaryTypes missing %q: %v", primaryType, requestBody.ExcludedPrimaryTypes)
+			}
+		}
 		if fail1st && calls.Add(1) == 1 {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -113,13 +157,30 @@ func TestGoogleProviderMapping(t *testing.T) {
 	srv := gServer(t, false)
 	defer srv.Close()
 	p := NewGooglePlacesProvider("test-key", srv.URL)
-	rs, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000)
-	if err != nil || len(rs) != 7 {
-		t.Fatalf("want 7 restaurants, got %d err %v", len(rs), err)
+	result, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000)
+	if err != nil || len(result.Restaurants) != 8 {
+		t.Fatalf("want 8 restaurants, got %d err %v", len(result.Restaurants), err)
 	}
 	byPID := map[string]Restaurant{}
-	for _, r := range rs {
+	for _, r := range result.Restaurants {
 		byPID[r.PlaceID] = r
+	}
+	for _, excludedID := range []string{"gp-hypermarket", "gp-hotel", "gp-missing-primary"} {
+		if _, ok := byPID[excludedID]; ok {
+			t.Errorf("primaryType 不符合餐廳正面表列的 %s 必須排除", excludedID)
+		}
+	}
+	if _, ok := byPID["gp-noodle"]; !ok {
+		t.Error("primaryType=noodle_shop 必須保留")
+	}
+	rejected := make(map[string]bool, len(result.RejectedPlaceIDs))
+	for _, rejectedID := range result.RejectedPlaceIDs {
+		rejected[rejectedID] = true
+	}
+	for _, rejectedID := range []string{"gp-hypermarket", "gp-hotel", "gp-missing-primary"} {
+		if !rejected[rejectedID] {
+			t.Errorf("client 端拒絕的 %s 必須回傳供快取逐出：%v", rejectedID, result.RejectedPlaceIDs)
+		}
 	}
 	closed, ok := byPID["gp-7"]
 	if !ok || !closed.Closed {
@@ -134,6 +195,9 @@ func TestGoogleProviderMapping(t *testing.T) {
 	}
 	if sushi.Name != "山本壽司" || sushi.PriceLevel != 2 || sushi.Rating != 4.3 {
 		t.Errorf("基本欄位對映錯誤：%+v", sushi)
+	}
+	if sushi.PrimaryType != "sushi_restaurant" {
+		t.Errorf("primaryType 必須帶入快取判斷欄位，got %q", sushi.PrimaryType)
 	}
 	if !hasTag(sushi.CuisineTags, "japanese") || !hasTag(sushi.CuisineTags, "sushi") {
 		t.Errorf("types 應映到 japanese+sushi：%v", sushi.CuisineTags)
@@ -207,8 +271,8 @@ func TestGoogleProviderRetries(t *testing.T) {
 	srv := gServer(t, true)
 	defer srv.Close()
 	p := NewGooglePlacesProvider("test-key", srv.URL)
-	rs, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000)
-	if err != nil || len(rs) == 0 {
+	result, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000)
+	if err != nil || len(result.Restaurants) == 0 {
 		t.Fatalf("第一次 500 應重試成功：err %v", err)
 	}
 }

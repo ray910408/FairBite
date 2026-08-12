@@ -1,9 +1,72 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestLoadAppLocationAfterDotenv(t *testing.T) {
+	writeEnv := func(t *testing.T, value string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), ".env")
+		if err := os.WriteFile(path, []byte("APP_TZ="+value+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	unsetAppTZ := func(t *testing.T) {
+		t.Helper()
+		old, existed := os.LookupEnv("APP_TZ")
+		if err := os.Unsetenv("APP_TZ"); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if existed {
+				_ = os.Setenv("APP_TZ", old)
+			} else {
+				_ = os.Unsetenv("APP_TZ")
+			}
+		})
+	}
+
+	t.Run("先載入 dotenv 再解析 APP_TZ", func(t *testing.T) {
+		unsetAppTZ(t)
+		location, err := loadAppLocationAfterDotenv(writeEnv(t, "Asia/Tokyo"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if location.String() != "Asia/Tokyo" {
+			t.Fatalf("location = %q, want Asia/Tokyo", location)
+		}
+	})
+
+	t.Run("真環境變數優先於 dotenv", func(t *testing.T) {
+		t.Setenv("APP_TZ", "Asia/Taipei")
+		location, err := loadAppLocationAfterDotenv(writeEnv(t, "Asia/Tokyo"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if location.String() != "Asia/Taipei" {
+			t.Fatalf("location = %q, want Asia/Taipei", location)
+		}
+	})
+
+	t.Run("dotenv 的無效時區必須回傳錯誤", func(t *testing.T) {
+		unsetAppTZ(t)
+		if _, err := loadAppLocationAfterDotenv(writeEnv(t, "Invalid/NotAZone")); err == nil {
+			t.Fatal("invalid APP_TZ must fail")
+		}
+	})
+
+	t.Run("真環境變數的無效時區必須回傳錯誤", func(t *testing.T) {
+		t.Setenv("APP_TZ", "Invalid/NotAZone")
+		if _, err := loadAppLocationAfterDotenv(writeEnv(t, "Asia/Taipei")); err == nil {
+			t.Fatal("invalid environment APP_TZ must fail")
+		}
+	})
+}
 
 func TestNowInAppTZUsesTaipeiWallClockForOpeningHours(t *testing.T) {
 	taipei, err := time.LoadLocation("Asia/Taipei")

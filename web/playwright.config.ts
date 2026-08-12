@@ -6,5 +6,8 @@ export default defineConfig({
   timeout: 90_000,
   expect: { timeout: 10_000 },
   workers: 1, // 兩個 context 共享一個測試房間，不平行
-  use: { baseURL: 'http://localhost:5173' },
+  use: {
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'https://localhost:5173',
+    ignoreHTTPSErrors: true, // 本地 Vite 使用 @vitejs/plugin-basic-ssl 的自簽憑證
+  },
 })
