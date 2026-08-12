@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(51);
+select plan(56);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -363,6 +363,44 @@ select is(
 select ok(
   abs((select center_lng from public.rooms where id = (select id from ctx3)) - (-180)) < 1e-9,
   '圓心經度折回換日線（-180），不是逐維中位數的 0');
+
+-- 0015：精確座標的 24 小時 TTL。freeze.go 只在凍結成立時整房刪座標，一直留在 lobby 的
+-- 房間（被放生、或每次搜尋都撞 422/502/零候選）走不到那條路徑，靠 create_room 順手掃。
+reset role;
+insert into auth.users (id, email) values
+  ('00000000-0000-0000-0000-0000000000c9', 'i@test.dev'),
+  ('00000000-0000-0000-0000-0000000000d0', 'j@test.dev');
+
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000c9","role":"authenticated"}';
+select lives_ok($$select public.create_room(24.0, 120.0)$$, 'I 建房，稍後假裝它被放生');
+
+-- rooms 的 UPDATE 欄級 grant 只開 exploration，created_at 要 postgres 身分才改得動
+reset role;
+update public.rooms set created_at = now() - interval '25 hours'
+  where host_id = '00000000-0000-0000-0000-0000000000c9';
+
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000d0","role":"authenticated"}';
+select lives_ok($$select public.create_room(24.5, 120.5)$$, 'J 建新房，觸發 TTL 掃描');
+
+reset role;
+select is(
+  (select count(*) from public.room_member_locations
+    where room_id = (select id from public.rooms
+                      where host_id = '00000000-0000-0000-0000-0000000000c9'))::int,
+  0, '放生超過 24 小時的房間，其成員精確座標已被掃掉');
+select is(
+  (select count(*) from public.room_member_locations
+    where room_id = (select id from public.rooms
+                      where host_id = '00000000-0000-0000-0000-0000000000d0'))::int,
+  1, '新房自己的座標還在');
+-- 上一條擋不到「where 寫壞成整表刪」——新房的座標是掃描跑完之後才插進去的。
+-- 掃描當下就已存在的新鮮房間（G/H 那間）才是誤刪的照妖鏡。
+select is(
+  (select count(*) from public.room_member_locations
+    where room_id = (select id from ctx3))::int,
+  2, '掃描當下就存在的新鮮房間，座標一列都沒少');
 
 select * from finish();
 rollback;

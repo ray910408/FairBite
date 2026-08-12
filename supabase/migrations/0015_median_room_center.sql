@@ -75,6 +75,21 @@ returns uuid language plpgsql security definer set search_path = public as $$
 declare v_room_id uuid;
 begin
   if auth.uid() is null then raise exception '未登入'; end if;
+  -- 精確座標的 TTL。freeze.go 只在凍結成立（lobby -> candidates）那一刻整房刪座標，
+  -- 涵蓋不到「一直留在 lobby」的房間：被放生的、或每次搜尋都撞 422/502/零候選的。
+  -- 那種房間是常態不是例外，而全 repo 沒有 TTL、沒有 cron、沒有 production 刪房路徑，
+  -- 不掃就是把每人一列的精確 GPS 無限期留著。做法照抄 join_room 清 join_attempts 那條。
+  -- 只掛在 create_room、不掛 join_room：每一場都是從建房開始，這個呼叫點的涵蓋率已經夠，
+  -- 少一個掃描點就少一份成本。room_member_locations 沒有自己的時間欄，年齡看 rooms.created_at。
+  -- 24 小時：一場聚餐決策是幾分鐘到幾小時的事，24 小時遠超任何真實 session；
+  -- 撐過 TTL 還留在 lobby 的房間，其成員位置本來就已經過期。
+  -- 已知副作用（不是 bug）：超過 TTL 的舊 lobby 房間之後若又有人加入，舊座標已被掃掉，
+  -- recompute_room_center 只看得到新加入者，圓心會跳到他身上。對一個放了一天的房間
+  -- 這反而是比較合理的結果——其他人一天前的位置早就不準了。
+  -- ponytail: 全表掃描、無索引；資料量大了改成 rooms(created_at) 上的索引或獨立排程工作
+  delete from room_member_locations l
+   using rooms r
+   where l.room_id = r.id and r.created_at < now() - interval '24 hours';
   insert into rooms (host_id, center_lat, center_lng)
   values (auth.uid(), p_lat, p_lng) returning id into v_room_id;
   insert into room_members (room_id, user_id) values (v_room_id, auth.uid());
