@@ -66,6 +66,27 @@ func mockProducibleTags() map[string]bool {
 	return out
 }
 
+func containsOption(options []string, want string) bool {
+	for _, option := range options {
+		if option == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestProductVocabularyIncludesFastFoodAndDessertWithoutHalal(t *testing.T) {
+	cuisines := webOptionKeys(t, "CUISINE_OPTIONS")
+	for _, want := range []string{"fast_food", "dessert"} {
+		if !containsOption(cuisines, want) {
+			t.Errorf("CUISINE_OPTIONS 必須包含 %q", want)
+		}
+	}
+	if containsOption(webOptionKeys(t, "DIETARY_OPTIONS"), "halal") {
+		t.Error("DIETARY_OPTIONS 不得再提供 Google 無可靠認證訊號的 halal")
+	}
+}
+
 // 地板：每個 CUISINE_OPTIONS key 至少要有一個 adapter 產得出來——
 // 提供永遠選不到結果的選項，會靜默拖累該成員的滿足度 EMA（永無 pref hit）。
 func TestCuisineOptionsProducibleByAtLeastOneAdapter(t *testing.T) {
@@ -95,12 +116,29 @@ func TestCuisineOptionsGoogleGapIsPinned(t *testing.T) {
 	}
 }
 
-// DIETARY_OPTIONS 與 tag 不是 1:1：只有 DietaryRequires 子集（vegetarian/halal）
+// Mock provider 是本機開發、demo 與 E2E 的預設路徑；每個料理選項都必須能實際命中。
+// 預期缺口刻意釘為空集合，新增選項時不可再靜默漏掉對應的 mock tag。
+func TestCuisineOptionsMockGapIsPinned(t *testing.T) {
+	wantGap := []string{}
+	mock := mockProducibleTags()
+	gap := []string{}
+	for _, key := range webOptionKeys(t, "CUISINE_OPTIONS") {
+		if !mock[key] {
+			gap = append(gap, key)
+		}
+	}
+	sort.Strings(gap)
+	if !reflect.DeepEqual(gap, wantGap) {
+		t.Errorf("CUISINE_OPTIONS 的 mock 缺口 = %v，want %v；若是刻意缺口，請更新此測試並註明理由", gap, wantGap)
+	}
+}
+
+// DIETARY_OPTIONS 與 tag 不是 1:1：只有 DietaryRequires 子集（目前僅 vegetarian）
 // 要求餐廳具備正向認證 tag，才有「adapter 產得出來」的語意；
 // no_beef/no_pork 是負向衝突排除，不需要任何 tag 被產出，故不在本檢查範圍。
 func TestDietaryRequiredTagsCoverage(t *testing.T) {
 	google, mock := googleProducibleTags(), mockProducibleTags()
-	var googleGap []string
+	googleGap := []string{}
 	for _, key := range webOptionKeys(t, "DIETARY_OPTIONS") {
 		req, strict := DietaryRequires[key]
 		if !strict {
@@ -113,11 +151,10 @@ func TestDietaryRequiredTagsCoverage(t *testing.T) {
 			googleGap = append(googleGap, key)
 		}
 	}
-	// halal→halal_certified 是已知 Google 缺口（places_google.go 檔頭已註明：無可靠清真
-	// 認證訊號，清真成員在 Google provider 下會全排除）。釘住，只能刻意變動；
-	// 去留是產品決策，見 TODOS.md。
+	// 2026-08-12 產品決策移除清真：Google 無可靠認證訊號，保留選項只會讓所有結果被排除。
+	// 因此 Google 缺口現在必須是空集合；日後新增 strict 選項仍需由 adapter 產出認證 tag。
 	sort.Strings(googleGap)
-	if !reflect.DeepEqual(googleGap, []string{"halal"}) {
-		t.Errorf("DietaryRequires 的 Google 缺口 = %v，want [halal]——缺口變動必須是刻意決策", googleGap)
+	if !reflect.DeepEqual(googleGap, []string{}) {
+		t.Errorf("DietaryRequires 的 Google 缺口 = %v，want []——缺口變動必須是刻意決策", googleGap)
 	}
 }
