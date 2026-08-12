@@ -170,6 +170,33 @@ func (p radiusGrowthProvider) SearchNearby(ctx context.Context, _ float64, _ flo
 	return PlacesSearchResult{Restaurants: append([]Restaurant(nil), p.restaurants...)}, nil
 }
 
+// 重現「搜尋期間有新成員加入 → 全員平均 max_distance_m 被推大」的競態：副作用先加入一位
+// 上限高於現有平均的成員，再回傳空結果（fail=true 時改回傳錯誤，走 provider 失敗 + 快取為空
+// 那條 502）。兩條都在凍結之前 early return，freeze.go 的比對救不到。
+type memberJoinProvider struct {
+	pool      *pgxpool.Pool
+	roomID    string
+	userID    string
+	distanceM int
+	fail      bool
+}
+
+func (memberJoinProvider) Source() string { return "mock" }
+
+func (p memberJoinProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) (PlacesSearchResult, error) {
+	if _, err := p.pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
+		values ($1, $2, 500, '[]', '[]', $3, 'walking')
+		on conflict (room_id, user_id) do update set max_distance_m = $3`,
+		p.roomID, p.userID, p.distanceM); err != nil {
+		return PlacesSearchResult{}, err
+	}
+	if p.fail {
+		return PlacesSearchResult{}, fmt.Errorf("simulated outage")
+	}
+	return PlacesSearchResult{}, nil
+}
+
 type blockingProvider struct {
 	calls        atomic.Int32
 	firstStarted chan struct{}
@@ -370,6 +397,144 @@ func TestSearchBouncesWhenRadiusGrowsDuringProviderCall(t *testing.T) {
 	}
 	if w.Code != http.StatusConflict || body.Error != message || status != "lobby" {
 		t.Fatalf("搜尋半徑變大時應回 409 並 rollback 回 lobby：status %d body %s room.status %q", w.Code, w.Body.String(), status)
+	}
+}
+
+func TestSearchBouncesWhenMemberJoinsBeforeZeroResults(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const (
+		hostID     = "63636363-6363-6363-6363-636363636363"
+		roomID     = "64646464-6464-6464-6464-646464646464"
+		joinerID   = "65656565-6565-6565-6565-656565656565"
+		message    = "成員條件已於搜尋期間變更，請再按一次開始搜尋"
+		joinerDist = 3000
+	)
+	for id, email := range map[string]string{hostID: "join-422-host@test.dev", joinerID: "join-422-guest@test.dev"} {
+		if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+			values ($1, $2) on conflict do nothing`, id, email); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = pool.Exec(ctx, `insert into public.rooms
+		(id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 25.0478, 121.5170)
+		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
+		values ($1, $2, 500, '[]', '[]', 300, 'walking')
+		on conflict (room_id, user_id) do update set max_distance_m = 300`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id in ($1, $2)`, hostID, joinerID)
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+	})
+
+	// 300 獨自搜尋 → 新成員 3000 加入後平均 1650，舊 envelope 不再是超集。
+	provider := memberJoinProvider{pool: pool, roomID: roomID, userID: joinerID, distanceM: joinerDist}
+	h := newTestAppWithProvider(t, pool, provider)
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusConflict || body.Error != message {
+		t.Fatalf("新成員把平均半徑推大且零結果時應回 409 而非 422：status %d body %s", w.Code, w.Body.String())
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "lobby" {
+		t.Fatalf("這條 409 走在凍結之前，房間必須還在 lobby：got %q", status)
+	}
+}
+
+func TestSearchBouncesWhenMemberJoinsBeforeCacheMiss(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const (
+		hostID     = "66666666-6666-6666-6666-666666666666"
+		roomID     = "67676767-6767-6767-6767-676767676767"
+		joinerID   = "68686868-6868-6868-6868-686868686868"
+		message    = "成員條件已於搜尋期間變更，請再按一次開始搜尋"
+		joinerDist = 3000
+	)
+	for id, email := range map[string]string{hostID: "join-502-host@test.dev", joinerID: "join-502-guest@test.dev"} {
+		if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+			values ($1, $2) on conflict do nothing`, id, email); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 快取圈外的座標（高雄）→ 30 天內快取為空，與 TestSearchNoCacheReturns502 同一組前提。
+	if _, err = pool.Exec(ctx, `insert into public.rooms
+		(id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 22.6273, 120.3014)
+		on conflict (id) do update set status = 'lobby', center_lat = 22.6273, center_lng = 120.3014`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
+		values ($1, $2, 500, '[]', '[]', 300, 'walking')
+		on conflict (room_id, user_id) do update set max_distance_m = 300`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id in ($1, $2)`, hostID, joinerID)
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+	})
+
+	// provider 失敗 + 舊半徑（300）的高雄快取為空 → 原本走 502；半徑已被推大，該回 409。
+	provider := memberJoinProvider{pool: pool, roomID: roomID, userID: joinerID, distanceM: joinerDist, fail: true}
+	h := newTestAppWithProvider(t, pool, provider)
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusConflict || body.Error != message {
+		t.Fatalf("新成員把平均半徑推大且快取為空時應回 409 而非 502：status %d body %s", w.Code, w.Body.String())
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "lobby" {
+		t.Fatalf("這條 409 走在凍結之前，房間必須還在 lobby：got %q", status)
 	}
 }
 

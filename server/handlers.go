@@ -326,6 +326,28 @@ func averageMemberRadius(members []Member) int {
 // 且 Go 測試以同一段文字釘住這條路徑。
 const searchConditionsChangedMessage = "成員條件已於搜尋期間變更，請再按一次開始搜尋"
 
+// handleSearch 有兩條 early return 走在凍結之前——provider 失敗且快取為空的 502、零餐廳的
+// 422——它們手上的空結果可能只是因為搜尋繞的是舊的、更小的半徑。此時 422 叫使用者「縮小
+// 距離」方向剛好相反：正解是有人剛加入把搜尋圈推大了，再搜一次就會有結果。
+// 半徑取最小值的年代不需要這條檢查：新成員加入只可能把最小值壓小（他的上限更大則最小值
+// 不變），舊 envelope 永遠是新條件的超集，搜到零筆就是真的零筆。改取平均之後，任何一位
+// max_distance_m 高於現有平均的成員加入都會把半徑推大（300 + 3000 兩人 → 1650），舊
+// envelope 不再是超集。所以這不是多餘的重複查詢，是那兩條 early return 唯一的半徑檢查
+// （凍結交易內的那次見 freeze.go，走不到那裡）。
+// 只有放大回 true：縮小或相等時舊 envelope 仍是超集——找到的東西仍有效（freeze 會重濾），
+// 且用更大的半徑都搜到零筆，用更小的一樣是零。
+func memberRadiusGrew(ctx context.Context, pool *pgxpool.Pool, roomID string, fetchedRadius int) (bool, error) {
+	members, err := LoadMembers(ctx, pool, roomID)
+	if err != nil {
+		return false, err
+	}
+	// 期間全員退房：averageMemberRadius 對空 slice 會除以零，且「沒有成員」不是半徑放大。
+	if len(members) == 0 {
+		return false, nil
+	}
+	return averageMemberRadius(members) > fetchedRadius, nil
+}
+
 func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider, inFlight *sync.Map) {
 	ctx := r.Context()
 	room, ok := loadHostRoom(w, r, pool)
@@ -364,6 +386,14 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		isGoogle := places.Source() == "google"
 		found, err = LoadCachedRestaurants(ctx, pool, room.CenterLat, room.CenterLng, fetchedRadius, isGoogle)
 		if err != nil || len(found) == 0 {
+			// 快取撈的也是舊的、更小的半徑，半徑若已被推大，「沒有可用的快取」是錯的診斷。
+			if grew, radiusErr := memberRadiusGrew(ctx, pool, room.ID, fetchedRadius); radiusErr != nil {
+				// 檢查本身失敗不遮蔽原本的錯誤，照常回 502。
+				log.Printf("member radius growth check failed: %v", radiusErr)
+			} else if grew {
+				jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
+				return
+			}
 			jsonError(w, http.StatusBadGateway, "餐廳搜尋失敗，且沒有可用的快取資料，請稍後再試")
 			return
 		}
@@ -414,6 +444,16 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	// 「附近根本沒資料」和「有資料但全被條件排除」是兩種不同的死路，
 	// 混成同一個 422 會叫使用者去放寬條件卻永遠沒用 — 分流才誠實
 	if len(found) == 0 {
+		// 零筆也可能只是因為搜尋繞的是舊的、更小的半徑（成員在 SearchNearby 期間加入把平均推大）。
+		// 這條檢查必須自己做一次，不能與 502 那條合併成 SearchNearby 之後的單一檢查：
+		// 那樣從檢查點到這裡之間仍有殘留窗口，422 又會回到叫使用者「縮小距離」的反方向建議。
+		if grew, radiusErr := memberRadiusGrew(ctx, pool, room.ID, fetchedRadius); radiusErr != nil {
+			// 檢查本身失敗不遮蔽原本的結果，照常回 422。
+			log.Printf("member radius growth check failed: %v", radiusErr)
+		} else if grew {
+			jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		jsonOK(w, map[string]any{
