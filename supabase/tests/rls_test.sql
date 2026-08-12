@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(32);
+select plan(37);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -22,7 +22,8 @@ select results_eq(
       ('restaurants','SELECT'),
       ('room_candidates','SELECT'),
       ('room_members','SELECT'), ('room_members','UPDATE'),
-      ('rooms','SELECT'),
+      -- rooms 兩種權限都已是欄級（SELECT 見 0015、UPDATE 見 0003），
+      -- 欄級 grant 不會出現在 role_table_grants，改由下面兩條 role_column_grants 釘住
       ('votes','SELECT')
     order by 1, 2
   $$,
@@ -135,6 +136,35 @@ select results_eq(
   $$ values ('exploration') $$,
   'rooms 的 UPDATE 欄級 grant 僅 exploration');
 
+-- 0015：rooms 的 SELECT 也收成欄級。center_lat/center_lng 不在清單裡是刻意的——
+-- 搜尋圓心就是房主建房當下的精確位置，開給同房成員讀等於把房主的家門口攤給
+-- 任何拿到邀請碼的人（碼會被轉貼、截圖、群組外流）。
+-- 這條把欄位清單釘死：日後有人把 center_* 加回去（或整表 grant select）就會紅。
+select results_eq(
+  $$
+    select column_name::text collate "default"
+    from information_schema.role_column_grants
+    where grantee = 'authenticated' and table_schema = 'public'
+      and table_name = 'rooms' and privilege_type = 'SELECT'
+    order by 1
+  $$,
+  $$ values ('code'), ('created_at'), ('exploration'), ('host_id'), ('id'), ('status') $$,
+  'rooms 的 SELECT 欄級 grant 精確等於預期欄位集合（center_* 加回去即紅）');
+
+-- 同一條防線的行為面。上面比對 catalog，這條實際用同房成員的身分去讀 center_lat。
+-- 兩條不是重複：role_column_grants 只看得到 grantee = 'authenticated' 那幾筆，
+-- 哪天有人寫成 grant select (center_lat) on rooms to public，authenticated 照樣繼承得到，
+-- 而上面那條的結果集不會有任何變化——只有這條會紅。
+-- （這正是被刪掉的 has_function_privilege 斷言原本的理由，那兩支內部函式隨中位數方案
+--   一起移除後，同一個理由改掛在還活著的那道欄級 grant 上。）
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}';
+select throws_ok(
+  $$select center_lat from public.rooms$$,
+  '42501', null,
+  '同房成員讀不到 rooms.center_lat：房主的精確位置不外流');
+reset role;
+
 select is(
   (select count(*) from information_schema.role_table_grants
     where grantee in ('anon','authenticated') and table_schema = 'public'
@@ -239,6 +269,46 @@ select is(
   (select count(*) from public.dining_history
     where user_id = '00000000-0000-0000-0000-0000000000a1' and room_id is null)::int,
   1, '刪房後同席紀錄仍在，room_id 轉為 null');
+
+-- ============ 0016：cuisine_tags 回填 ============
+-- migration 的回填只在套用時跑一次，測試無從重放，所以這裡複製同一段 UPDATE 驗「邏輯正確」。
+-- 複製的風險直說：這條測綠不代表 0016 裡真的有這段：兩邊逐字相同是靠人維持的，改一邊要改兩邊。
+reset role;
+insert into public.restaurants (id, place_id, name, lat, lng, source, primary_type, cuisine_tags) values
+  ('99999999-9999-9999-9999-999999999911', 'pg-bf-1', '三明治店', 25.04, 121.51, 'google',
+   'sandwich_shop', '[]'::jsonb),
+  ('99999999-9999-9999-9999-999999999912', 'pg-bf-2', '早午餐店', 25.04, 121.51, 'google',
+   'brunch_restaurant', '[]'::jsonb),
+  -- 第三列已經有 light_meal（模擬回填後重跑，或 provider 已自癒過的列）
+  ('99999999-9999-9999-9999-999999999913', 'pg-bf-3', '熟食店', 25.04, 121.51, 'google',
+   'deli', '["light_meal"]'::jsonb);
+
+-- 跑兩次：第二次必須是 no-op，否則 where 的守衛沒擋住重複串接
+do $$
+begin
+  for i in 1..2 loop
+    update public.restaurants
+    set cuisine_tags = cuisine_tags || '["light_meal"]'::jsonb
+    where primary_type in ('sandwich_shop', 'salad_shop', 'deli')
+      and not cuisine_tags @> '["light_meal"]'::jsonb;
+
+    update public.restaurants
+    set cuisine_tags = cuisine_tags || '["breakfast"]'::jsonb
+    where primary_type = 'brunch_restaurant'
+      and not cuisine_tags @> '["breakfast"]'::jsonb;
+  end loop;
+end $$;
+
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-bf-1'),
+  '["light_meal"]'::jsonb, 'sandwich_shop 的空 tags 補到 light_meal');
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-bf-2'),
+  '["breakfast"]'::jsonb, 'brunch_restaurant 的空 tags 補到 breakfast');
+-- 冪等：已含該標籤的列不得被再串一次（比對整個陣列，元素順序與重複都釘住）
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-bf-3'),
+  '["light_meal"]'::jsonb, '已含 light_meal 的 deli 不重複串接（回填冪等）');
 
 select * from finish();
 rollback;

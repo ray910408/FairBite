@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -234,8 +235,29 @@ func travelMinutes(m Member, distM float64) float64 {
 	return TransportOverheadMin[m.Transport] + distM/TransportMetersPerMin[m.Transport]
 }
 
+// snapCenter：把圓心捨入到固定網格上的一個點。圓心衍生的因素（distFactor、rainFactor —— 目前
+// 僅有的兩個）都必須先過這裡再算距離，**且之後不准再對距離做任何捨入**：公開出去的倍率、
+// 計分、機率、reason 於是全部是「單一個網格點」的確定性函數，殘餘不確定性 = 一格，與候選
+// 數量無關（威脅模型與代價見 weights.go CenterGridM）。
+//
+// 量化每段距離而不是量化圓心，會退回「每個候選各自公布一條環帶」的舊做法——N 條環帶的交集
+// 遠比一格窄。新增任何用到 in.CenterLat/CenterLng 的因素時一律呼叫這裡，別自己捨入。
+//
+// 經度網格寬度用「捨入後的緯度」算：用真實緯度算的話，網格本身就是真實緯度的函數，公開值
+// 又會依賴網格以下的資訊，等於再開一條細管道。
+func snapCenter(lat, lng float64) (float64, float64) {
+	const mPerDegLat = 111320.0 // WGS84 平均值；網格用途不需要更精確
+	latGrid := CenterGridM / mPerDegLat
+	snappedLat := math.Round(lat/latGrid) * latGrid
+	lngGrid := CenterGridM / (mPerDegLat * math.Cos(snappedLat*math.Pi/180))
+	return snappedLat, math.Round(lng/lngGrid) * lngGrid
+}
+
+// distFactor：距離從量化後的圓心算起，算完不再捨入。reason 字串也走同一個距離——
+// 「平均交通約 %.0f 分鐘」把距離洩漏到分鐘級（步行約 ±80 公尺），是比倍率更好用的旁通道。
 func distFactor(r Restaurant, in EngineInput) TraceEntry {
-	dist := Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng)
+	centerLat, centerLng := snapCenter(in.CenterLat, in.CenterLng)
+	dist := Haversine(centerLat, centerLng, r.Lat, r.Lng)
 	var sumMult, sumMin, worstMin float64
 	worstTransport := in.Members[0].Transport
 	for _, m := range in.Members {
@@ -259,11 +281,13 @@ func distFactor(r Restaurant, in EngineInput) TraceEntry {
 			sumMin/n, worstMin, TransportLabels[worstTransport])}
 }
 
+// rainFactor：雨天步行懲罰整條都是圓心距離的函數，同樣只能從量化圓心起算（見 snapCenter）。
 func rainFactor(r Restaurant, in EngineInput) TraceEntry {
 	if in.Weather == nil || in.Weather.RainMM < RainThresholdMM {
 		return TraceEntry{Mult: 1.0}
 	}
-	dist := Haversine(in.CenterLat, in.CenterLng, r.Lat, r.Lng)
+	centerLat, centerLng := snapCenter(in.CenterLat, in.CenterLng)
+	dist := Haversine(centerLat, centerLng, r.Lat, r.Lng)
 	var sum float64
 	walkers := 0
 	for _, m := range in.Members {
@@ -446,6 +470,9 @@ func Evaluate(in EngineInput) EngineResult {
 			if e.Factor == "" { // 未知資料可保持 neutral，且不產生虛構 trace。
 				continue
 			}
+			// 計分與 trace 同一個 e：圓心衍生因素的量化已在 snapCenter 做掉，
+			// 這裡不准再有第二個版本——Score → Probability 也是對外的（room_candidates
+			// .probability、HTTP 回應、draws.probabilities），全精度計分等於留側門。
 			c.Score *= e.Mult
 			c.Trace = append(c.Trace, e)
 		}

@@ -113,14 +113,19 @@ func TestCuisinePrimaryTypeProductBoundaries(t *testing.T) {
 			t.Errorf("擁有者決定納入甜點候選，%s 必須保留", primaryType)
 		}
 	}
-	for _, primaryType := range []string{"cafe", "bakery", "bar"} {
+	for _, primaryType := range []string{"cafe", "coffee_shop"} {
+		if !gIsMealPrimaryType(primaryType) {
+			t.Errorf("擁有者決定咖啡店算輕食，%s 必須保留", primaryType)
+		}
+	}
+	for _, primaryType := range []string{"bakery", "bar"} {
 		if gIsMealPrimaryType(primaryType) {
 			t.Errorf("未納入的邊界類型 %s 必須維持排除", primaryType)
 		}
 	}
 }
 
-func TestCuisineTagsFastFoodAndDessert(t *testing.T) {
+func TestCuisineTagsFastFoodDessertAndLightMeal(t *testing.T) {
 	tests := []struct {
 		name  string
 		types []string
@@ -134,6 +139,13 @@ func TestCuisineTagsFastFoodAndDessert(t *testing.T) {
 		{name: "甜點餐廳", types: []string{"dessert_restaurant"}, want: []string{"dessert"}},
 		{name: "冰淇淋店", types: []string{"ice_cream_shop"}, want: []string{"dessert"}},
 		{name: "甜品店", types: []string{"dessert_shop"}, want: []string{"dessert"}},
+		{name: "三明治店", types: []string{"sandwich_shop"}, want: []string{"light_meal"}},
+		{name: "沙拉店", types: []string{"salad_shop"}, want: []string{"light_meal"}},
+		{name: "熟食店", types: []string{"deli"}, want: []string{"light_meal"}},
+		{name: "咖啡店", types: []string{"cafe"}, want: []string{"light_meal"}},
+		{name: "咖啡吧", types: []string{"coffee_shop", "cafe"}, want: []string{"light_meal"}},
+		{name: "早餐店", types: []string{"breakfast_restaurant"}, want: []string{"breakfast"}},
+		{name: "早午餐店", types: []string{"brunch_restaurant"}, want: []string{"breakfast"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -174,10 +186,13 @@ func gServer(t *testing.T, fail1st bool) *httptest.Server {
 		for _, placeType := range requestBody.IncludedTypes {
 			included[placeType] = true
 		}
-		if len(requestBody.IncludedTypes) != 3 {
-			t.Errorf("request includedTypes = %v, want exactly restaurant, ice_cream_shop, dessert_shop", requestBody.IncludedTypes)
+		if len(requestBody.IncludedTypes) != 8 {
+			t.Errorf("request includedTypes = %v, want exactly restaurant, ice_cream_shop, dessert_shop, cafe, coffee_shop, sandwich_shop, salad_shop, deli", requestBody.IncludedTypes)
 		}
-		for _, placeType := range []string{"restaurant", "ice_cream_shop", "dessert_shop"} {
+		for _, placeType := range []string{
+			"restaurant", "ice_cream_shop", "dessert_shop", "cafe", "coffee_shop",
+			"sandwich_shop", "salad_shop", "deli",
+		} {
 			if !included[placeType] {
 				t.Errorf("request includedTypes missing %q: %v", placeType, requestBody.IncludedTypes)
 			}

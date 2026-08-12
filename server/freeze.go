@@ -19,14 +19,18 @@ var ErrMembersChanged = errors.New("member conditions changed during search")
 // 鎖序一致地重讀 exploration 與成員（LoadMembersForUpdate 的 order by user_id 即鎖序 pin）→
 // 對照 call-time fetchedRadius 收斂半徑：放大代表 fetch envelope under-fetch，回
 // ErrMembersChanged 讓 host 重搜（deferred rollback 留在 lobby）；縮小則就地重濾 found。
+// 圓心不在重讀之列：它是房主建房當下的位置，create_room 寫進去之後沒有任何路徑會改它，
+// 搜尋期間不可能被挪走。
 // 成功時就地更新 room.Exploration 並回傳權威成員與存活的 found。
 func freezeAndLoadMembers(ctx context.Context, tx pgx.Tx, room *RoomRow, fetchedRadius int, found []Restaurant) ([]Member, []Restaurant, error) {
 	if err := TransitionRoom(ctx, tx, room.ID, "lobby", "candidates"); err != nil {
 		// ErrConflict 原樣透傳，呼叫端據以回 409。
 		return nil, nil, err
 	}
-	// exploration 在 lobby 仍可變，鎖定後重讀；center_* 由 guard 永凍毋需重讀
-	if err := tx.QueryRow(ctx, `select exploration from rooms where id = $1`, room.ID).Scan(&room.Exploration); err != nil {
+	// exploration 在 lobby 可變（房主自己調），鎖定後重讀
+	if err := tx.QueryRow(ctx,
+		`select exploration from rooms where id = $1`,
+		room.ID).Scan(&room.Exploration); err != nil {
 		return nil, nil, fmt.Errorf("凍結重讀 exploration: %w", err)
 	}
 	members, err := LoadMembersForUpdate(ctx, tx, room.ID)
@@ -36,9 +40,13 @@ func freezeAndLoadMembers(ctx context.Context, tx pgx.Tx, room *RoomRow, fetched
 	if len(members) == 0 {
 		return nil, nil, fmt.Errorf("凍結重讀成員: 房間無成員")
 	}
-	reloadedRadius := minimumMemberRadius(members)
-	// tx 內重讀的「全員最小距離」有三種情況：縮小則重濾、相等則直接繼續；
+	reloadedRadius := averageMemberRadius(members)
+	// tx 內重讀的「全員平均距離」有三種情況：縮小則重濾、相等則直接繼續；
 	// 放大代表先前的 fetch envelope under-fetch，回 ErrMembersChanged 並由 deferred rollback 留在 lobby，讓 host 重搜。
+	// 半徑改取平均之後，這條放大分支比取最小值的年代更常走到：取最小值時新成員加入只可能把
+	// 半徑壓小（新人的上限若更大，最小值不變），放大實質只有「既有成員自己調寬」一條路；
+	// 取平均之後，任何一位上限高於現有平均的新成員加入就會把半徑推大。判斷本身沒變——
+	// 半徑放大就是 under-fetch，重濾救不回來，只能請 host 重搜——變的是 409 的頻率。
 	if reloadedRadius > fetchedRadius {
 		return nil, nil, ErrMembersChanged
 	}
