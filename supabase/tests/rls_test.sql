@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(62);
+select plan(65);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -478,6 +478,46 @@ select is(
   (select count(*) from public.room_member_locations
     where room_id = (select id from ctx4))::int,
   0, '整房座標都過期：兩列一起清空，不留混合態');
+
+-- ============ 0016：cuisine_tags 回填 ============
+-- migration 的回填只在套用時跑一次，測試無從重放，所以這裡複製同一段 UPDATE 驗「邏輯正確」。
+-- 複製的風險直說：這條測綠不代表 0016 裡真的有這段：兩邊逐字相同是靠人維持的，改一邊要改兩邊。
+reset role;
+insert into public.restaurants (id, place_id, name, lat, lng, source, primary_type, cuisine_tags) values
+  ('99999999-9999-9999-9999-999999999911', 'pg-bf-1', '三明治店', 25.04, 121.51, 'google',
+   'sandwich_shop', '[]'::jsonb),
+  ('99999999-9999-9999-9999-999999999912', 'pg-bf-2', '早午餐店', 25.04, 121.51, 'google',
+   'brunch_restaurant', '[]'::jsonb),
+  -- 第三列已經有 light_meal（模擬回填後重跑，或 provider 已自癒過的列）
+  ('99999999-9999-9999-9999-999999999913', 'pg-bf-3', '熟食店', 25.04, 121.51, 'google',
+   'deli', '["light_meal"]'::jsonb);
+
+-- 跑兩次：第二次必須是 no-op，否則 where 的守衛沒擋住重複串接
+do $$
+begin
+  for i in 1..2 loop
+    update public.restaurants
+    set cuisine_tags = cuisine_tags || '["light_meal"]'::jsonb
+    where primary_type in ('sandwich_shop', 'salad_shop', 'deli')
+      and not cuisine_tags @> '["light_meal"]'::jsonb;
+
+    update public.restaurants
+    set cuisine_tags = cuisine_tags || '["breakfast"]'::jsonb
+    where primary_type = 'brunch_restaurant'
+      and not cuisine_tags @> '["breakfast"]'::jsonb;
+  end loop;
+end $$;
+
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-bf-1'),
+  '["light_meal"]'::jsonb, 'sandwich_shop 的空 tags 補到 light_meal');
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-bf-2'),
+  '["breakfast"]'::jsonb, 'brunch_restaurant 的空 tags 補到 breakfast');
+-- 冪等：已含該標籤的列不得被再串一次（比對整個陣列，元素順序與重複都釘住）
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-bf-3'),
+  '["light_meal"]'::jsonb, '已含 light_meal 的 deli 不重複串接（回填冪等）');
 
 select * from finish();
 rollback;

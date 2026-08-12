@@ -96,37 +96,46 @@ const (
 	DistBestMin   = 5.0  // ≤5 分鐘 → DistMultBest
 	DistWorstMin  = 25.0 // ≥25 分鐘 → DistMultWorst
 
-	// CenterDistGridM：「候選到圓心距離」的量化網格（公尺）。所有圓心衍生的訊號一律走它。
-	// 0015 把 rooms.center_lat/center_lng 收成欄級 grant，但 weight_breakdown 對同房成員
-	// 可讀（room_candidates 有 table-level SELECT grant + candidates_select policy），而
-	// distFactor/rainFactor 的倍率都是該距離的單調確定性函數；成員的 transport（room_members
-	// 有 table-level SELECT grant）與候選的 lat/lng（0005 restaurants_select）也都讀得到。
-	// 全精度倍率 → 反推 dist → 三家以上候選三角定位出圓心 → 兩人房用 other = 2*center - own
-	// 還原另一人的精確 GPS，欄級 grant 等於白鎖。
+	// CenterGridM：圓心量化網格（公尺）。量化的是「圓心」本身，不是距離——圓心衍生的因素
+	// 一律先把 in.CenterLat/CenterLng 捨入到網格點，再從那個點算距離，之後不對距離做任何
+	// 捨入（見 engine.go snapCenter）。
+	//
+	// 威脅模型：0015 把 rooms.center_lat/center_lng 收成欄級 grant，但 weight_breakdown 對
+	// 同房成員可讀（room_candidates 有 table-level SELECT grant + candidates_select policy），
+	// 而 distFactor/rainFactor 的倍率都是「候選到圓心距離」的單調確定性函數；成員的 transport
+	// （room_members 有 table-level SELECT grant）與候選的 lat/lng（0005 restaurants_select）
+	// 也都讀得到。全精度倍率 → 反推 dist → 三家以上候選三角定位出圓心 → 兩人房用
+	// other = 2*center - own 還原另一人的精確 GPS，欄級 grant 等於白鎖。
 	//
 	// 只量化 trace 不夠：probability 同樣公開（room_candidates.probability、HTTP 回應、
 	// draws.probabilities），而它是 Score 的正規化，Score 又是各因素倍率的乘積。trace 裡
 	// 其他因素（preference、closing_soon、recency…）本來就是精確值，除掉之後
-	// probability_i / probability_j 就還原出距離倍率的精確比值，三家候選兩條方程式一樣解得出
-	// 圓心——量化 trace 卻用全精度計分等於關前門留側窗。對策見 engine.go snapCenterDist：
-	// 距離在因素內就先量化，計分、機率、trace 因此是同一個量化距離的函數，
-	// 殘餘不確定性恆等於網格寬度，不會被任何公開出口細分。
+	// probability_i / probability_j 就還原出距離倍率的精確比值，三家候選兩條方程式一樣解得
+	// 出圓心。
 	//
-	// 代價：抽獎機率也走量化距離，相距一個網格以內的兩家候選距離權重相同。以下方常數換算，
-	// 300 公尺（全員步行）對應距離倍率階距 0.10、範圍 1.2–0.7，最多影響單一候選權重約 ±0.05。
-	// 這是軟性偏好權重不是硬性過濾，接受。硬性半徑過濾（freeze.go 重濾、provider fetch
-	// envelope）仍用真實距離——那條不洩漏，候選集合本身就已經是公開的粗略旁通道。
+	// 量化每一段距離也不夠（2026-08-12 review 翻面，前一版就是這麼做的）：那是替每個候選
+	// 各自把「它到圓心的距離」捨入，公開的等於「圓心落在以該候選為心、300 公尺寬的環帶內」。
+	// N 個候選 = N 條以各自公開座標為心的環帶，圓心在交集裡；幾何條件好時交集遠小於一格，
+	// 候選越多越窄。「殘餘不確定性 = 網格寬度」只對單一候選成立。
 	//
-	// 網格寬度由實際常數推算，取倍率對距離最敏感的情境（全員步行，TransportMetersPerMin 最小）：
+	// 量化圓心沒有這個問題：公開的一切都是「單一個網格點」的確定性函數。攻擊者能精確還原
+	// 出那個網格點（本來就該當作已知），但真實圓心只知道落在該網格內——這個界限與候選數量、
+	// 幾何條件都無關，再多候選也交不出更小的集合。
+	//
+	// 代價一：候選到量化圓心的距離與到真實圓心的距離最多差半個網格對角線（300 公尺網格
+	// 約 212 公尺），距離權重因此可能比舊做法再偏一點。這是軟性偏好權重不是硬性過濾，接受。
+	// 硬性半徑過濾（handlers.go 的 provider fetch envelope、freeze.go 重濾）仍用真實圓心：
+	// 那條不是數值管道，改用量化圓心會讓候選集合與使用者設定的距離上限對不起來。SQL 端
+	// recompute_room_center 寫進 rooms.center_* 的也仍是真實圓心，量化只發生在 Go 引擎計分側。
+	//
+	// 代價二（倍率偏移量級）：取倍率對距離最敏感的情境（全員步行，TransportMetersPerMin 最小）：
 	//   distance：minutes = 0 + dist/75、frac = (minutes-5)/20、mult = 1.2 - 0.5*frac
 	//             → d(mult)/d(dist) = -0.5/(20*75) = -1/3000 ≈ 3.33e-4 每公尺
 	//   weather ：minutes = dist/75、frac = (minutes-5)/15、mult = 1 - 0.3*frac
 	//             → d(mult)/d(dist) = -0.3/(15*75) = -1/3750 ≈ 2.67e-4 每公尺
-	// transit（1/8000）與 driving（1/20000）敏感度更低，混合交通取平均後也介於兩者之間，
-	// 殘餘不確定性只會比全員步行更大。
-	// 300 公尺網格 ⇒ 最壞情況下 distance 倍率階距 0.10、weather 0.08，殘餘不確定性
-	// = 網格寬度 = 300 公尺（單一候選）。
-	CenterDistGridM = 300.0
+	// transit（1/8000）與 driving（1/20000）敏感度更低。圓心最壞位移 212 公尺 ⇒ distance
+	// 倍率最多偏 0.07、weather 0.06（範圍 1.2–0.7 與 1.0–0.7）。
+	CenterGridM = 300.0
 
 	ClosingSoonMinutes  = 60
 	ClosingSoonMult     = 0.6
