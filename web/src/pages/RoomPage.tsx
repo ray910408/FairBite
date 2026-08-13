@@ -51,6 +51,7 @@ export default function RoomPage() {
   const [actionError, setActionError] = useState('')
   const [actionWarning, setActionWarning] = useState('')
   const [copied, setCopied] = useState(false)
+  const [editingCustom, setEditingCustom] = useState(false)
   const searchInFlight = useRef(false)
   const startVotingInFlight = useRef(false)
   if (!room) return notFound ? (
@@ -68,6 +69,18 @@ export default function RoomPage() {
 
   const me = members.find(m => m.user_id === myUserId)
   const isHost = room.host_id === myUserId
+  const mealDate = room.meal_time ? new Date(room.meal_time) : null
+  const mealHH = mealDate ? String(mealDate.getHours()).padStart(2, '0') : ''
+  const mealMM = mealDate ? String(mealDate.getMinutes()).padStart(2, '0') : ''
+
+  async function updateMealTime(hhmm: string) {
+    setActionError('')
+    const r = buildMealTimeISO(hhmm)
+    if ('error' in r) { setActionError(r.error); return }
+    const { error, count } = await supabase.from('rooms')
+      .update({ meal_time: r.iso }, { count: 'exact' }).eq('id', room!.id)
+    if (error || count === 0) setActionError('用餐時間更新失敗')
+  }
 
   async function copyCode() {
     try {
@@ -207,35 +220,50 @@ export default function RoomPage() {
             {isHost && (
               <div className="space-y-2">
                 <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
-                  <button type="button" aria-pressed={room.meal_time === null}
+                  <button type="button" aria-pressed={room.meal_time === null && !editingCustom}
                     className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
-                      room.meal_time === null ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
+                      room.meal_time === null && !editingCustom
+                        ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                     }`}
                     onClick={async () => {
                       setActionError('')
                       const { error, count } = await supabase.from('rooms')
                         .update({ meal_time: null }, { count: 'exact' }).eq('id', room.id)
                       if (error || count === 0) setActionError('用餐時間更新失敗')
+                      else setEditingCustom(false)
                     }}>
                     馬上出發
                   </button>
-                  <label className={`flex min-h-10 items-center justify-center rounded-lg text-sm font-semibold ${
-                    room.meal_time !== null ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
-                  }`}>
+                  <button type="button" aria-pressed={room.meal_time !== null || editingCustom}
+                    className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                      room.meal_time !== null || editingCustom
+                        ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
+                    }`}
+                    onClick={() => setEditingCustom(true)}>
                     自訂時間
-                    <input type="time" className="field w-28"
-                      aria-label="用餐時間"
-                      value={room.meal_time ? formatMealTime(room.meal_time).replace('今天 ', '') : ''}
-                      onChange={async e => {
-                        setActionError('')
-                        const r = buildMealTimeISO(e.target.value)
-                        if ('error' in r) { setActionError(r.error); return }
-                        const { error, count } = await supabase.from('rooms')
-                          .update({ meal_time: r.iso }, { count: 'exact' }).eq('id', room.id)
-                        if (error || count === 0) setActionError('用餐時間更新失敗')
-                      }} />
-                  </label>
+                  </button>
                 </div>
+                {(editingCustom || room.meal_time !== null) && (
+                  <div className="flex items-center gap-2">
+                    <select className="field flex-1" aria-label="用餐時間（時）"
+                      value={mealHH}
+                      onChange={e => updateMealTime(`${e.target.value}:${mealMM || '00'}`)}>
+                      <option value="" disabled>時</option>
+                      {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0')).map(h => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                    <span className="text-fg-muted">:</span>
+                    <select className="field flex-1" aria-label="用餐時間（分）"
+                      value={mealMM}
+                      onChange={e => updateMealTime(`${mealHH || '00'}:${e.target.value}`)}>
+                      <option value="" disabled>分</option>
+                      {Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0')).map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
             )}
           </section>

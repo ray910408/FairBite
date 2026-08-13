@@ -20,11 +20,12 @@ function waitForRoomRealtime(page: Page) {
   })
 }
 
-// 今日限定的自訂用餐時間：CI 半夜跑到近午夜時退回「馬上出發」，避免跨日 flaky（spec grilling #10）
+// 今日限定的自訂用餐時間：晚間執行時退回「馬上出發」，避免 mock 營業池縮水與跨日 flaky
 function mealTimeForE2E(now = new Date()): string | null {
-  if (now.getHours() === 23 && now.getMinutes() > 40) return null
   const t = new Date(Math.min(now.getTime() + 2 * 60 * 60 * 1000,
-    new Date(now).setHours(23, 45, 0, 0)))
+    new Date(now).setHours(20, 0, 0, 0)))
+  t.setMinutes(Math.floor(t.getMinutes() / 5) * 5, 0, 0)
+  if (t.getTime() <= now.getTime()) return null
   return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
 }
 
@@ -47,7 +48,9 @@ async function createAndJoinRoom(a: Page, b: Page) {
   const hhmm = mealTimeForE2E()
   if (hhmm) {
     await a.getByRole('button', { name: '自訂時間' }).click()
-    await a.getByLabel('用餐時間').fill(hhmm)
+    const [hh, mm] = hhmm.split(':')
+    await a.getByLabel('用餐時間（時）').selectOption(hh)
+    await a.getByLabel('用餐時間（分）').selectOption(mm)
   }
   await a.getByRole('button', { name: '建立房間' }).click()
   await expect(a.getByText('成員（1）')).toBeVisible()

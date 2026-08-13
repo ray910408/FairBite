@@ -171,8 +171,25 @@ export default function HomePage() {
               ))}
             </div>
             {mealMode === 'custom' && (
-              <input type="time" className="field w-full" aria-label="用餐時間"
-                value={mealHHMM} onChange={e => setMealHHMM(e.target.value)} />
+              <div className="flex items-center gap-2">
+                <select className="field flex-1" aria-label="用餐時間（時）"
+                  value={mealHHMM.split(':')[0] ?? ''}
+                  onChange={e => setMealHHMM(`${e.target.value}:${mealHHMM.split(':')[1] || '00'}`)}>
+                  <option value="" disabled>時</option>
+                  {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0')).map(h => (
+                    <option key={h} value={h}>{h}</option>
+                  ))}
+                </select>
+                <span className="text-fg-muted">:</span>
+                <select className="field flex-1" aria-label="用餐時間（分）"
+                  value={mealHHMM.split(':')[1] ?? ''}
+                  onChange={e => setMealHHMM(`${mealHHMM.split(':')[0] || '00'}:${e.target.value}`)}>
+                  <option value="" disabled>分</option>
+                  {Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0')).map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
             )}
           </div>
           <button onClick={createRoom} disabled={busy || !departure} className="btn btn-primary w-full">
