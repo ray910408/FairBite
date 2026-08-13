@@ -88,6 +88,9 @@ export default function HomePage() {
   }, [cancelSuggestionLoads, loadSuggestions])
 
   async function persistRoom(pos: DeparturePoint) {
+    const { data: auth } = await supabase.auth.getUser()
+    if (!auth.user) return
+    const creatorUid = auth.user.id
     let mealISO: string | null = null
     if (mealMode === 'custom') {
       if (!mealHH || !mealMM) {
@@ -113,8 +116,7 @@ export default function HomePage() {
       await supabase.from('rooms').update({ meal_time: mealISO }).eq('id', data)
     }
     await applyDefaultPrefs(data)
-    const { data: auth } = await supabase.auth.getUser()
-    if (auth.user) saveLastDeparture(auth.user.id, pos)
+    saveLastDeparture(creatorUid, pos)
     nav(`/room/${data}`)
   }
 

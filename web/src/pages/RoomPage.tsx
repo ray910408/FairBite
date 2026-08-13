@@ -93,9 +93,14 @@ export default function RoomPage() {
     }
   }
 
+  function cancelPendingMealTime() {
+    clearTimeout(mealTimeTimer.current)
+    mealTimeTimer.current = undefined
+  }
+
   function saveMealTime(iso: string | null) {
     setActionError('')
-    clearTimeout(mealTimeTimer.current)
+    cancelPendingMealTime()
     mealTimeTimer.current = setTimeout(() => {
       mealTimeChain.current = mealTimeChain.current.then(() => doWriteMealTime(iso))
     }, 400)
@@ -259,7 +264,10 @@ export default function RoomPage() {
                       room.meal_time !== null || editingCustom
                         ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                     }`}
-                    onClick={() => setEditingCustom(true)}>
+                    onClick={() => {
+                      cancelPendingMealTime()
+                      setEditingCustom(true)
+                    }}>
                     自訂時間
                   </button>
                 </div>
