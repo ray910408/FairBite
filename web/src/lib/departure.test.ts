@@ -23,6 +23,22 @@ describe('searchPlaces', () => {
     expect(fetch).toHaveBeenCalledTimes(2)
   })
 
+  it('時鐘回跳時等待仍不超過一秒', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 7, 13, 12, 0, 0))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('[]')))
+
+    await searchPlaces('第一筆')
+    vi.setSystemTime(new Date(2026, 7, 13, 11, 0, 0))
+    const second = searchPlaces('第二筆')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(999)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await second
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
   it('把 Nominatim jsonv2 結果映射成座標與精簡標籤', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([
       { lat: '25.0478', lon: '121.517', display_name: '台北車站, 忠孝西路一段, 中正區, 臺北市, 臺灣' },

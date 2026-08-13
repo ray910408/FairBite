@@ -41,7 +41,8 @@ export default function HomePage() {
   const [error, setError] = useState('')
   const [departure, setDeparture] = useState<DeparturePoint | null>(null)
   const [mealMode, setMealMode] = useState<'now' | 'custom'>('now')
-  const [mealHHMM, setMealHHMM] = useState('')
+  const [mealHH, setMealHH] = useState('')
+  const [mealMM, setMealMM] = useState('')
   const [busy, setBusy] = useState(false)
   const [myUserId, setMyUserId] = useState('')
   const [prefs, setPrefs] = useState<Record<string, unknown>>({})
@@ -55,6 +56,7 @@ export default function HomePage() {
     setSuggestion([]) // 評分後先撤下舊快照，避免 refetch 完成前仍可採納已失效建議
     const { data: auth } = await supabase.auth.getUser()
     if (!auth.user || request !== suggestionRequest.current) return
+    setDeparture(prev => prev ?? loadLastDeparture(auth.user.id))
     const [{ data: profile }, { data: history }, { data: lowRows }] = await Promise.all([
       supabase.from('profiles').select('default_prefs').eq('id', auth.user.id).single(),
       supabase.from('dining_history')
@@ -70,7 +72,6 @@ export default function HomePage() {
       CUISINE_OPTIONS.map(([k]) => k))
     const dismissed = (localStorage.getItem(`prefs-suggest-dismissed:${auth.user.id}`) ?? '').split(',')
     setMyUserId(auth.user.id)
-    setDeparture(prev => prev ?? loadLastDeparture(auth.user.id))
     setPrefs(dp)
     setSuggestion(tags.filter(t => !dismissed.includes(t)))
   }, [])
@@ -89,7 +90,11 @@ export default function HomePage() {
   async function persistRoom(pos: DeparturePoint) {
     let mealISO: string | null = null
     if (mealMode === 'custom') {
-      const r = buildMealTimeISO(mealHHMM)
+      if (!mealHH || !mealMM) {
+        setError('請選擇完整的用餐時間')
+        return
+      }
+      const r = buildMealTimeISO(`${mealHH}:${mealMM}`)
       if ('error' in r) {
         setError(r.error)
         return
@@ -109,7 +114,7 @@ export default function HomePage() {
     }
     await applyDefaultPrefs(data)
     const { data: auth } = await supabase.auth.getUser()
-    if (auth.user) saveLastDeparture(auth.user.id, departure!)
+    if (auth.user) saveLastDeparture(auth.user.id, pos)
     nav(`/room/${data}`)
   }
 
@@ -179,8 +184,8 @@ export default function HomePage() {
             {mealMode === 'custom' && (
               <div className="flex items-center gap-2">
                 <select className="field flex-1" aria-label="用餐時間（時）"
-                  value={mealHHMM.split(':')[0] ?? ''}
-                  onChange={e => setMealHHMM(`${e.target.value}:${mealHHMM.split(':')[1] || '00'}`)}>
+                  value={mealHH}
+                  onChange={e => setMealHH(e.target.value)}>
                   <option value="" disabled>時</option>
                   {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0')).map(h => (
                     <option key={h} value={h}>{h}</option>
@@ -188,8 +193,8 @@ export default function HomePage() {
                 </select>
                 <span className="text-fg-muted">:</span>
                 <select className="field flex-1" aria-label="用餐時間（分）"
-                  value={mealHHMM.split(':')[1] ?? ''}
-                  onChange={e => setMealHHMM(`${mealHHMM.split(':')[0] || '00'}:${e.target.value}`)}>
+                  value={mealMM}
+                  onChange={e => setMealMM(e.target.value)}>
                   <option value="" disabled>分</option>
                   {Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0')).map(m => (
                     <option key={m} value={m}>{m}</option>

@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(43);
+select plan(45);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -357,5 +357,44 @@ select is(
   (select cuisine_tags from public.restaurants where place_id = 'pg-bf-6'),
   '["cantonese"]'::jsonb, '已含 cantonese 的飲茶列不重複串接（回填冪等）');
 
+-- ============ 0019：清除既存 sichuan 選項 ============
+-- 與 0016/0018 段同款：複製 migration 的 UPDATE 驗邏輯，改一邊要改兩邊。
+reset role;
+insert into public.rooms (id, host_id, center_lat, center_lng) values
+  ('88888888-8888-8888-8888-888888888901', '00000000-0000-0000-0000-0000000000a1', 25.04, 121.51);
+insert into public.room_members (room_id, user_id) values
+  ('88888888-8888-8888-8888-888888888901', '00000000-0000-0000-0000-0000000000a1');
+update public.room_members
+set cuisines = '["sichuan", "japanese"]'::jsonb
+where room_id = '88888888-8888-8888-8888-888888888901'
+  and user_id = '00000000-0000-0000-0000-0000000000a1';
+update public.profiles
+set default_prefs = '{"cuisines":["sichuan","thai"],"budget_max":800}'::jsonb
+where id = '00000000-0000-0000-0000-0000000000a1';
+
+-- 跑兩次：第二次必須是 no-op，證明一次性出清可安全重跑。
+do $$
+begin
+  for i in 1..2 loop
+    update public.room_members
+    set cuisines = cuisines - 'sichuan'
+    where cuisines @> '["sichuan"]'::jsonb;
+
+    update public.profiles
+    set default_prefs = jsonb_set(default_prefs, '{cuisines}',
+      (default_prefs->'cuisines') - 'sichuan')
+    where default_prefs->'cuisines' @> '["sichuan"]'::jsonb;
+  end loop;
+end $$;
+
+select is(
+  (select cuisines from public.room_members
+    where room_id = '88888888-8888-8888-8888-888888888901'
+      and user_id = '00000000-0000-0000-0000-0000000000a1'),
+  '["japanese"]'::jsonb, 'room_members.cuisines 清掉 sichuan 並保留其餘選項');
+select is(
+  (select default_prefs->'cuisines' from public.profiles
+    where id = '00000000-0000-0000-0000-0000000000a1'),
+  '["thai"]'::jsonb, 'profiles.default_prefs 清掉 sichuan 並保留其餘選項');
 select * from finish();
 rollback;

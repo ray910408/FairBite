@@ -54,6 +54,7 @@ export default function RoomPage() {
   const [editingCustom, setEditingCustom] = useState(false)
   const [draftHH, setDraftHH] = useState('')
   const [draftMM, setDraftMM] = useState('')
+  const mealTimeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const searchInFlight = useRef(false)
   const startVotingInFlight = useRef(false)
   useEffect(() => {
@@ -76,13 +77,30 @@ export default function RoomPage() {
 
   const me = members.find(m => m.user_id === myUserId)
   const isHost = room.host_id === myUserId
-  async function updateMealTime(hhmm: string) {
+  function saveMealTime(iso: string | null) {
+    setActionError('')
+    clearTimeout(mealTimeTimer.current)
+    mealTimeTimer.current = setTimeout(async () => {
+      const { error, count } = await supabase.from('rooms')
+        .update({ meal_time: iso }, { count: 'exact' }).eq('id', room!.id)
+      if (error || count === 0) {
+        const d = room?.meal_time ? new Date(room.meal_time) : null
+        setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
+        setDraftMM(d ? String(d.getMinutes()).padStart(2, '0') : '')
+        setActionError('用餐時間更新失敗')
+      } else if (iso === null) {
+        setEditingCustom(false)
+        setDraftHH('')
+        setDraftMM('')
+      }
+    }, 400)
+  }
+
+  function updateMealTime(hhmm: string) {
     setActionError('')
     const r = buildMealTimeISO(hhmm)
     if ('error' in r) { setActionError(r.error); return }
-    const { error, count } = await supabase.from('rooms')
-      .update({ meal_time: r.iso }, { count: 'exact' }).eq('id', room!.id)
-    if (error || count === 0) setActionError('用餐時間更新失敗')
+    saveMealTime(r.iso)
   }
 
   async function copyCode() {
@@ -228,17 +246,7 @@ export default function RoomPage() {
                       room.meal_time === null && !editingCustom
                         ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                     }`}
-                    onClick={async () => {
-                      setActionError('')
-                      const { error, count } = await supabase.from('rooms')
-                        .update({ meal_time: null }, { count: 'exact' }).eq('id', room.id)
-                      if (error || count === 0) setActionError('用餐時間更新失敗')
-                      else {
-                        setEditingCustom(false)
-                        setDraftHH('')
-                        setDraftMM('')
-                      }
-                    }}>
+                    onClick={() => saveMealTime(null)}>
                     馬上出發
                   </button>
                   <button type="button" aria-pressed={room.meal_time !== null || editingCustom}

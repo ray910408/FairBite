@@ -11,7 +11,7 @@ export function _resetSearchThrottleForTests() {
 
 export async function searchPlaces(query: string): Promise<DeparturePoint[]> {
   // Nominatim 使用政策：絕對上限 1 req/s——送出制之外再加最小間隔保險
-  const wait = lastSearchAt + 1000 - Date.now()
+  const wait = Math.min(lastSearchAt + 1000 - Date.now(), 1000)
   if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait))
   lastSearchAt = Date.now()
   const url = 'https://nominatim.openstreetmap.org/search?' + new URLSearchParams({
