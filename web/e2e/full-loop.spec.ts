@@ -32,9 +32,12 @@ async function signup(page: Page, name: string) {
 
 async function createAndJoinRoom(a: Page, b: Page) {
   const aRealtimeReady = waitForRoomRealtime(a)
+  await a.getByRole('button', { name: '選擇出發點' }).click()
+  const departureMap = a.getByLabel('出發點地圖')
+  await expect(departureMap).toHaveClass(/leaflet-container/)
+  await departureMap.click({ position: { x: 112, y: 112 } })
+  await a.getByRole('button', { name: '完成' }).click()
   await a.getByRole('button', { name: '建立房間' }).click()
-  await expect(a.getByText(/無法取得目前位置/)).toBeVisible()
-  await a.getByRole('button', { name: '改用台北車站' }).click()
   await expect(a.getByText('成員（1）')).toBeVisible()
   await aRealtimeReady
   const code = (await a.locator('header button.font-mono').innerText()).trim()
@@ -87,7 +90,7 @@ async function retractVeto(page: Page, restaurantName: string) {
 }
 
 test('雙使用者完整閉環（投票版）', async ({ browser }) => {
-  const ctxA = await browser.newContext({ permissions: [] }) // 拒絕定位後由使用者明確選擇台北車站
+  const ctxA = await browser.newContext({ permissions: [] })
   const ctxB = await browser.newContext({ permissions: [] })
   const a = await ctxA.newPage()
   const b = await ctxB.newPage()

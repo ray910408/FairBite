@@ -4,11 +4,10 @@ import { supabase } from '../lib/supabase'
 import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
 import { buildMealTimeISO } from '../lib/mealTime'
 import { suggestCuisines, type HistoryRow } from '../lib/prefsLearning'
-import { getPosition, parseCoordinates, type Coordinates } from '../lib/geolocation'
+import { loadLastDeparture, saveLastDeparture, type DeparturePoint } from '../lib/departure'
 import { Alert, Logo, LogOut, Spinner } from '../components/icons'
+import LocationPicker from '../components/LocationPicker'
 import { RecentRatingPrompt } from '../components/RatingPrompt'
-
-const FALLBACK = { lat: 25.0478, lng: 121.517 } // 台北車站：只在使用者明確同意後採用
 
 // default_prefs 帶入（spec §4；eng review D18 客戶端直寫版，取代 RPC 五欄位框架）：
 // 建/加成功後、導頁前，若有預設偏好就寫進自己的 member row（lobby 的 members_update
@@ -36,10 +35,7 @@ export default function HomePage() {
   const nav = useNavigate()
   const [code, setCode] = useState('')
   const [error, setError] = useState('')
-  const [locationError, setLocationError] = useState('')
-  const [showManualLocation, setShowManualLocation] = useState(false)
-  const [manualLat, setManualLat] = useState('')
-  const [manualLng, setManualLng] = useState('')
+  const [departure, setDeparture] = useState<DeparturePoint | null>(loadLastDeparture)
   const [mealMode, setMealMode] = useState<'now' | 'custom'>('now')
   const [mealHHMM, setMealHHMM] = useState('')
   const [busy, setBusy] = useState(false)
@@ -85,7 +81,7 @@ export default function HomePage() {
     return cancelSuggestionLoads
   }, [cancelSuggestionLoads, loadSuggestions])
 
-  async function persistRoom(pos: Coordinates) {
+  async function persistRoom(pos: DeparturePoint) {
     let mealISO: string | null = null
     if (mealMode === 'custom') {
       const r = buildMealTimeISO(mealHHMM)
@@ -107,45 +103,19 @@ export default function HomePage() {
       await supabase.from('rooms').update({ meal_time: mealISO }).eq('id', data)
     }
     await applyDefaultPrefs(data)
+    saveLastDeparture(departure!)
     nav(`/room/${data}`)
   }
 
   async function createRoom() {
+    if (!departure) return
     setBusy(true)
     setError('')
-    setLocationError('')
     try {
-      let pos: Coordinates
-      try {
-        pos = await getPosition(navigator.geolocation)
-      } catch {
-        setLocationError('無法取得目前位置（可能未授權、逾時或目前連線不支援定位）。請選擇預設地點或手動指定。')
-        return
-      }
-      await persistRoom(pos)
+      await persistRoom(departure)
     } finally {
       setBusy(false)
     }
-  }
-
-  async function createRoomAt(pos: Coordinates) {
-    setBusy(true)
-    setError('')
-    setLocationError('')
-    try {
-      await persistRoom(pos)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  function createRoomFromManualLocation() {
-    const pos = parseCoordinates(manualLat, manualLng)
-    if (!pos) {
-      setLocationError('請輸入有效的緯度（-90～90）與經度（-180～180）。')
-      return
-    }
-    void createRoomAt(pos)
   }
 
   async function joinRoom(e: React.FormEvent) {
@@ -184,8 +154,9 @@ export default function HomePage() {
         <section className="card animate-rise space-y-3 bg-linear-to-b from-brand-soft to-surface">
           <h1 className="text-2xl font-bold tracking-tight">開一場聚餐決策</h1>
           <p className="text-sm text-fg-muted">
-            以你現在的位置為中心建立房間，把邀請碼給大家，各自設好條件就能開始搜尋。
+            選好出發點與用餐時間建立房間，把邀請碼給大家，各自設好條件就能開始搜尋。
           </p>
+          <LocationPicker value={departure} onChange={setDeparture} />
           <div className="space-y-2">
             <span className="text-sm font-semibold text-fg-muted">用餐時間</span>
             <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
@@ -204,48 +175,11 @@ export default function HomePage() {
                 value={mealHHMM} onChange={e => setMealHHMM(e.target.value)} />
             )}
           </div>
-          <button onClick={createRoom} disabled={busy} className="btn btn-primary w-full">
+          <button onClick={createRoom} disabled={busy || !departure} className="btn btn-primary w-full">
             {busy && <Spinner className="h-5 w-5" />}
-            {busy ? '定位中…' : '建立房間'}
+            {busy ? '建立中…' : '建立房間'}
           </button>
         </section>
-
-        {locationError && (
-          <section role="alert" className="banner flex-col items-stretch gap-3 bg-warn-soft text-warn">
-            <div className="flex items-start gap-2">
-              <Alert className="mt-0.5 h-5 w-5 shrink-0" />
-              <span>{locationError}</span>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button type="button" className="btn btn-primary" disabled={busy}
-                onClick={() => void createRoomAt(FALLBACK)}>
-                改用台北車站
-              </button>
-              <button type="button" className="btn btn-quiet" disabled={busy}
-                onClick={() => setShowManualLocation(show => !show)}>
-                手動輸入座標
-              </button>
-            </div>
-            {showManualLocation && (
-              <div className="grid grid-cols-2 gap-2">
-                <label className="space-y-1 text-xs">
-                  <span>緯度</span>
-                  <input className="field w-full" inputMode="decimal" placeholder="25.0478"
-                    value={manualLat} onChange={e => setManualLat(e.target.value)} />
-                </label>
-                <label className="space-y-1 text-xs">
-                  <span>經度</span>
-                  <input className="field w-full" inputMode="decimal" placeholder="121.517"
-                    value={manualLng} onChange={e => setManualLng(e.target.value)} />
-                </label>
-                <button type="button" className="btn btn-primary col-span-2" disabled={busy}
-                  onClick={createRoomFromManualLocation}>
-                  用這個位置建立
-                </button>
-              </div>
-            )}
-          </section>
-        )}
 
         <section className="card animate-rise space-y-3">
           <h2 className="text-base font-semibold">已經有邀請碼？</h2>
