@@ -4,6 +4,7 @@ import { useRoom } from '../hooks/useRoom'
 import { startVoting } from '../lib/api'
 import { isVetoDeadEnd } from '../lib/deadEnd'
 import { EXPLORATION_OPTIONS } from '../lib/labels'
+import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
 import { isGoogleSourced } from '../lib/placesSource'
 import { supabase } from '../lib/supabase'
 import type { Room } from '../lib/types'
@@ -162,6 +163,7 @@ export default function RoomPage() {
         {(room.status === 'candidates' || room.status === 'voting') && (
           <p className="text-xs text-fg-muted">
             探索檔位：{EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[1]}
+            ・用餐時間：{formatMealTime(room.meal_time)}
           </p>
         )}
         {room.status === 'lobby' && (
@@ -193,6 +195,47 @@ export default function RoomPage() {
                 </button>
               ))}
             </div>
+          </section>
+        )}
+        {room.status === 'lobby' && (
+          <section className="card animate-rise">
+            <h2 className="mb-1 text-sm font-semibold text-fg-muted">用餐時間</h2>
+            <p className="mb-3 text-xs text-fg-muted">
+              {formatMealTime(room.meal_time)}
+              {!isHost && '（由房主設定）'}
+            </p>
+            {isHost && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
+                  <button type="button" aria-pressed={room.meal_time === null}
+                    className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                      room.meal_time === null ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
+                    }`}
+                    onClick={async () => {
+                      setActionError('')
+                      const { error, count } = await supabase.from('rooms')
+                        .update({ meal_time: null }, { count: 'exact' }).eq('id', room.id)
+                      if (error || count === 0) setActionError('用餐時間更新失敗')
+                    }}>
+                    馬上出發
+                  </button>
+                  <label className={`flex min-h-10 items-center justify-center rounded-lg text-sm font-semibold ${
+                    room.meal_time !== null ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
+                  }`}>
+                    自訂時間
+                    <input type="time" className="sr-only" aria-label="用餐時間"
+                      onChange={async e => {
+                        setActionError('')
+                        const r = buildMealTimeISO(e.target.value)
+                        if ('error' in r) { setActionError(r.error); return }
+                        const { error, count } = await supabase.from('rooms')
+                          .update({ meal_time: r.iso }, { count: 'exact' }).eq('id', room.id)
+                        if (error || count === 0) setActionError('用餐時間更新失敗')
+                      }} />
+                  </label>
+                </div>
+              </div>
+            )}
           </section>
         )}
         {room.status === 'lobby' && me && <ConditionsForm me={me} />}

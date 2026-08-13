@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
+import { buildMealTimeISO } from '../lib/mealTime'
 import { suggestCuisines, type HistoryRow } from '../lib/prefsLearning'
 import { getPosition, parseCoordinates, type Coordinates } from '../lib/geolocation'
 import { Alert, Logo, LogOut, Spinner } from '../components/icons'
@@ -39,6 +40,8 @@ export default function HomePage() {
   const [showManualLocation, setShowManualLocation] = useState(false)
   const [manualLat, setManualLat] = useState('')
   const [manualLng, setManualLng] = useState('')
+  const [mealMode, setMealMode] = useState<'now' | 'custom'>('now')
+  const [mealHHMM, setMealHHMM] = useState('')
   const [busy, setBusy] = useState(false)
   const [myUserId, setMyUserId] = useState('')
   const [prefs, setPrefs] = useState<Record<string, unknown>>({})
@@ -83,14 +86,28 @@ export default function HomePage() {
   }, [cancelSuggestionLoads, loadSuggestions])
 
   async function persistRoom(pos: Coordinates) {
+    let mealISO: string | null = null
+    if (mealMode === 'custom') {
+      const r = buildMealTimeISO(mealHHMM)
+      if ('error' in r) {
+        setError(r.error)
+        return
+      }
+      mealISO = r.iso
+    }
     const { data, error } = await supabase.rpc('create_room', {
       p_lat: pos.lat, p_lng: pos.lng,
     })
-    if (error) setError(error.message)
-    else {
-      await applyDefaultPrefs(data)
-      nav(`/room/${data}`)
+    if (error) {
+      setError(error.message)
+      return
     }
+    if (mealISO) {
+      // 失敗靜默接受：房間以「馬上出發」存在，lobby 可重設（spec §4）
+      await supabase.from('rooms').update({ meal_time: mealISO }).eq('id', data)
+    }
+    await applyDefaultPrefs(data)
+    nav(`/room/${data}`)
   }
 
   async function createRoom() {
@@ -169,6 +186,24 @@ export default function HomePage() {
           <p className="text-sm text-fg-muted">
             以你現在的位置為中心建立房間，把邀請碼給大家，各自設好條件就能開始搜尋。
           </p>
+          <div className="space-y-2">
+            <span className="text-sm font-semibold text-fg-muted">用餐時間</span>
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
+              {([['now', '馬上出發'], ['custom', '自訂時間']] as const).map(([key, label]) => (
+                <button key={key} type="button" aria-pressed={mealMode === key}
+                  className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                    mealMode === key ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
+                  }`}
+                  onClick={() => setMealMode(key)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {mealMode === 'custom' && (
+              <input type="time" className="field w-full" aria-label="用餐時間"
+                value={mealHHMM} onChange={e => setMealHHMM(e.target.value)} />
+            )}
+          </div>
           <button onClick={createRoom} disabled={busy} className="btn btn-primary w-full">
             {busy && <Spinner className="h-5 w-5" />}
             {busy ? '定位中…' : '建立房間'}
