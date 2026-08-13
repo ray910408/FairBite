@@ -20,6 +20,14 @@ function waitForRoomRealtime(page: Page) {
   })
 }
 
+// 今日限定的自訂用餐時間：CI 半夜跑到近午夜時退回「馬上出發」，避免跨日 flaky（spec grilling #10）
+function mealTimeForE2E(now = new Date()): string | null {
+  if (now.getHours() === 23 && now.getMinutes() > 40) return null
+  const t = new Date(Math.min(now.getTime() + 2 * 60 * 60 * 1000,
+    new Date(now).setHours(23, 45, 0, 0)))
+  return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
+}
+
 async function signup(page: Page, name: string) {
   await page.goto('/')
   await page.getByRole('button', { name: '註冊', exact: true }).click()
@@ -33,10 +41,14 @@ async function signup(page: Page, name: string) {
 async function createAndJoinRoom(a: Page, b: Page) {
   const aRealtimeReady = waitForRoomRealtime(a)
   await a.getByRole('button', { name: '選擇出發點' }).click()
-  const departureMap = a.getByLabel('出發點地圖')
-  await expect(departureMap).toHaveClass(/leaflet-container/)
-  await departureMap.click({ position: { x: 112, y: 112 } })
+  await a.getByRole('button', { name: '使用目前位置' }).click()
+  await expect(a.getByText('目前位置', { exact: true })).toBeVisible()
   await a.getByRole('button', { name: '完成' }).click()
+  const hhmm = mealTimeForE2E()
+  if (hhmm) {
+    await a.getByRole('button', { name: '自訂時間' }).click()
+    await a.getByLabel('用餐時間').fill(hhmm)
+  }
   await a.getByRole('button', { name: '建立房間' }).click()
   await expect(a.getByText('成員（1）')).toBeVisible()
   await aRealtimeReady
@@ -49,6 +61,8 @@ async function createAndJoinRoom(a: Page, b: Page) {
   await expect(b.getByText('成員（2）')).toBeVisible()
   await bRealtimeReady
   await expect(a.getByText('成員（2）')).toBeVisible()
+  const expected = hhmm ? `今天 ${hhmm}` : '馬上出發'
+  await expect(b.getByText(expected)).toBeVisible() // meal_time 經 Realtime 同步到加入方
 }
 
 async function setConditionsAndReady(page: Page, budget: number) {
@@ -90,7 +104,10 @@ async function retractVeto(page: Page, restaurantName: string) {
 }
 
 test('雙使用者完整閉環（投票版）', async ({ browser }) => {
-  const ctxA = await browser.newContext({ permissions: [] })
+  const ctxA = await browser.newContext({
+    geolocation: { latitude: 25.0478, longitude: 121.517 },
+    permissions: ['geolocation'],
+  })
   const ctxB = await browser.newContext({ permissions: [] })
   const a = await ctxA.newPage()
   const b = await ctxB.newPage()
@@ -247,7 +264,10 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
 })
 
 test('全否決擋抽選（嚴格條件房）', async ({ browser }) => {
-  const ctxA = await browser.newContext({ permissions: [] })
+  const ctxA = await browser.newContext({
+    geolocation: { latitude: 25.0478, longitude: 121.517 },
+    permissions: ['geolocation'],
+  })
   const ctxB = await browser.newContext({ permissions: [] })
   const a = await ctxA.newPage()
   const b = await ctxB.newPage()
