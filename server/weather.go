@@ -135,7 +135,14 @@ func (p *openMeteoProvider) Current(ctx context.Context, lat, lng float64, at ti
 	p.mu.Lock()
 	p.cache[key] = weatherEntry{w: w, at: now}
 	delete(p.failAt, key)
-	// 小時桶會持續增加 key；每次成功寫入順手 O(n) 清理，map 規模小且不需背景 goroutine。
+	p.evictStaleLocked()
+	p.mu.Unlock()
+	return w, nil
+}
+
+// evictStaleLocked 清理小時桶累積的舊狀態；呼叫者必須持有 p.mu。
+func (p *openMeteoProvider) evictStaleLocked() {
+	now := clockNow()
 	for cacheKey, e := range p.cache {
 		if now.Sub(e.at) > 24*time.Hour {
 			delete(p.cache, cacheKey)
@@ -146,12 +153,11 @@ func (p *openMeteoProvider) Current(ctx context.Context, lat, lng float64, at ti
 			delete(p.failAt, failedKey)
 		}
 	}
-	p.mu.Unlock()
-	return w, nil
 }
 
 func (p *openMeteoProvider) markFail(key string, err error) error {
 	p.mu.Lock()
+	p.evictStaleLocked()
 	p.failAt[key] = clockNow()
 	p.mu.Unlock()
 	return err

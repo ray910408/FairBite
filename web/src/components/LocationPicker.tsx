@@ -3,6 +3,7 @@ import type { Map as LeafletMap, Marker } from 'leaflet'
 import { getPosition } from '../lib/geolocation'
 import { searchPlaces, type DeparturePoint } from '../lib/departure'
 import { Spinner } from './icons'
+import { mapSelectionLabel } from './locationPickerLabel'
 
 const DEFAULT_CENTER = { lat: 25.0478, lng: 121.517 } // 台北車站：純地圖顯示預設，不寫入資料
 
@@ -44,12 +45,14 @@ export default function LocationPicker({ value, onChange }: Props) {
       marker.on('dragend', () => {
         const p = marker.getLatLng()
         selectionGen.current++
-        onChange({ lat: p.lat, lng: p.lng, label: valueRef.current?.label ?? '地圖上的位置' })
+        const next = { lat: p.lat, lng: p.lng }
+        onChange({ ...next, label: mapSelectionLabel(valueRef.current, next) })
       })
       map.on('click', e => {
         marker.setLatLng(e.latlng)
         selectionGen.current++
-        onChange({ lat: e.latlng.lat, lng: e.latlng.lng, label: valueRef.current?.label ?? '地圖上的位置' })
+        const next = { lat: e.latlng.lat, lng: e.latlng.lng }
+        onChange({ ...next, label: mapSelectionLabel(valueRef.current, next) })
       })
       mapRef.current = map
       markerRef.current = marker

@@ -135,6 +135,26 @@ func TestWeatherCacheEvictsOldEntriesOnSuccessfulCurrent(t *testing.T) {
 	}
 }
 
+func TestMarkFailEvictsExpiredFailures(t *testing.T) {
+	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
+	originalNow := clockNow
+	now := base.Add(-time.Hour - time.Second)
+	clockNow = func() time.Time { return now }
+	t.Cleanup(func() { clockNow = originalNow })
+
+	p := NewOpenMeteoProvider("").(*openMeteoProvider)
+	p.markFail("old-bucket", fmt.Errorf("old failure"))
+	now = base
+	p.markFail("new-bucket", fmt.Errorf("new failure"))
+
+	if _, ok := p.failAt["old-bucket"]; ok {
+		t.Fatal("markFail 寫入新 bucket 時應淘汰超過一小時的舊 failure")
+	}
+	if _, ok := p.failAt["new-bucket"]; !ok {
+		t.Fatal("markFail 必須保留剛寫入的新 failure")
+	}
+}
+
 // D24/OV#21：negative cache——故障後 1 分鐘內不重複打 API（不重複硬等 timeout）
 func TestWeatherNegativeCache(t *testing.T) {
 	calls := 0
