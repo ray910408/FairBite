@@ -159,6 +159,15 @@ func TestCuisineTagsFastFoodDessertAndLightMeal(t *testing.T) {
 	}
 }
 
+func TestDimSumRestaurantTagsIncludeCuisineAndDietaryConflict(t *testing.T) {
+	tags := gTags(gPlace{Types: []string{"dim_sum_restaurant"}})
+	for _, want := range []string{"cantonese", "dimsum"} {
+		if !hasTag(tags, want) {
+			t.Errorf("dim_sum_restaurant 應產生 %q，got %v", want, tags)
+		}
+	}
+}
+
 func gServer(t *testing.T, fail1st bool) *httptest.Server {
 	t.Helper()
 	var calls atomic.Int32

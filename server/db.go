@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -29,14 +30,15 @@ type RoomRow struct {
 	CenterLat   float64
 	CenterLng   float64
 	Exploration string
+	MealTime    *time.Time // NULL = 馬上出發（spec §4）
 }
 
 func LoadRoom(ctx context.Context, q querier, roomID string) (RoomRow, error) {
 	var r RoomRow
 	err := q.QueryRow(ctx,
-		`select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), exploration
+		`select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), exploration, meal_time
 		 from rooms where id = $1`, roomID).
-		Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.Exploration)
+		Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.Exploration, &r.MealTime)
 	return r, err
 }
 

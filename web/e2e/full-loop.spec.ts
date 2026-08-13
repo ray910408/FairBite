@@ -20,6 +20,15 @@ function waitForRoomRealtime(page: Page) {
   })
 }
 
+// 今日限定的自訂用餐時間：晚間執行時退回「馬上出發」，避免 mock 營業池縮水與跨日 flaky
+function mealTimeForE2E(now = new Date()): string | null {
+  const t = new Date(Math.min(now.getTime() + 2 * 60 * 60 * 1000,
+    new Date(now).setHours(20, 0, 0, 0)))
+  t.setMinutes(Math.floor(t.getMinutes() / 5) * 5, 0, 0)
+  if (t.getTime() <= now.getTime()) return null
+  return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
+}
+
 async function signup(page: Page, name: string) {
   await page.goto('/')
   await page.getByRole('button', { name: '註冊', exact: true }).click()
@@ -32,9 +41,18 @@ async function signup(page: Page, name: string) {
 
 async function createAndJoinRoom(a: Page, b: Page) {
   const aRealtimeReady = waitForRoomRealtime(a)
+  await a.getByRole('button', { name: '選擇出發點' }).click()
+  await a.getByRole('button', { name: '使用目前位置' }).click()
+  await expect(a.getByText('目前位置', { exact: true })).toBeVisible()
+  await a.getByRole('button', { name: '完成' }).click()
+  const hhmm = mealTimeForE2E()
+  if (hhmm) {
+    await a.getByRole('button', { name: '自訂時間' }).click()
+    const [hh, mm] = hhmm.split(':')
+    await a.getByLabel('用餐時間（時）').selectOption(hh)
+    await a.getByLabel('用餐時間（分）').selectOption(mm)
+  }
   await a.getByRole('button', { name: '建立房間' }).click()
-  await expect(a.getByText(/無法取得目前位置/)).toBeVisible()
-  await a.getByRole('button', { name: '改用台北車站' }).click()
   await expect(a.getByText('成員（1）')).toBeVisible()
   await aRealtimeReady
   const code = (await a.locator('header button.font-mono').innerText()).trim()
@@ -46,6 +64,8 @@ async function createAndJoinRoom(a: Page, b: Page) {
   await expect(b.getByText('成員（2）')).toBeVisible()
   await bRealtimeReady
   await expect(a.getByText('成員（2）')).toBeVisible()
+  const expected = hhmm ? `今天 ${hhmm}` : '馬上出發'
+  await expect(b.getByText(expected)).toBeVisible() // meal_time 經 Realtime 同步到加入方
 }
 
 async function setConditionsAndReady(page: Page, budget: number) {
@@ -87,7 +107,10 @@ async function retractVeto(page: Page, restaurantName: string) {
 }
 
 test('雙使用者完整閉環（投票版）', async ({ browser }) => {
-  const ctxA = await browser.newContext({ permissions: [] }) // 拒絕定位後由使用者明確選擇台北車站
+  const ctxA = await browser.newContext({
+    geolocation: { latitude: 25.0478, longitude: 121.517 },
+    permissions: ['geolocation'],
+  })
   const ctxB = await browser.newContext({ permissions: [] })
   const a = await ctxA.newPage()
   const b = await ctxB.newPage()
@@ -244,7 +267,10 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
 })
 
 test('全否決擋抽選（嚴格條件房）', async ({ browser }) => {
-  const ctxA = await browser.newContext({ permissions: [] })
+  const ctxA = await browser.newContext({
+    geolocation: { latitude: 25.0478, longitude: 121.517 },
+    permissions: ['geolocation'],
+  })
   const ctxB = await browser.newContext({ permissions: [] })
   const a = await ctxA.newPage()
   const b = await ctxB.newPage()

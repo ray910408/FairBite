@@ -137,10 +137,10 @@ func hardExclude(r Restaurant, ms []Member, now time.Time) (kinds, reasons []str
 			reasons = append(reasons, fmt.Sprintf("價位約 NT$%d，超過 %s 的預算上限 NT$%d", price, minName, minBudget))
 		}
 	}
-	// 比照未知價位先例：未知不排除，不能把缺少時段當成目前未營業。
+	// 比照未知價位先例：未知不排除，不能把缺少時段當成用餐時間未營業。
 	if len(r.Hours) > 0 && !r.Hours.IsOpenAt(now) {
 		addKind("closed")
-		reasons = append(reasons, "目前未營業")
+		reasons = append(reasons, "用餐時間未營業")
 	}
 	return kinds, reasons
 }
@@ -345,8 +345,9 @@ func closingFactor(r Restaurant, in EngineInput) TraceEntry {
 	}
 	left := r.Hours.MinutesUntilClose(in.Now)
 	if left >= 0 && left < ClosingSoonMinutes {
+		closeAt := in.Now.Add(time.Duration(left) * time.Minute)
 		return TraceEntry{"closing_soon", ClosingSoonMult,
-			fmt.Sprintf("%d 分鐘後打烊", left)}
+			fmt.Sprintf("%s 打烊", closeAt.Format("15:04"))}
 	}
 	return TraceEntry{"closing_soon", 1.0, "營業時間充裕"}
 }

@@ -1,9 +1,10 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
 import { startVoting } from '../lib/api'
 import { isVetoDeadEnd } from '../lib/deadEnd'
 import { EXPLORATION_OPTIONS } from '../lib/labels'
+import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
 import { isGoogleSourced } from '../lib/placesSource'
 import { supabase } from '../lib/supabase'
 import type { Room } from '../lib/types'
@@ -50,8 +51,18 @@ export default function RoomPage() {
   const [actionError, setActionError] = useState('')
   const [actionWarning, setActionWarning] = useState('')
   const [copied, setCopied] = useState(false)
+  const [editingCustom, setEditingCustom] = useState(false)
+  const [draftHH, setDraftHH] = useState('')
+  const [draftMM, setDraftMM] = useState('')
+  const mealTimeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const mealTimeChain = useRef(Promise.resolve())
   const searchInFlight = useRef(false)
   const startVotingInFlight = useRef(false)
+  useEffect(() => {
+    const d = room?.meal_time ? new Date(room.meal_time) : null
+    setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
+    setDraftMM(d ? String(d.getMinutes()).padStart(2, '0') : '')
+  }, [room?.meal_time])
   if (!room) return notFound ? (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
       <Logo className="h-12 w-12 opacity-60" />
@@ -67,6 +78,40 @@ export default function RoomPage() {
 
   const me = members.find(m => m.user_id === myUserId)
   const isHost = room.host_id === myUserId
+  async function doWriteMealTime(iso: string | null) {
+    const { error, count } = await supabase.from('rooms')
+      .update({ meal_time: iso }, { count: 'exact' }).eq('id', room!.id)
+    if (error || count === 0) {
+      const d = room?.meal_time ? new Date(room.meal_time) : null
+      setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
+      setDraftMM(d ? String(d.getMinutes()).padStart(2, '0') : '')
+      setActionError('用餐時間更新失敗')
+    } else if (iso === null) {
+      setEditingCustom(false)
+      setDraftHH('')
+      setDraftMM('')
+    }
+  }
+
+  function cancelPendingMealTime() {
+    clearTimeout(mealTimeTimer.current)
+    mealTimeTimer.current = undefined
+  }
+
+  function saveMealTime(iso: string | null) {
+    setActionError('')
+    cancelPendingMealTime()
+    mealTimeTimer.current = setTimeout(() => {
+      mealTimeChain.current = mealTimeChain.current.then(() => doWriteMealTime(iso))
+    }, 400)
+  }
+
+  function updateMealTime(hhmm: string) {
+    setActionError('')
+    const r = buildMealTimeISO(hhmm)
+    if ('error' in r) { setActionError(r.error); return }
+    saveMealTime(r.iso)
+  }
 
   async function copyCode() {
     try {
@@ -162,6 +207,7 @@ export default function RoomPage() {
         {(room.status === 'candidates' || room.status === 'voting') && (
           <p className="text-xs text-fg-muted">
             探索檔位：{EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[1]}
+            ・用餐時間：{formatMealTime(room.meal_time)}
           </p>
         )}
         {room.status === 'lobby' && (
@@ -193,6 +239,69 @@ export default function RoomPage() {
                 </button>
               ))}
             </div>
+          </section>
+        )}
+        {room.status === 'lobby' && (
+          <section className="card animate-rise">
+            <h2 className="mb-1 text-sm font-semibold text-fg-muted">用餐時間</h2>
+            <p className="mb-3 text-xs text-fg-muted">
+              {formatMealTime(room.meal_time)}
+              {!isHost && '（由房主設定）'}
+            </p>
+            {isHost && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
+                  <button type="button" aria-pressed={room.meal_time === null && !editingCustom}
+                    className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                      room.meal_time === null && !editingCustom
+                        ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
+                    }`}
+                    onClick={() => saveMealTime(null)}>
+                    馬上出發
+                  </button>
+                  <button type="button" aria-pressed={room.meal_time !== null || editingCustom}
+                    className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                      room.meal_time !== null || editingCustom
+                        ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
+                    }`}
+                    onClick={() => {
+                      cancelPendingMealTime()
+                      setEditingCustom(true)
+                    }}>
+                    自訂時間
+                  </button>
+                </div>
+                {(editingCustom || room.meal_time !== null) && (
+                  <div className="flex items-center gap-2">
+                    <select className="field flex-1" aria-label="用餐時間（時）"
+                      value={draftHH}
+                      onChange={e => {
+                        const hh = e.target.value
+                        setDraftHH(hh)
+                        if (hh && draftMM) void updateMealTime(`${hh}:${draftMM}`)
+                      }}>
+                      <option value="" disabled>時</option>
+                      {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0')).map(h => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                    <span className="text-fg-muted">:</span>
+                    <select className="field flex-1" aria-label="用餐時間（分）"
+                      value={draftMM}
+                      onChange={e => {
+                        const mm = e.target.value
+                        setDraftMM(mm)
+                        if (draftHH && mm) void updateMealTime(`${draftHH}:${mm}`)
+                      }}>
+                      <option value="" disabled>分</option>
+                      {Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0')).map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
           </section>
         )}
         {room.status === 'lobby' && me && <ConditionsForm me={me} />}

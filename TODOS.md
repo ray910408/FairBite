@@ -13,14 +13,11 @@
 
 - **restaurants.cuisine_tags 無 jsonb 元素型別 CHECK：** 0001 連 array CHECK 都沒有；D5 的論證同樣適用，但僅 service role 寫入且來源為 Google Places，風險低。下次修改 `restaurants` schema 時順手補。
 
-- **晚餐/其他時段 × 菜系加成：** 待 provider tag 詞彙擴充、`googleTypeTags` 有真實對映後回歸；新增 slot 的前置條件已註記於 `server/weights.go`（P3 eng review D23）。
+- **晚餐/其他時段 × 菜系加成：** 待 provider tag 詞彙擴充、`googleTypeTags` 有真實對映後回歸；新增 slot 的前置條件已註記於 `server/weights.go`（P3 eng review D23）。（2026-08-13：hotpot 已有真實映射，前置滿足；開 slot 與否仍是獨立產品決策。）
 
 - **均勻倍率 chip 策略：** timeslot 全場命中、rain 全場飽和、「推薦過但尚未中選」穩態 chip 三案併為一次決策：由引擎 guard 或 web 端過濾（P3 batch 1 final review）。
 
-### CUISINE 選項的 Google 缺口（產品決策待定，2026-08-11）
-
-- **What:** `CUISINE_OPTIONS` 的 cantonese/sichuan/hotpot 在 Google provider 下無法命中；三個菜系 tag 只有 mockdata 產得出來。`server/tags_test.go` 已釘住現狀缺口，變動必須是刻意決策。清真選項已依 2026-08-12 產品決策移除，不再是待辦。
-- **Why:** 提供產不出結果的選項會靜默拖累勾選成員的滿足度 EMA（永無 pref hit）。需決定移除、重映射（如 cantonese ← 部分 chinese_restaurant）或標註 UI 提示。
+- ~~CUISINE 選項的 Google 缺口~~ 已結案（2026-08-13）：cantonese/hotpot 補真實映射（0018 回填）、sichuan 移除；tags_test gap pin 清空。
 
 ### Google Places attribution logo 確認（正式上線前）
 
@@ -59,6 +56,14 @@
 
 - **What:** 審查建議讓 web 消費 vote 回應的 `vetoes_remaining`，取代目前由票列本地推導剩餘否決額度。
 - **Why:** 多分頁或 Realtime 中斷時，本地推導的剩餘額度會落後真實值。現況依 ADR-0003（`docs/adr/0003-centralized-vote-write-command.md`）：payload 仍是 API contract 的一部分，但 web 不消費，成功後靠 Realtime + debounce refetch 對齊。若日後出現實際回報再改。
+
+## Round 1 final review 遞延（2026-08-13）
+
+- **LocationPicker 錯誤處理 polish 三合一**：Leaflet dynamic import 加 `.catch`（現為灰框靜默）、searchPlaces 逾時/離線錯誤中文化（現原文英文直出）、錯誤訊息補 `role="alert"`。起點 `web/src/components/LocationPicker.tsx`。
+- **雙頁時/分 select JSX 抽共用元件**：HomePage/RoomPage 各 18 行複製；第三處出現再動手。
+- **E2E 地圖渲染守門**：full-loop 補一行 `.leaflet-container` visible 斷言（原斷言在選點器改版時被刪）。
+- **mealTimeForE2E 守門加 +60s 緩衝**：`t <= now` 瞬時比較在每日 19:55–20:00 有數秒級 flaky 窗口。
+- **mockdata mock-008 的 sichuan 詞彙孤兒**：下次動 mockdata.go 時順手清（本輪 brief 禁改）。
 
 ## P2 候選
 

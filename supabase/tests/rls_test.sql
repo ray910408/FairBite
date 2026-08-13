@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(37);
+select plan(45);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -132,9 +132,10 @@ select results_eq(
     from information_schema.role_column_grants
     where grantee = 'authenticated' and table_schema = 'public'
       and table_name = 'rooms' and privilege_type = 'UPDATE'
+    order by 1
   $$,
-  $$ values ('exploration') $$,
-  'rooms 的 UPDATE 欄級 grant 僅 exploration');
+  $$ values ('exploration'), ('meal_time') $$,
+  'rooms 的 UPDATE 欄級 grant 僅 exploration 與 meal_time');
 
 -- 0015：rooms 的 SELECT 也收成欄級。center_lat/center_lng 不在清單裡是刻意的——
 -- 搜尋圓心就是房主建房當下的精確位置，開給同房成員讀等於把房主的家門口攤給
@@ -148,7 +149,7 @@ select results_eq(
       and table_name = 'rooms' and privilege_type = 'SELECT'
     order by 1
   $$,
-  $$ values ('code'), ('created_at'), ('exploration'), ('host_id'), ('id'), ('status') $$,
+  $$ values ('code'), ('created_at'), ('exploration'), ('host_id'), ('id'), ('meal_time'), ('status') $$,
   'rooms 的 SELECT 欄級 grant 精確等於預期欄位集合（center_* 加回去即紅）');
 
 -- 同一條防線的行為面。上面比對 catalog，這條實際用同房成員的身分去讀 center_lat。
@@ -182,6 +183,12 @@ select lives_ok(
 select is(
   (select exploration from public.rooms where id = (select id from ctx)),
   'explore', '檔位已更新');
+select lives_ok(
+  format($$update public.rooms set meal_time = now() + interval '2 hours' where id = %L$$, (select id from ctx)),
+  '房主可在 lobby 設定用餐時間');
+select ok(
+  (select meal_time is not null from public.rooms where id = (select id from ctx)),
+  '用餐時間已寫入');
 reset role;
 update public.rooms set status = 'candidates' where id = (select id from ctx);
 set local role authenticated;
@@ -189,6 +196,9 @@ set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000a1",
 select throws_ok(
   format($$update public.rooms set exploration = 'familiar' where id = %L$$, (select id from ctx)),
   '探索檔位僅能在等待階段調整');
+select throws_ok(
+  format($$update public.rooms set meal_time = now() + interval '3 hours' where id = %L$$, (select id from ctx)),
+  '用餐時間僅能在等待階段調整');
 
 -- join_room 限流：一分鐘內第 11 次嘗試被拒（先灌 10 筆再打）
 reset role;
@@ -310,5 +320,86 @@ select is(
   (select cuisine_tags from public.restaurants where place_id = 'pg-bf-3'),
   '["light_meal"]'::jsonb, '已含 light_meal 的 deli 不重複串接（回填冪等）');
 
+-- ============ 0018：cantonese/hotpot 回填 ============
+-- 與 0016 段同款：複製 migration 的 UPDATE 驗邏輯，改一邊要改兩邊。
+reset role;
+insert into public.restaurants (id, place_id, name, lat, lng, source, primary_type, cuisine_tags) values
+  ('99999999-9999-9999-9999-999999999921', 'pg-bf-4', '港式餐廳', 25.04, 121.51, 'google',
+   'cantonese_restaurant', '[]'::jsonb),
+  ('99999999-9999-9999-9999-999999999922', 'pg-bf-5', '火鍋店', 25.04, 121.51, 'google',
+   'hot_pot_restaurant', '[]'::jsonb),
+  -- 已含 cantonese 的飲茶列（模擬重跑/已自癒）
+  ('99999999-9999-9999-9999-999999999923', 'pg-bf-6', '飲茶樓', 25.04, 121.51, 'google',
+   'dim_sum_restaurant', '["cantonese"]'::jsonb);
+
+do $$
+begin
+  for i in 1..2 loop
+    update public.restaurants
+    set cuisine_tags = cuisine_tags || '["cantonese"]'::jsonb
+    where primary_type in ('cantonese_restaurant', 'dim_sum_restaurant')
+      and not cuisine_tags @> '["cantonese"]'::jsonb;
+
+    update public.restaurants
+    set cuisine_tags = cuisine_tags || '["dimsum"]'::jsonb
+    where primary_type = 'dim_sum_restaurant'
+      and not cuisine_tags @> '["dimsum"]'::jsonb;
+
+    update public.restaurants
+    set cuisine_tags = cuisine_tags || '["hotpot"]'::jsonb
+    where primary_type = 'hot_pot_restaurant'
+      and not cuisine_tags @> '["hotpot"]'::jsonb;
+  end loop;
+end $$;
+
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-bf-4'),
+  '["cantonese"]'::jsonb, 'cantonese_restaurant 的空 tags 補到 cantonese');
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-bf-5'),
+  '["hotpot"]'::jsonb, 'hot_pot_restaurant 的空 tags 補到 hotpot');
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-bf-6'),
+  '["cantonese", "dimsum"]'::jsonb, '已含 cantonese 的飲茶列補上 dimsum，且重跑不重複串接');
+
+-- ============ 0019：清除既存 sichuan 選項 ============
+-- 與 0016/0018 段同款：複製 migration 的 UPDATE 驗邏輯，改一邊要改兩邊。
+reset role;
+insert into public.rooms (id, host_id, center_lat, center_lng) values
+  ('88888888-8888-8888-8888-888888888901', '00000000-0000-0000-0000-0000000000a1', 25.04, 121.51);
+insert into public.room_members (room_id, user_id) values
+  ('88888888-8888-8888-8888-888888888901', '00000000-0000-0000-0000-0000000000a1');
+update public.room_members
+set cuisines = '["sichuan", "japanese"]'::jsonb
+where room_id = '88888888-8888-8888-8888-888888888901'
+  and user_id = '00000000-0000-0000-0000-0000000000a1';
+update public.profiles
+set default_prefs = '{"cuisines":["sichuan","thai"],"budget_max":800}'::jsonb
+where id = '00000000-0000-0000-0000-0000000000a1';
+
+-- 跑兩次：第二次必須是 no-op，證明一次性出清可安全重跑。
+do $$
+begin
+  for i in 1..2 loop
+    update public.room_members
+    set cuisines = cuisines - 'sichuan'
+    where cuisines @> '["sichuan"]'::jsonb;
+
+    update public.profiles
+    set default_prefs = jsonb_set(default_prefs, '{cuisines}',
+      (default_prefs->'cuisines') - 'sichuan')
+    where default_prefs->'cuisines' @> '["sichuan"]'::jsonb;
+  end loop;
+end $$;
+
+select is(
+  (select cuisines from public.room_members
+    where room_id = '88888888-8888-8888-8888-888888888901'
+      and user_id = '00000000-0000-0000-0000-0000000000a1'),
+  '["japanese"]'::jsonb, 'room_members.cuisines 清掉 sichuan 並保留其餘選項');
+select is(
+  (select default_prefs->'cuisines' from public.profiles
+    where id = '00000000-0000-0000-0000-0000000000a1'),
+  '["thai"]'::jsonb, 'profiles.default_prefs 清掉 sichuan 並保留其餘選項');
 select * from finish();
 rollback;

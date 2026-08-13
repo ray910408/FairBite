@@ -45,3 +45,16 @@ func loadAppLocationAfterDotenv(dotenvFiles ...string) (*time.Location, error) {
 func nowInAppTZ() time.Time {
 	return clockNow().In(appLocation)
 }
+
+// roomEvalTime：所有時間敏感判定（營業/快打烊/天氣/時段）的單一評估時刻。
+// T' = max(now, meal_time)：用餐時間是「抵達時刻」（CONTEXT.md），已過期的房
+// （19:00 的房 19:30 才抽）退回當下評估，不炸也不用未來式。NULL = 馬上出發。
+func roomEvalTime(room RoomRow) time.Time {
+	now := nowInAppTZ()
+	if room.MealTime != nil {
+		if t := room.MealTime.In(appLocation); t.After(now) {
+			return t
+		}
+	}
+	return now
+}

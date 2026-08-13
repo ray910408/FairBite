@@ -9,6 +9,8 @@ export type Room = {
   host_id: string
   status: 'lobby' | 'candidates' | 'voting' | 'decided'
   exploration: 'familiar' | 'balanced' | 'explore'
+  // NULL = 馬上出發（migration 0017）
+  meal_time: string | null
 }
 
 export type MemberRow = {

@@ -143,7 +143,7 @@ func TestUnknownHoursNeverExcludeOrApplyClosingFactor(t *testing.T) {
 				}
 				if len(res.Excluded) != 1 || res.Excluded[0].PlaceID != closed.PlaceID ||
 					!hasKind(res.Excluded[0].Kinds, "closed") ||
-					!strings.Contains(res.Excluded[0].Reason, "目前未營業") {
+					!strings.Contains(res.Excluded[0].Reason, "用餐時間未營業") {
 					t.Fatalf("已知未營業控制組應排除，got %+v", res.Excluded)
 				}
 			})
@@ -394,6 +394,9 @@ func TestClosingSoonDemoted(t *testing.T) {
 	got := byID["soon"].Score
 	if got < want-0.0001 || got > want+0.0001 {
 		t.Errorf("即將打烊應 ×%.1f：got %f want %f", ClosingSoonMult, got, want)
+	}
+	if entry := closingFactor(soon, EngineInput{Now: lunchMonday}); entry.Reason != "12:30 打烊" {
+		t.Errorf("打烊理由應顯示絕對時刻，got %q", entry.Reason)
 	}
 }
 
