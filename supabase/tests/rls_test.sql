@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(37);
+select plan(40);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -132,9 +132,10 @@ select results_eq(
     from information_schema.role_column_grants
     where grantee = 'authenticated' and table_schema = 'public'
       and table_name = 'rooms' and privilege_type = 'UPDATE'
+    order by 1
   $$,
-  $$ values ('exploration') $$,
-  'rooms 的 UPDATE 欄級 grant 僅 exploration');
+  $$ values ('exploration'), ('meal_time') $$,
+  'rooms 的 UPDATE 欄級 grant 僅 exploration 與 meal_time');
 
 -- 0015：rooms 的 SELECT 也收成欄級。center_lat/center_lng 不在清單裡是刻意的——
 -- 搜尋圓心就是房主建房當下的精確位置，開給同房成員讀等於把房主的家門口攤給
@@ -148,7 +149,7 @@ select results_eq(
       and table_name = 'rooms' and privilege_type = 'SELECT'
     order by 1
   $$,
-  $$ values ('code'), ('created_at'), ('exploration'), ('host_id'), ('id'), ('status') $$,
+  $$ values ('code'), ('created_at'), ('exploration'), ('host_id'), ('id'), ('meal_time'), ('status') $$,
   'rooms 的 SELECT 欄級 grant 精確等於預期欄位集合（center_* 加回去即紅）');
 
 -- 同一條防線的行為面。上面比對 catalog，這條實際用同房成員的身分去讀 center_lat。
@@ -182,6 +183,12 @@ select lives_ok(
 select is(
   (select exploration from public.rooms where id = (select id from ctx)),
   'explore', '檔位已更新');
+select lives_ok(
+  format($$update public.rooms set meal_time = now() + interval '2 hours' where id = %L$$, (select id from ctx)),
+  '房主可在 lobby 設定用餐時間');
+select ok(
+  (select meal_time is not null from public.rooms where id = (select id from ctx)),
+  '用餐時間已寫入');
 reset role;
 update public.rooms set status = 'candidates' where id = (select id from ctx);
 set local role authenticated;
@@ -189,6 +196,9 @@ set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000a1",
 select throws_ok(
   format($$update public.rooms set exploration = 'familiar' where id = %L$$, (select id from ctx)),
   '探索檔位僅能在等待階段調整');
+select throws_ok(
+  format($$update public.rooms set meal_time = now() + interval '3 hours' where id = %L$$, (select id from ctx)),
+  '用餐時間僅能在等待階段調整');
 
 -- join_room 限流：一分鐘內第 11 次嘗試被拒（先灌 10 筆再打）
 reset role;
