@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { loadLastDeparture, saveLastDeparture, searchPlaces } from './departure'
+import { _resetSearchThrottleForTests, loadLastDeparture, saveLastDeparture, searchPlaces } from './departure'
 
 describe('searchPlaces', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    _resetSearchThrottleForTests()
   })
 
   it('連續搜尋至少間隔一秒才送出第二個請求', async () => {

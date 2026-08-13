@@ -4,6 +4,11 @@ export type DeparturePoint = { lat: number; lng: number; label: string }
 
 let lastSearchAt = 0
 
+// 測試用：模組層 throttle 狀態的唯一重置出口（fake timers 會汙染 lastSearchAt）
+export function _resetSearchThrottleForTests() {
+  lastSearchAt = 0
+}
+
 export async function searchPlaces(query: string): Promise<DeparturePoint[]> {
   // Nominatim 使用政策：絕對上限 1 req/s——送出制之外再加最小間隔保險
   const wait = lastSearchAt + 1000 - Date.now()
