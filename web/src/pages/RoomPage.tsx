@@ -55,6 +55,7 @@ export default function RoomPage() {
   const [draftHH, setDraftHH] = useState('')
   const [draftMM, setDraftMM] = useState('')
   const mealTimeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const mealTimeChain = useRef(Promise.resolve())
   const searchInFlight = useRef(false)
   const startVotingInFlight = useRef(false)
   useEffect(() => {
@@ -77,22 +78,26 @@ export default function RoomPage() {
 
   const me = members.find(m => m.user_id === myUserId)
   const isHost = room.host_id === myUserId
+  async function doWriteMealTime(iso: string | null) {
+    const { error, count } = await supabase.from('rooms')
+      .update({ meal_time: iso }, { count: 'exact' }).eq('id', room!.id)
+    if (error || count === 0) {
+      const d = room?.meal_time ? new Date(room.meal_time) : null
+      setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
+      setDraftMM(d ? String(d.getMinutes()).padStart(2, '0') : '')
+      setActionError('用餐時間更新失敗')
+    } else if (iso === null) {
+      setEditingCustom(false)
+      setDraftHH('')
+      setDraftMM('')
+    }
+  }
+
   function saveMealTime(iso: string | null) {
     setActionError('')
     clearTimeout(mealTimeTimer.current)
-    mealTimeTimer.current = setTimeout(async () => {
-      const { error, count } = await supabase.from('rooms')
-        .update({ meal_time: iso }, { count: 'exact' }).eq('id', room!.id)
-      if (error || count === 0) {
-        const d = room?.meal_time ? new Date(room.meal_time) : null
-        setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
-        setDraftMM(d ? String(d.getMinutes()).padStart(2, '0') : '')
-        setActionError('用餐時間更新失敗')
-      } else if (iso === null) {
-        setEditingCustom(false)
-        setDraftHH('')
-        setDraftMM('')
-      }
+    mealTimeTimer.current = setTimeout(() => {
+      mealTimeChain.current = mealTimeChain.current.then(() => doWriteMealTime(iso))
     }, 400)
   }
 

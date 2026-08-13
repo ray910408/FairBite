@@ -80,7 +80,7 @@ func TestCurrentCachedServesStale(t *testing.T) {
 }
 
 func TestCurrentCachedFallsBackToPreviousHourBucket(t *testing.T) {
-	base := time.Date(2026, 8, 13, 18, 0, 0, 0, appLocation)
+	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
 	originalNow := clockNow
 	clockNow = func() time.Time { return base }
 	t.Cleanup(func() { clockNow = originalNow })
@@ -94,11 +94,44 @@ func TestCurrentCachedFallsBackToPreviousHourBucket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := p.CurrentCached(25, 121, base.Add(time.Hour)); !ok || got != want {
-		t.Fatalf("前一小時桶應命中相同值：got=%v want=%v ok=%v", got, want, ok)
+	future := base.Add(time.Hour)
+	if got, ok := p.CurrentCached(25, 121, future); ok {
+		t.Fatalf("未來時段不得撿前一小時桶：got=%v", got)
+	}
+	clockNow = func() time.Time { return future }
+	if got, ok := p.CurrentCached(25, 121, future); !ok || got != want {
+		t.Fatalf("牆鐘跨整點後，當下小時應命中前桶：got=%v want=%v ok=%v", got, want, ok)
 	}
 	if got, ok := p.CurrentCached(25, 121, base.Add(2*time.Hour)); ok {
 		t.Fatalf("跨兩個整點應 miss：got=%v", got)
+	}
+}
+
+func TestWeatherCacheEvictsOldEntriesOnSuccessfulCurrent(t *testing.T) {
+	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
+	originalNow := clockNow
+	clockNow = func() time.Time { return base }
+	t.Cleanup(func() { clockNow = originalNow })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"current":{"precipitation":0.8}}`)
+	}))
+	defer srv.Close()
+	p := NewOpenMeteoProvider(srv.URL).(*openMeteoProvider)
+	p.cache["old-cache"] = weatherEntry{w: Weather{RainMM: 9}, at: base.Add(-24*time.Hour - time.Second)}
+	p.failAt["old-failure"] = base.Add(-time.Hour - time.Second)
+
+	if _, err := p.Current(context.Background(), 25, 121, base); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.cache["old-cache"]; ok {
+		t.Fatal("成功寫入後應淘汰超過 24 小時的 weather cache")
+	}
+	if _, ok := p.failAt["old-failure"]; ok {
+		t.Fatal("成功寫入後應淘汰超過 1 小時的 negative cache")
+	}
+	if _, ok := p.cache[weatherKey(25, 121, base)]; !ok {
+		t.Fatal("成功抓取的新 weather cache 必須保留")
 	}
 }
 

@@ -24,8 +24,8 @@ type WeatherProvider interface {
 }
 
 // Open-Meteo：免費免金鑰（spec §2）。快取 15 分鐘：每次投票 rescore 都會查天氣，
-// 天氣變化也用不到更細的粒度。
-// ponytail: 快取 map 無淘汰；key 是 0.01 度格（約 1km），個人規模的相異房間中心有限
+// 天氣變化也用不到更細的粒度。小時桶 key 讓「座標格有限」不再能約束 map 大小，
+// 因此成功寫入時惰性淘汰；serve-stale 只需涵蓋投票時長，保留 24 小時已綽綽有餘。
 type openMeteoProvider struct {
 	baseURL string
 	client  *http.Client
@@ -131,9 +131,21 @@ func (p *openMeteoProvider) Current(ctx context.Context, lat, lng float64, at ti
 		}
 		w = Weather{RainMM: rain}
 	}
+	now := clockNow()
 	p.mu.Lock()
-	p.cache[key] = weatherEntry{w: w, at: clockNow()}
+	p.cache[key] = weatherEntry{w: w, at: now}
 	delete(p.failAt, key)
+	// 小時桶會持續增加 key；每次成功寫入順手 O(n) 清理，map 規模小且不需背景 goroutine。
+	for cacheKey, e := range p.cache {
+		if now.Sub(e.at) > 24*time.Hour {
+			delete(p.cache, cacheKey)
+		}
+	}
+	for failedKey, failedAt := range p.failAt {
+		if now.Sub(failedAt) > time.Hour {
+			delete(p.failAt, failedKey)
+		}
+	}
 	p.mu.Unlock()
 	return w, nil
 }
@@ -147,16 +159,20 @@ func (p *openMeteoProvider) markFail(key string, err error) error {
 
 // CurrentCached：serve-stale（D24/OV#11）——曾抓到就用，**不看 TTL**。
 // 投票期間 weather 因素持續存在、不因 TTL 過期而「有/無跳動」；
-// 新鮮度由 search/draw 的 blocking Current 維護。重啟後首votes無天氣（罕見、可接受）。
-// 快取 key 含小時桶後，serve-stale 由「同桶或前一桶」維持；跨兩整點的長投票仍會退中性，由 draw 的權威重抓收斂。
+// 新鮮度由 search/draw 的 blocking Current 維護。重啟後首 votes 無天氣（罕見、可接受）。
+// 「馬上出發」的評估時刻會跟牆鐘跨整點，當下小時可退回前一桶避免投票因素跳動；
+// 未來 meal_time 桶位固定，抓取失敗就維持中性，不得借用 H-1 的其他時段資料。
 func (p *openMeteoProvider) CurrentCached(lat, lng float64, at time.Time) (Weather, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if e, ok := p.cache[weatherKey(lat, lng, at)]; ok {
 		return e.w, true
 	}
-	if e, ok := p.cache[weatherKey(lat, lng, at.Add(-time.Hour))]; ok {
-		return e.w, true
+	hour := at.In(appLocation).Format("2006-01-02T15")
+	if hour == clockNow().In(appLocation).Format("2006-01-02T15") {
+		if e, ok := p.cache[weatherKey(lat, lng, at.Add(-time.Hour))]; ok {
+			return e.w, true
+		}
 	}
 	return Weather{}, false
 }

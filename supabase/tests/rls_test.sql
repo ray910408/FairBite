@@ -341,6 +341,11 @@ begin
       and not cuisine_tags @> '["cantonese"]'::jsonb;
 
     update public.restaurants
+    set cuisine_tags = cuisine_tags || '["dimsum"]'::jsonb
+    where primary_type = 'dim_sum_restaurant'
+      and not cuisine_tags @> '["dimsum"]'::jsonb;
+
+    update public.restaurants
     set cuisine_tags = cuisine_tags || '["hotpot"]'::jsonb
     where primary_type = 'hot_pot_restaurant'
       and not cuisine_tags @> '["hotpot"]'::jsonb;
@@ -355,7 +360,7 @@ select is(
   '["hotpot"]'::jsonb, 'hot_pot_restaurant 的空 tags 補到 hotpot');
 select is(
   (select cuisine_tags from public.restaurants where place_id = 'pg-bf-6'),
-  '["cantonese"]'::jsonb, '已含 cantonese 的飲茶列不重複串接（回填冪等）');
+  '["cantonese", "dimsum"]'::jsonb, '已含 cantonese 的飲茶列補上 dimsum，且重跑不重複串接');
 
 -- ============ 0019：清除既存 sichuan 選項 ============
 -- 與 0016/0018 段同款：複製 migration 的 UPDATE 驗邏輯，改一邊要改兩邊。

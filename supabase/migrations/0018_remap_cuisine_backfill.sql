@@ -1,4 +1,5 @@
 -- 回填既有快取列的 cuisine_tags：cantonese_restaurant / dim_sum_restaurant → cantonese、
+-- dim_sum_restaurant → dimsum（供 no_pork 硬排除比對）、
 -- hot_pot_restaurant → hotpot。
 --
 -- 為什麼需要：這三種 primaryType 一直通過 gIsMealPrimaryType（_restaurant 後綴），快取裡
@@ -11,12 +12,17 @@
 -- 這類列補不到——下一次成功 fetch 由 UpsertRestaurants 自癒。
 --
 -- 冪等：只在尚未含該標籤時才串接。
--- 下面兩段 UPDATE 與 supabase/tests/rls_test.sql 末段逐字相同（migration 只跑一次，測試
+-- 下面三段 UPDATE 與 supabase/tests/rls_test.sql 末段逐字相同（migration 只跑一次，測試
 -- 無從重放，只能複製同一段邏輯）；改這裡就要一起改那裡。
 update public.restaurants
 set cuisine_tags = cuisine_tags || '["cantonese"]'::jsonb
 where primary_type in ('cantonese_restaurant', 'dim_sum_restaurant')
   and not cuisine_tags @> '["cantonese"]'::jsonb;
+
+update public.restaurants
+set cuisine_tags = cuisine_tags || '["dimsum"]'::jsonb
+where primary_type = 'dim_sum_restaurant'
+  and not cuisine_tags @> '["dimsum"]'::jsonb;
 
 update public.restaurants
 set cuisine_tags = cuisine_tags || '["hotpot"]'::jsonb
