@@ -395,6 +395,9 @@ func TestClosingSoonDemoted(t *testing.T) {
 	if got < want-0.0001 || got > want+0.0001 {
 		t.Errorf("即將打烊應 ×%.1f：got %f want %f", ClosingSoonMult, got, want)
 	}
+	if entry := closingFactor(soon, EngineInput{Now: lunchMonday}); entry.Reason != "12:30 打烊" {
+		t.Errorf("打烊理由應顯示絕對時刻，got %q", entry.Reason)
+	}
 }
 
 func TestVoteFactor(t *testing.T) {

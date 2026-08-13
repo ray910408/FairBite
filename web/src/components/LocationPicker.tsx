@@ -23,6 +23,8 @@ export default function LocationPicker({ value, onChange }: Props) {
   const markerRef = useRef<Marker | null>(null)
   const selectionGen = useRef(0)
   const valueRef = useRef(value)
+  const anchorRef = useRef<{ lat: number; lng: number } | null>(null)
+  const lastLabelRef = useRef<string | null>(null)
   valueRef.current = value
 
   // 展開時才載 Leaflet（含 CSS）；卸載時銷毀地圖
@@ -46,13 +48,13 @@ export default function LocationPicker({ value, onChange }: Props) {
         const p = marker.getLatLng()
         selectionGen.current++
         const next = { lat: p.lat, lng: p.lng }
-        onChange({ ...next, label: mapSelectionLabel(valueRef.current, next) })
+        onChange({ ...next, label: mapSelectionLabel(valueRef.current?.label, anchorRef.current, next) })
       })
       map.on('click', e => {
         marker.setLatLng(e.latlng)
         selectionGen.current++
         const next = { lat: e.latlng.lat, lng: e.latlng.lng }
-        onChange({ ...next, label: mapSelectionLabel(valueRef.current, next) })
+        onChange({ ...next, label: mapSelectionLabel(valueRef.current?.label, anchorRef.current, next) })
       })
       mapRef.current = map
       markerRef.current = marker
@@ -65,9 +67,19 @@ export default function LocationPicker({ value, onChange }: Props) {
     }
   }, [expanded, onChange])
 
-  // 外部值變動（搜尋/GPS）時把地圖與 pin 帶過去
+  // label 變更代表搜尋/GPS/外部帶入或遠距移動產生新標籤；錨點只在此時更新。
+  // 同 label 的 250m 內微調不得搬移錨點，避免連續小步拖曳讓地名一路漂移。
   useEffect(() => {
-    if (value && mapRef.current && markerRef.current) {
+    if (!value) {
+      anchorRef.current = null
+      lastLabelRef.current = null
+      return
+    }
+    if (value.label !== lastLabelRef.current) {
+      anchorRef.current = { lat: value.lat, lng: value.lng }
+      lastLabelRef.current = value.label
+    }
+    if (mapRef.current && markerRef.current) {
       markerRef.current.setLatLng([value.lat, value.lng])
       mapRef.current.setView([value.lat, value.lng], 16)
     }

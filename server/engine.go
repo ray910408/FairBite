@@ -345,8 +345,9 @@ func closingFactor(r Restaurant, in EngineInput) TraceEntry {
 	}
 	left := r.Hours.MinutesUntilClose(in.Now)
 	if left >= 0 && left < ClosingSoonMinutes {
+		closeAt := in.Now.Add(time.Duration(left) * time.Minute)
 		return TraceEntry{"closing_soon", ClosingSoonMult,
-			fmt.Sprintf("%d 分鐘後打烊", left)}
+			fmt.Sprintf("%s 打烊", closeAt.Format("15:04"))}
 	}
 	return TraceEntry{"closing_soon", 1.0, "營業時間充裕"}
 }
