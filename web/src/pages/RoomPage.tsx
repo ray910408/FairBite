@@ -223,7 +223,9 @@ export default function RoomPage() {
                     room.meal_time !== null ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                   }`}>
                     自訂時間
-                    <input type="time" className="sr-only" aria-label="用餐時間"
+                    <input type="time" className="field w-28"
+                      aria-label="用餐時間"
+                      value={room.meal_time ? formatMealTime(room.meal_time).replace('今天 ', '') : ''}
                       onChange={async e => {
                         setActionError('')
                         const r = buildMealTimeISO(e.target.value)
