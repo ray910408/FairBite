@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -76,11 +77,11 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, weather
 }
 
 // loadWeather：天氣是加分資料，失敗不阻斷（比 Places 降級更輕：連橫幅都不用）
-func loadWeather(ctx context.Context, wp WeatherProvider, lat, lng float64) *Weather {
+func loadWeather(ctx context.Context, wp WeatherProvider, lat, lng float64, at time.Time) *Weather {
 	if wp == nil {
 		return nil
 	}
-	w, err := wp.Current(ctx, lat, lng)
+	w, err := wp.Current(ctx, lat, lng, at)
 	if err != nil {
 		var ue *url.Error
 		if errors.As(err, &ue) {
@@ -94,11 +95,11 @@ func loadWeather(ctx context.Context, wp WeatherProvider, lat, lng float64) *Wea
 
 // loadWeatherCached：vote 熱路徑版——只讀快取、永不發網路（eng review D6）。
 // miss 就當無資料（中性）；快取由前一次 search/draw 的 blocking fetch 餵飽。
-func loadWeatherCached(wp WeatherProvider, lat, lng float64) *Weather {
+func loadWeatherCached(wp WeatherProvider, lat, lng float64, at time.Time) *Weather {
 	if wp == nil {
 		return nil
 	}
-	if w, ok := wp.CurrentCached(lat, lng); ok {
+	if w, ok := wp.CurrentCached(lat, lng, at); ok {
 		return &w
 	}
 	return nil
@@ -220,7 +221,7 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusUnprocessableEntity, "餐廳 ID 格式不正確")
 		return
 	}
-	wx := loadWeatherCached(weather, room.CenterLat, room.CenterLng)
+	wx := loadWeatherCached(weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
@@ -364,9 +365,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	defer inFlight.Delete(room.ID)
-	// wx 用 pre-tx 的 meal_time 取（凍結重讀前）；host 在按鈕與凍結之間改時間的競態
+	// wx 用 pre-tx 的 roomEvalTime(room) 取（凍結重讀前）；host 在按鈕與凍結之間改時間的競態
 	// 只影響天氣取樣的小時，屬可接受誤差（exploration 的 pre-tx 讀取同款先例）。
-	wx := loadWeather(ctx, weather, room.CenterLat, room.CenterLng)
+	wx := loadWeather(ctx, weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
 	members, err := LoadMembers(ctx, pool, room.ID)
 	if err != nil || len(members) == 0 {
 		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
@@ -553,7 +554,7 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusConflict, "房間狀態不允許抽選")
 		return
 	}
-	wx := loadWeather(ctx, weather, room.CenterLat, room.CenterLng)
+	wx := loadWeather(ctx, weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")

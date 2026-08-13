@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -46,10 +47,12 @@ func (failingProvider) SearchNearby(context.Context, float64, float64, int) (Pla
 
 type failingWeather struct{}
 
-func (failingWeather) Current(context.Context, float64, float64) (Weather, error) {
-	return Weather{}, fmt.Errorf("simulated weather outage")
+func (failingWeather) Current(context.Context, float64, float64, time.Time) (Weather, error) {
+	return Weather{}, errors.New("weather down")
 }
-func (failingWeather) CurrentCached(float64, float64) (Weather, bool) { return Weather{}, false }
+func (failingWeather) CurrentCached(float64, float64, time.Time) (Weather, bool) {
+	return Weather{}, false
+}
 
 type countingWeatherProvider struct {
 	currentCalls atomic.Int32
@@ -57,12 +60,12 @@ type countingWeatherProvider struct {
 	weather      Weather
 }
 
-func (p *countingWeatherProvider) Current(context.Context, float64, float64) (Weather, error) {
+func (p *countingWeatherProvider) Current(context.Context, float64, float64, time.Time) (Weather, error) {
 	p.currentCalls.Add(1)
 	return p.weather, nil
 }
 
-func (p *countingWeatherProvider) CurrentCached(float64, float64) (Weather, bool) {
+func (p *countingWeatherProvider) CurrentCached(float64, float64, time.Time) (Weather, bool) {
 	p.cachedCalls.Add(1)
 	return p.weather, true
 }
