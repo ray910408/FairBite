@@ -98,13 +98,13 @@ func TestCuisineOptionsProducibleByAtLeastOneAdapter(t *testing.T) {
 	}
 }
 
-// Google 缺口釘住：缺口縮小時請同步把 key 自此清單移除；
-// 缺口變大代表新增了 Google 產不出的選項，違反 weights.go:69 的紀律；
-// 這三個選項的去留是產品決策，見 TODOS.md。
+// Google 缺口已於 2026-08-13 清空：cantonese ← cantonese_restaurant + dim_sum_restaurant、
+// hotpot ← hot_pot_restaurant（官方 Table A 查證），sichuan（無對應 type）自選單移除。
+// 缺口變大代表新增了 Google 產不出的選項，違反 weights.go 的紀律。
 func TestCuisineOptionsGoogleGapIsPinned(t *testing.T) {
-	wantGap := []string{"cantonese", "hotpot", "sichuan"}
+	wantGap := []string{}
 	google := googleProducibleTags()
-	var gap []string
+	gap := []string{}
 	for _, key := range webOptionKeys(t, "CUISINE_OPTIONS") {
 		if !google[key] {
 			gap = append(gap, key)

@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(40);
+select plan(43);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -319,6 +319,43 @@ select is(
 select is(
   (select cuisine_tags from public.restaurants where place_id = 'pg-bf-3'),
   '["light_meal"]'::jsonb, '已含 light_meal 的 deli 不重複串接（回填冪等）');
+
+-- ============ 0018：cantonese/hotpot 回填 ============
+-- 與 0016 段同款：複製 migration 的 UPDATE 驗邏輯，改一邊要改兩邊。
+reset role;
+insert into public.restaurants (id, place_id, name, lat, lng, source, primary_type, cuisine_tags) values
+  ('99999999-9999-9999-9999-999999999921', 'pg-bf-4', '港式餐廳', 25.04, 121.51, 'google',
+   'cantonese_restaurant', '[]'::jsonb),
+  ('99999999-9999-9999-9999-999999999922', 'pg-bf-5', '火鍋店', 25.04, 121.51, 'google',
+   'hot_pot_restaurant', '[]'::jsonb),
+  -- 已含 cantonese 的飲茶列（模擬重跑/已自癒）
+  ('99999999-9999-9999-9999-999999999923', 'pg-bf-6', '飲茶樓', 25.04, 121.51, 'google',
+   'dim_sum_restaurant', '["cantonese"]'::jsonb);
+
+do $$
+begin
+  for i in 1..2 loop
+    update public.restaurants
+    set cuisine_tags = cuisine_tags || '["cantonese"]'::jsonb
+    where primary_type in ('cantonese_restaurant', 'dim_sum_restaurant')
+      and not cuisine_tags @> '["cantonese"]'::jsonb;
+
+    update public.restaurants
+    set cuisine_tags = cuisine_tags || '["hotpot"]'::jsonb
+    where primary_type = 'hot_pot_restaurant'
+      and not cuisine_tags @> '["hotpot"]'::jsonb;
+  end loop;
+end $$;
+
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-bf-4'),
+  '["cantonese"]'::jsonb, 'cantonese_restaurant 的空 tags 補到 cantonese');
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-bf-5'),
+  '["hotpot"]'::jsonb, 'hot_pot_restaurant 的空 tags 補到 hotpot');
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-bf-6'),
+  '["cantonese"]'::jsonb, '已含 cantonese 的飲茶列不重複串接（回填冪等）');
 
 select * from finish();
 rollback;

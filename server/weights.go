@@ -67,7 +67,8 @@ var (
 // 時段×菜系（P3 spec §5）：時段命中 tag 小幅加成。
 // 硬規則（eng review D23）：新增 slot/tag 前必須先驗證 tag 確實由 provider 產生
 // （places_google.go googleTypeTags 或 mockdata.go）——不做無依據的時段×菜系配對。
-// 晚餐 slot 因無任何真實 tag 來源而不上（hotpot 只存在於 mock），待 tag 詞彙擴充再回歸。
+// 晚餐 slot 的 hotpot 前置已於 2026-08-13 滿足（hot_pot_restaurant 映射落地），
+// 是否開 slot 仍待產品決策（TODOS）。
 const TimeSlotBoostMult = 1.15
 
 var TimeSlotBoosts = map[string][]string{

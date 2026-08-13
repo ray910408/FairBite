@@ -13,14 +13,11 @@
 
 - **restaurants.cuisine_tags 無 jsonb 元素型別 CHECK：** 0001 連 array CHECK 都沒有；D5 的論證同樣適用，但僅 service role 寫入且來源為 Google Places，風險低。下次修改 `restaurants` schema 時順手補。
 
-- **晚餐/其他時段 × 菜系加成：** 待 provider tag 詞彙擴充、`googleTypeTags` 有真實對映後回歸；新增 slot 的前置條件已註記於 `server/weights.go`（P3 eng review D23）。
+- **晚餐/其他時段 × 菜系加成：** 待 provider tag 詞彙擴充、`googleTypeTags` 有真實對映後回歸；新增 slot 的前置條件已註記於 `server/weights.go`（P3 eng review D23）。（2026-08-13：hotpot 已有真實映射，前置滿足；開 slot 與否仍是獨立產品決策。）
 
 - **均勻倍率 chip 策略：** timeslot 全場命中、rain 全場飽和、「推薦過但尚未中選」穩態 chip 三案併為一次決策：由引擎 guard 或 web 端過濾（P3 batch 1 final review）。
 
-### CUISINE 選項的 Google 缺口（產品決策待定，2026-08-11）
-
-- **What:** `CUISINE_OPTIONS` 的 cantonese/sichuan/hotpot 在 Google provider 下無法命中；三個菜系 tag 只有 mockdata 產得出來。`server/tags_test.go` 已釘住現狀缺口，變動必須是刻意決策。清真選項已依 2026-08-12 產品決策移除，不再是待辦。
-- **Why:** 提供產不出結果的選項會靜默拖累勾選成員的滿足度 EMA（永無 pref hit）。需決定移除、重映射（如 cantonese ← 部分 chinese_restaurant）或標註 UI 提示。
+~~CUISINE 選項的 Google 缺口~~ 已結案（2026-08-13）：cantonese/hotpot 補真實映射（0018 回填）、sichuan 移除；tags_test gap pin 清空。
 
 ### Google Places attribution logo 確認（正式上線前）
 

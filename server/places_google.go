@@ -35,6 +35,9 @@ var googleTypeTags = map[string][]string{
 	"sushi_restaurant":      {"japanese", "sushi"},
 	"korean_restaurant":     {"korean"},
 	"chinese_restaurant":    {"taiwanese"}, // ponytail: 台灣情境下最接近使用者認知的歸類
+	"cantonese_restaurant":  {"cantonese"},
+	"dim_sum_restaurant":    {"cantonese"}, // 港式飲茶歸港式
+	"hot_pot_restaurant":    {"hotpot"},
 	"indian_restaurant":     {"indian", "curry"},
 	"seafood_restaurant":    {"seafood"},
 	"steak_house":           {"steak", "western"},

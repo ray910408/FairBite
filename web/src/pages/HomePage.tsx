@@ -20,7 +20,11 @@ async function applyDefaultPrefs(roomId: string) {
   const { data: profile, error: profileError } = await supabase.from('profiles')
     .select('default_prefs').eq('id', auth.user.id).single()
   if (profileError) return
-  const cuisines = (profile?.default_prefs as { cuisines?: string[] } | null)?.cuisines
+  const raw = (profile?.default_prefs as { cuisines?: string[] } | null)?.cuisines
+  // 詞彙可能收縮（如 2026-08-13 移除 sichuan）：只帶入仍在選單上的 tag，
+  // 免得既存預設偏好裡的死選項繼續拖低滿足度 EMA（永無 pref hit）
+  const allowed = new Set(CUISINE_OPTIONS.map(([k]) => k))
+  const cuisines = Array.isArray(raw) ? raw.filter(c => allowed.has(c)) : raw
   if (!Array.isArray(cuisines) || cuisines.length === 0) {
     localStorage.setItem(appliedKey, '1')
     return
