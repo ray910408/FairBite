@@ -65,7 +65,7 @@ func TestCurrentCachedServesStale(t *testing.T) {
 		fmt.Fprint(w, `{"current":{"precipitation":0.8}}`)
 	}))
 	defer srv.Close()
-	base := time.Now()
+	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
 	originalNow := clockNow
 	clockNow = func() time.Time { return base }
 	t.Cleanup(func() { clockNow = originalNow })
@@ -87,7 +87,7 @@ func TestWeatherNegativeCache(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	base := time.Now()
+	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
 	originalNow := clockNow
 	clockNow = func() time.Time { return base }
 	t.Cleanup(func() { clockNow = originalNow })
@@ -132,7 +132,7 @@ func TestOpenMeteoCacheExpires(t *testing.T) {
 		fmt.Fprint(w, `{"current":{"precipitation":1.5}}`)
 	}))
 	defer srv.Close()
-	base := time.Now()
+	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
 	originalNow := clockNow
 	clockNow = func() time.Time { return base }
 	t.Cleanup(func() { clockNow = originalNow })
