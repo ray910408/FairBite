@@ -68,6 +68,28 @@ func TestLoadAppLocationAfterDotenv(t *testing.T) {
 	})
 }
 
+func TestRoomEvalTime(t *testing.T) {
+	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
+	orig := clockNow
+	clockNow = func() time.Time { return base }
+	defer func() { clockNow = orig }()
+
+	if got := roomEvalTime(RoomRow{}); !got.Equal(base) {
+		t.Fatalf("meal_time NULL 應回現在：%v", got)
+	}
+	future := base.Add(5 * time.Hour)
+	if got := roomEvalTime(RoomRow{MealTime: &future}); !got.Equal(future) {
+		t.Fatalf("未來的 meal_time 應原樣採用：%v", got)
+	}
+	past := base.Add(-2 * time.Hour)
+	if got := roomEvalTime(RoomRow{MealTime: &past}); !got.Equal(base) {
+		t.Fatalf("過期的 meal_time 應取 max 回現在：%v", got)
+	}
+	if loc := roomEvalTime(RoomRow{MealTime: &future}).Location(); loc != appLocation {
+		t.Fatalf("回傳值必須在 appLocation：%v", loc)
+	}
+}
+
 func TestNowInAppTZUsesTaipeiWallClockForOpeningHours(t *testing.T) {
 	taipei, err := time.LoadLocation("Asia/Taipei")
 	if err != nil {

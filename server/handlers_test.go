@@ -2105,3 +2105,101 @@ func TestDrawSurvivesWeatherOutage(t *testing.T) {
 		t.Fatal("draw 後至少必須保留一個 candidate")
 	}
 }
+
+// meal_time 管線：search 的營業判定必須以用餐時刻評估，而非請求當下（spec §4）。
+// fixture 兩家店都在射程內、預算內：對照組全天營業（確保 kept 非空 → 200），
+// 目標店的營業時段只涵蓋「現在前後」的窗，房間 meal_time 設在 6 小時後 →
+// 請求當下營業、用餐時刻已打烊，必須以 closed 被排除。
+// 窗用 nowInAppTZ() 動態算當天 weekday 的 [now-60min, now+120min) 而非寫死牆鐘。
+func TestSearchEvaluatesOpeningHoursAtMealTime(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const (
+		hostID       = "4a4a4a4a-4a4a-4a4a-8a4a-4a4a4a4a4a4a"
+		roomID       = "4b4b4b4b-4b4b-4b4b-8b4b-4b4b4b4b4b4b"
+		closingPlace = "meal-time-closing-place"
+		openPlace    = "meal-time-open-place"
+	)
+	if _, err := pool.Exec(ctx,
+		`insert into auth.users (id, email) values ($1, 'meal-time@test.dev') on conflict do nothing`,
+		hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`insert into public.rooms (id, host_id, status, center_lat, center_lng, meal_time)
+		 values ($1, $2, 'lobby', 25.0478, 121.5170, now() + interval '6 hours')
+		 on conflict (id) do update set status = 'lobby', meal_time = excluded.meal_time`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		 values ($1, $2, 1600, '["japanese"]', 2000, 'walking') on conflict do nothing`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+		pool.Exec(ctx, `delete from public.restaurants where place_id = any($1)`,
+			[]string{closingPlace, openPlace})
+	})
+
+	now := nowInAppTZ()
+	// 夾在 [0,1440] 內避免跨日窗；窗最寬 3 小時，6 小時後的用餐時刻必定落在窗外
+	// （或已翻到隔天的 weekday，該日無時段亦視為未營業）。
+	window := [2]int{max(0, minuteOfDay(now)-60), min(1440, minuteOfDay(now)+120)}
+	closingBeforeMeal := Restaurant{
+		PlaceID: closingPlace, Name: "用餐時刻已打烊", PrimaryType: "restaurant", PriceLevel: 1,
+		Lat: 25.0478, Lng: 121.5171, Hours: OpeningHours{weekdayKeys[now.Weekday()]: {window}},
+	}
+	alwaysOpen := Restaurant{
+		PlaceID: openPlace, Name: "全天營業對照組", PrimaryType: "restaurant", PriceLevel: 1,
+		Lat: 25.0478, Lng: 121.5172, Hours: daily([2]int{0, 1440}),
+	}
+	if !closingBeforeMeal.Hours.IsOpenAt(now) {
+		t.Fatalf("fixture 前提失效：目標店在請求當下必須營業，窗 %v", window)
+	}
+
+	h := newTestAppWithProvider(t, pool, fixedProvider{closingBeforeMeal, alwaysOpen})
+	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("search: want 200 got %d body %s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Kept     []keptJSON     `json:"kept"`
+		Excluded []excludedJSON `json:"excluded"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("回應無法解析：%v %s", err, w.Body.String())
+	}
+	for _, c := range body.Kept {
+		if c.Name == closingBeforeMeal.Name {
+			t.Fatalf("用餐時刻已打烊的店不得留在 kept：%s", w.Body.String())
+		}
+	}
+	var kinds []string
+	for _, e := range body.Excluded {
+		if e.Name == closingBeforeMeal.Name {
+			kinds = e.Kinds
+		}
+	}
+	if !hasKind(kinds, "closed") {
+		t.Fatalf("目標店必須以 closed 被排除（現在營業、meal_time 已打烊），got kinds %v body %s",
+			kinds, w.Body.String())
+	}
+}

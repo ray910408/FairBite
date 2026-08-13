@@ -27,10 +27,10 @@ func freezeAndLoadMembers(ctx context.Context, tx pgx.Tx, room *RoomRow, fetched
 		// ErrConflict 原樣透傳，呼叫端據以回 409。
 		return nil, nil, err
 	}
-	// exploration 在 lobby 可變（房主自己調），鎖定後重讀
+	// exploration/meal_time 在 lobby 可變（房主自己調），鎖定後重讀
 	if err := tx.QueryRow(ctx,
-		`select exploration from rooms where id = $1`,
-		room.ID).Scan(&room.Exploration); err != nil {
+		`select exploration, meal_time from rooms where id = $1`,
+		room.ID).Scan(&room.Exploration, &room.MealTime); err != nil {
 		return nil, nil, fmt.Errorf("凍結重讀 exploration: %w", err)
 	}
 	members, err := LoadMembersForUpdate(ctx, tx, room.ID)

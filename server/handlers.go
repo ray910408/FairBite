@@ -364,6 +364,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	defer inFlight.Delete(room.ID)
+	// wx 用 pre-tx 的 meal_time 取（凍結重讀前）；host 在按鈕與凍結之間改時間的競態
+	// 只影響天氣取樣的小時，屬可接受誤差（exploration 的 pre-tx 讀取同款先例）。
 	wx := loadWeather(ctx, weather, room.CenterLat, room.CenterLng)
 	members, err := LoadMembers(ctx, pool, room.ID)
 	if err != nil || len(members) == 0 {
@@ -498,7 +500,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	result := Evaluate(EngineInput{Restaurants: found, Members: members,
-		Now: nowInAppTZ(), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
+		Now: roomEvalTime(room), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
 		Weather: wx, Recency: recency, Exposure: exposure, Satisfaction: satisfaction, Exploration: room.Exploration})
 
 	if len(result.Kept) == 0 {
