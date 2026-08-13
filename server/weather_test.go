@@ -79,6 +79,29 @@ func TestCurrentCachedServesStale(t *testing.T) {
 	}
 }
 
+func TestCurrentCachedFallsBackToPreviousHourBucket(t *testing.T) {
+	base := time.Date(2026, 8, 13, 18, 0, 0, 0, appLocation)
+	originalNow := clockNow
+	clockNow = func() time.Time { return base }
+	t.Cleanup(func() { clockNow = originalNow })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"current":{"precipitation":0.8}}`)
+	}))
+	defer srv.Close()
+	p := NewOpenMeteoProvider(srv.URL)
+	want, err := p.Current(context.Background(), 25, 121, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := p.CurrentCached(25, 121, base.Add(time.Hour)); !ok || got != want {
+		t.Fatalf("前一小時桶應命中相同值：got=%v want=%v ok=%v", got, want, ok)
+	}
+	if got, ok := p.CurrentCached(25, 121, base.Add(2*time.Hour)); ok {
+		t.Fatalf("跨兩個整點應 miss：got=%v", got)
+	}
+}
+
 // D24/OV#21：negative cache——故障後 1 分鐘內不重複打 API（不重複硬等 timeout）
 func TestWeatherNegativeCache(t *testing.T) {
 	calls := 0

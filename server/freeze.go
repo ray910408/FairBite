@@ -21,7 +21,7 @@ var ErrMembersChanged = errors.New("member conditions changed during search")
 // ErrMembersChanged 讓 host 重搜（deferred rollback 留在 lobby）；縮小則就地重濾 found。
 // 圓心不在重讀之列：它是房主建房當下的位置，create_room 寫進去之後沒有任何路徑會改它，
 // 搜尋期間不可能被挪走。
-// 成功時就地更新 room.Exploration 並回傳權威成員與存活的 found。
+// 成功時就地更新 room.Exploration 與 room.MealTime 並回傳權威成員與存活的 found。
 func freezeAndLoadMembers(ctx context.Context, tx pgx.Tx, room *RoomRow, fetchedRadius int, found []Restaurant) ([]Member, []Restaurant, error) {
 	if err := TransitionRoom(ctx, tx, room.ID, "lobby", "candidates"); err != nil {
 		// ErrConflict 原樣透傳，呼叫端據以回 409。
@@ -31,7 +31,7 @@ func freezeAndLoadMembers(ctx context.Context, tx pgx.Tx, room *RoomRow, fetched
 	if err := tx.QueryRow(ctx,
 		`select exploration, meal_time from rooms where id = $1`,
 		room.ID).Scan(&room.Exploration, &room.MealTime); err != nil {
-		return nil, nil, fmt.Errorf("凍結重讀 exploration: %w", err)
+		return nil, nil, fmt.Errorf("凍結重讀 exploration/meal_time: %w", err)
 	}
 	members, err := LoadMembersForUpdate(ctx, tx, room.ID)
 	if err != nil {

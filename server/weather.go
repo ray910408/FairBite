@@ -17,7 +17,7 @@ type Weather struct {
 type WeatherProvider interface {
 	// Current：blocking fetch（快取 miss 時打 API）。低頻路徑（search/draw）用。
 	// at = 評估時刻（roomEvalTime）：與現在同一小時走 current=precipitation，
-	// 未來小時走 hourly forecast 取該小時降雨（今日限定 → forecast_days=1 必涵蓋）。
+	// 未來小時走 hourly forecast 取該小時降雨（今日限定；forecast_days=2 含跨日保險）。
 	Current(ctx context.Context, lat, lng float64, at time.Time) (Weather, error)
 	// CurrentCached：純快取查詢，永不發網路。vote 熱路徑用（eng review D6）。
 	CurrentCached(lat, lng float64, at time.Time) (Weather, bool)
@@ -148,10 +148,14 @@ func (p *openMeteoProvider) markFail(key string, err error) error {
 // CurrentCached：serve-stale（D24/OV#11）——曾抓到就用，**不看 TTL**。
 // 投票期間 weather 因素持續存在、不因 TTL 過期而「有/無跳動」；
 // 新鮮度由 search/draw 的 blocking Current 維護。重啟後首votes無天氣（罕見、可接受）。
+// 快取 key 含小時桶後，serve-stale 由「同桶或前一桶」維持；跨兩整點的長投票仍會退中性，由 draw 的權威重抓收斂。
 func (p *openMeteoProvider) CurrentCached(lat, lng float64, at time.Time) (Weather, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if e, ok := p.cache[weatherKey(lat, lng, at)]; ok {
+		return e.w, true
+	}
+	if e, ok := p.cache[weatherKey(lat, lng, at.Add(-time.Hour))]; ok {
 		return e.w, true
 	}
 	return Weather{}, false
