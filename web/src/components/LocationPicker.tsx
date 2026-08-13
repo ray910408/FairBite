@@ -20,6 +20,7 @@ export default function LocationPicker({ value, onChange }: Props) {
   const mapEl = useRef<HTMLDivElement>(null)
   const mapRef = useRef<LeafletMap | null>(null)
   const markerRef = useRef<Marker | null>(null)
+  const selectionGen = useRef(0)
   const valueRef = useRef(value)
   valueRef.current = value
 
@@ -42,10 +43,12 @@ export default function LocationPicker({ value, onChange }: Props) {
       const marker = L.marker([start.lat, start.lng], { draggable: true, icon }).addTo(map)
       marker.on('dragend', () => {
         const p = marker.getLatLng()
+        selectionGen.current++
         onChange({ lat: p.lat, lng: p.lng, label: valueRef.current?.label ?? '地圖上的位置' })
       })
       map.on('click', e => {
         marker.setLatLng(e.latlng)
+        selectionGen.current++
         onChange({ lat: e.latlng.lat, lng: e.latlng.lng, label: valueRef.current?.label ?? '地圖上的位置' })
       })
       mapRef.current = map
@@ -84,11 +87,15 @@ export default function LocationPicker({ value, onChange }: Props) {
   }
 
   async function useGPS() {
+    selectionGen.current++
+    const gen = selectionGen.current
     setError('')
     try {
       const pos = await getPosition(navigator.geolocation)
+      if (gen !== selectionGen.current) return
       onChange({ ...pos, label: '目前位置' })
     } catch (err) {
+      if (gen !== selectionGen.current) return
       setError(err instanceof Error ? err.message : '無法取得目前位置')
     }
   }
@@ -119,7 +126,7 @@ export default function LocationPicker({ value, onChange }: Props) {
               {results.map((r, i) => (
                 <li key={i}>
                   <button type="button" className="btn btn-quiet w-full justify-start px-3 text-left text-sm"
-                    onClick={() => { onChange(r); setResults([]) }}>
+                    onClick={() => { selectionGen.current++; onChange(r); setResults([]) }}>
                     {r.label}
                   </button>
                 </li>

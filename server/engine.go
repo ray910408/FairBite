@@ -137,10 +137,10 @@ func hardExclude(r Restaurant, ms []Member, now time.Time) (kinds, reasons []str
 			reasons = append(reasons, fmt.Sprintf("價位約 NT$%d，超過 %s 的預算上限 NT$%d", price, minName, minBudget))
 		}
 	}
-	// 比照未知價位先例：未知不排除，不能把缺少時段當成目前未營業。
+	// 比照未知價位先例：未知不排除，不能把缺少時段當成用餐時間未營業。
 	if len(r.Hours) > 0 && !r.Hours.IsOpenAt(now) {
 		addKind("closed")
-		reasons = append(reasons, "目前未營業")
+		reasons = append(reasons, "用餐時間未營業")
 	}
 	return kinds, reasons
 }

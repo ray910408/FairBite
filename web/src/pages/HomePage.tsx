@@ -39,7 +39,7 @@ export default function HomePage() {
   const nav = useNavigate()
   const [code, setCode] = useState('')
   const [error, setError] = useState('')
-  const [departure, setDeparture] = useState<DeparturePoint | null>(loadLastDeparture)
+  const [departure, setDeparture] = useState<DeparturePoint | null>(null)
   const [mealMode, setMealMode] = useState<'now' | 'custom'>('now')
   const [mealHHMM, setMealHHMM] = useState('')
   const [busy, setBusy] = useState(false)
@@ -70,6 +70,7 @@ export default function HomePage() {
       CUISINE_OPTIONS.map(([k]) => k))
     const dismissed = (localStorage.getItem(`prefs-suggest-dismissed:${auth.user.id}`) ?? '').split(',')
     setMyUserId(auth.user.id)
+    setDeparture(prev => prev ?? loadLastDeparture(auth.user.id))
     setPrefs(dp)
     setSuggestion(tags.filter(t => !dismissed.includes(t)))
   }, [])
@@ -107,7 +108,8 @@ export default function HomePage() {
       await supabase.from('rooms').update({ meal_time: mealISO }).eq('id', data)
     }
     await applyDefaultPrefs(data)
-    saveLastDeparture(departure!)
+    const { data: auth } = await supabase.auth.getUser()
+    if (auth.user) saveLastDeparture(auth.user.id, departure!)
     nav(`/room/${data}`)
   }
 

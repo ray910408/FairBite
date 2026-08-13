@@ -2,7 +2,13 @@
 // Nominatim 使用政策：送出制查詢（禁 autocomplete）、個人規模、瀏覽器自帶 Referer 識別。
 export type DeparturePoint = { lat: number; lng: number; label: string }
 
+let lastSearchAt = 0
+
 export async function searchPlaces(query: string): Promise<DeparturePoint[]> {
+  // Nominatim 使用政策：絕對上限 1 req/s——送出制之外再加最小間隔保險
+  const wait = lastSearchAt + 1000 - Date.now()
+  if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait))
+  lastSearchAt = Date.now()
   const url = 'https://nominatim.openstreetmap.org/search?' + new URLSearchParams({
     q: query, format: 'jsonv2', limit: '5', 'accept-language': 'zh-TW', countrycodes: 'tw',
   })
@@ -15,17 +21,17 @@ export async function searchPlaces(query: string): Promise<DeparturePoint[]> {
   }))
 }
 
-const LAST_KEY = 'last-departure'
-
-export function loadLastDeparture(): DeparturePoint | null {
+export function loadLastDeparture(uid: string): DeparturePoint | null {
+  if (!uid) return null
   try {
-    const v = JSON.parse(localStorage.getItem(LAST_KEY) ?? 'null')
+    const v = JSON.parse(localStorage.getItem(`last-departure:${uid}`) ?? 'null')
     return typeof v?.lat === 'number' && typeof v?.lng === 'number' && typeof v?.label === 'string' ? v : null
   } catch {
     return null
   }
 }
 
-export function saveLastDeparture(p: DeparturePoint) {
-  try { localStorage.setItem(LAST_KEY, JSON.stringify(p)) } catch { /* 私密模式等寫入失敗可忽略 */ }
+export function saveLastDeparture(uid: string, p: DeparturePoint) {
+  if (!uid) return
+  try { localStorage.setItem(`last-departure:${uid}`, JSON.stringify(p)) } catch { /* 私密模式等寫入失敗可忽略 */ }
 }

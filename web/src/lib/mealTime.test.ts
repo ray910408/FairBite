@@ -25,12 +25,18 @@ describe('buildMealTimeISO', () => {
 })
 
 describe('formatMealTime', () => {
+  const now = new Date(2026, 7, 13, 14, 0, 0)
+
   it('null/undefined 顯示馬上出發', () => {
-    expect(formatMealTime(null)).toBe('馬上出發')
-    expect(formatMealTime(undefined)).toBe('馬上出發')
+    expect(formatMealTime(null, now)).toBe('馬上出發')
+    expect(formatMealTime(undefined, now)).toBe('馬上出發')
   })
   it('ISO 顯示今天 HH:MM', () => {
     const iso = new Date(2026, 7, 13, 19, 5, 0).toISOString()
-    expect(formatMealTime(iso)).toBe('今天 19:05')
+    expect(formatMealTime(iso, now)).toBe('今天 19:05')
+  })
+  it('跨日 ISO 顯示 M/D HH:MM', () => {
+    const iso = new Date(2026, 7, 12, 19, 30, 0).toISOString()
+    expect(formatMealTime(iso, now)).toBe('8/12 19:30')
   })
 })

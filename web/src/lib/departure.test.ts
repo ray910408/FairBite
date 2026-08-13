@@ -2,7 +2,25 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { loadLastDeparture, saveLastDeparture, searchPlaces } from './departure'
 
 describe('searchPlaces', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('連續搜尋至少間隔一秒才送出第二個請求', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 7, 13, 12, 0, 0))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('[]')))
+
+    await searchPlaces('第一筆')
+    const second = searchPlaces('第二筆')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(999)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await second
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
 
   it('把 Nominatim jsonv2 結果映射成座標與精簡標籤', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([
@@ -32,9 +50,23 @@ describe('last departure localStorage', () => {
       getItem: (key: string) => items.get(key) ?? null,
       setItem: (key: string, value: string) => items.set(key, value),
     })
-    saveLastDeparture({ lat: 25, lng: 121.5, label: '公司' })
-    expect(loadLastDeparture()).toEqual({ lat: 25, lng: 121.5, label: '公司' })
-    localStorage.setItem('last-departure', '{broken')
-    expect(loadLastDeparture()).toBeNull()
+    saveLastDeparture('u1', { lat: 25, lng: 121.5, label: '公司' })
+    expect(loadLastDeparture('u1')).toEqual({ lat: 25, lng: 121.5, label: '公司' })
+    localStorage.setItem('last-departure:u1', '{broken')
+    expect(loadLastDeparture('u1')).toBeNull()
+  })
+
+  it('依帳號隔離，空 uid 不讀也不寫', () => {
+    const items = new Map<string, string>()
+    const setItem = vi.fn((key: string, value: string) => items.set(key, value))
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => items.get(key) ?? null,
+      setItem,
+    })
+    saveLastDeparture('u1', { lat: 25, lng: 121.5, label: '公司' })
+    expect(loadLastDeparture('u2')).toBeNull()
+    expect(loadLastDeparture('')).toBeNull()
+    saveLastDeparture('', { lat: 24, lng: 120, label: '不應寫入' })
+    expect(setItem).toHaveBeenCalledTimes(1)
   })
 })

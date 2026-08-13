@@ -143,7 +143,7 @@ func TestUnknownHoursNeverExcludeOrApplyClosingFactor(t *testing.T) {
 				}
 				if len(res.Excluded) != 1 || res.Excluded[0].PlaceID != closed.PlaceID ||
 					!hasKind(res.Excluded[0].Kinds, "closed") ||
-					!strings.Contains(res.Excluded[0].Reason, "目前未營業") {
+					!strings.Contains(res.Excluded[0].Reason, "用餐時間未營業") {
 					t.Fatalf("已知未營業控制組應排除，got %+v", res.Excluded)
 				}
 			})

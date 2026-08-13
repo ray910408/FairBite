@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
 import { startVoting } from '../lib/api'
@@ -52,8 +52,15 @@ export default function RoomPage() {
   const [actionWarning, setActionWarning] = useState('')
   const [copied, setCopied] = useState(false)
   const [editingCustom, setEditingCustom] = useState(false)
+  const [draftHH, setDraftHH] = useState('')
+  const [draftMM, setDraftMM] = useState('')
   const searchInFlight = useRef(false)
   const startVotingInFlight = useRef(false)
+  useEffect(() => {
+    const d = room?.meal_time ? new Date(room.meal_time) : null
+    setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
+    setDraftMM(d ? String(d.getMinutes()).padStart(2, '0') : '')
+  }, [room?.meal_time])
   if (!room) return notFound ? (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
       <Logo className="h-12 w-12 opacity-60" />
@@ -69,10 +76,6 @@ export default function RoomPage() {
 
   const me = members.find(m => m.user_id === myUserId)
   const isHost = room.host_id === myUserId
-  const mealDate = room.meal_time ? new Date(room.meal_time) : null
-  const mealHH = mealDate ? String(mealDate.getHours()).padStart(2, '0') : ''
-  const mealMM = mealDate ? String(mealDate.getMinutes()).padStart(2, '0') : ''
-
   async function updateMealTime(hhmm: string) {
     setActionError('')
     const r = buildMealTimeISO(hhmm)
@@ -230,7 +233,11 @@ export default function RoomPage() {
                       const { error, count } = await supabase.from('rooms')
                         .update({ meal_time: null }, { count: 'exact' }).eq('id', room.id)
                       if (error || count === 0) setActionError('用餐時間更新失敗')
-                      else setEditingCustom(false)
+                      else {
+                        setEditingCustom(false)
+                        setDraftHH('')
+                        setDraftMM('')
+                      }
                     }}>
                     馬上出發
                   </button>
@@ -246,8 +253,12 @@ export default function RoomPage() {
                 {(editingCustom || room.meal_time !== null) && (
                   <div className="flex items-center gap-2">
                     <select className="field flex-1" aria-label="用餐時間（時）"
-                      value={mealHH}
-                      onChange={e => updateMealTime(`${e.target.value}:${mealMM || '00'}`)}>
+                      value={draftHH}
+                      onChange={e => {
+                        const hh = e.target.value
+                        setDraftHH(hh)
+                        if (hh && draftMM) void updateMealTime(`${hh}:${draftMM}`)
+                      }}>
                       <option value="" disabled>時</option>
                       {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0')).map(h => (
                         <option key={h} value={h}>{h}</option>
@@ -255,8 +266,12 @@ export default function RoomPage() {
                     </select>
                     <span className="text-fg-muted">:</span>
                     <select className="field flex-1" aria-label="用餐時間（分）"
-                      value={mealMM}
-                      onChange={e => updateMealTime(`${mealHH || '00'}:${e.target.value}`)}>
+                      value={draftMM}
+                      onChange={e => {
+                        const mm = e.target.value
+                        setDraftMM(mm)
+                        if (draftHH && mm) void updateMealTime(`${draftHH}:${mm}`)
+                      }}>
                       <option value="" disabled>分</option>
                       {Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0')).map(m => (
                         <option key={m} value={m}>{m}</option>
