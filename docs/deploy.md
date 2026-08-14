@@ -71,7 +71,8 @@ DB 連線字串與 Places key 只存在 Render，永遠不進前端。
 3. 開 <https://ray910408.github.io/FairBite/>。
 
 路由用 HashRouter，網址長 `…/FairBite/#/room/<id>`。Pages 沒有 SPA rewrite，
-BrowserRouter 的深連結會 404，hash 路由省掉 `404.html` 轉址 hack。
+路徑形式的深連結由 `web/public/404.html` 轉成對應的 hash 路由（手打網址、
+外部貼路徑連結的救援；站內導航本來就只產生 hash URL）。
 
 ## 換網域或改服務名時
 
