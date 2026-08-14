@@ -90,7 +90,8 @@ type Restaurant struct {
 	// Closed 是 transient provider 訊號；UpsertRestaurants 不會持久化。
 	Closed bool
 	// QueryMatches 是 transient 檢索訊號（查詢命中，CONTEXT.md）：本次搜尋哪些菜系查詢
-	// 命中了這家店。UpsertRestaurants 不會持久化——canonical tags 只來自 types 映射（ADR-0006）。
+	// 命中了這家店；隨 room_candidates 落盤（round-trip 迴歸測試釘住），不進 restaurants 快取。
+	// canonical tags 只來自 types 映射（ADR-0006）。
 	QueryMatches []string
 }
 

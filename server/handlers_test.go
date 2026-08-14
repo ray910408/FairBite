@@ -247,16 +247,19 @@ func TestQueryMatchesSurviveRescoreRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { pool.Close() })
 
-	const hostID = "ae4ae4ae-ae4a-4e4a-8e4a-ae4ae4ae4ae4"
-	const roomID = "be4be4be-be4b-4e4b-8e4b-be4be4be4be4"
-	const placeID = "test-query-matches-round-trip"
+	const (
+		hostID          = "ae4ae4ae-ae4a-4e4a-8e4a-ae4ae4ae4ae4"
+		roomID          = "be4be4be-be4b-4e4b-8e4b-be4be4be4be4"
+		placeID         = "test-query-matches-round-trip"
+		excludedPlaceID = "test-query-matches-round-trip-excluded"
+	)
 	pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
 	pool.Exec(ctx, `delete from auth.users where id = $1`, hostID)
-	pool.Exec(ctx, `delete from public.restaurants where place_id = $1`, placeID)
+	pool.Exec(ctx, `delete from public.restaurants where place_id in ($1, $2)`, placeID, excludedPlaceID)
 	t.Cleanup(func() {
 		pool.Exec(context.Background(), `delete from public.rooms where id = $1`, roomID)
 		pool.Exec(context.Background(), `delete from auth.users where id = $1`, hostID)
-		pool.Exec(context.Background(), `delete from public.restaurants where place_id = $1`, placeID)
+		pool.Exec(context.Background(), `delete from public.restaurants where place_id in ($1, $2)`, placeID, excludedPlaceID)
 	})
 	if _, err := pool.Exec(ctx,
 		`insert into auth.users (id, email) values ($1, 'query-matches-round-trip@test.dev')`, hostID); err != nil {
@@ -272,15 +275,25 @@ func TestQueryMatchesSurviveRescoreRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	restaurants := []Restaurant{{
-		PlaceID: placeID, Name: "查詢命中拉麵", PrimaryType: "restaurant",
-		CuisineTags: []string{}, QueryMatches: []string{"ramen"}, PriceLevel: 1,
-		Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
-	}}
+	restaurants := []Restaurant{
+		{
+			PlaceID: placeID, Name: "查詢命中拉麵", PrimaryType: "restaurant",
+			CuisineTags: []string{}, QueryMatches: []string{"ramen"}, PriceLevel: 1,
+			Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
+		},
+		{
+			PlaceID: excludedPlaceID, Name: "被排除的查詢命中火鍋", PrimaryType: "restaurant",
+			CuisineTags: []string{}, QueryMatches: []string{"hotpot"}, PriceLevel: 1,
+			Lat: 25.0478, Lng: 121.5171, Hours: daily([2]int{0, 1440}),
+		},
+	}
 	if err := UpsertRestaurants(ctx, tx, restaurants, "google"); err != nil {
 		t.Fatal(err)
 	}
-	result := EngineResult{Kept: []Candidate{{Restaurant: restaurants[0], Probability: 1}}}
+	result := EngineResult{
+		Kept:     []Candidate{{Restaurant: restaurants[0], Probability: 1}},
+		Excluded: []Excluded{{Restaurant: restaurants[1], Kinds: []string{"cuisine"}, Reason: "不符成員菜系偏好"}},
+	}
 	if err := ReplaceCandidates(ctx, tx, roomID, result, map[string]bool{}); err != nil {
 		t.Fatal(err)
 	}
@@ -288,18 +301,25 @@ func TestQueryMatchesSurviveRescoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded) != 1 || len(loaded[0].QueryMatches) != 1 || loaded[0].QueryMatches[0] != "ramen" {
-		t.Fatalf("載回 query_matches = %v, want [ramen]", loaded)
+	loadedByPlaceID := make(map[string]Restaurant, len(loaded))
+	for _, restaurant := range loaded {
+		loadedByPlaceID[restaurant.PlaceID] = restaurant
+	}
+	if got := loadedByPlaceID[placeID].QueryMatches; len(got) != 1 || got[0] != "ramen" {
+		t.Fatalf("載回 kept query_matches = %v, want [ramen]", got)
+	}
+	if got := loadedByPlaceID[excludedPlaceID].QueryMatches; len(got) != 1 || got[0] != "hotpot" {
+		t.Fatalf("載回 excluded query_matches = %v, want [hotpot]", got)
 	}
 
 	if err := ReplaceCandidates(ctx, tx, roomID,
-		EngineResult{Kept: []Candidate{{Restaurant: loaded[0], Probability: 1}}}, counted); err != nil {
+		EngineResult{Kept: []Candidate{{Restaurant: loadedByPlaceID[placeID], Probability: 1}}}, counted); err != nil {
 		t.Fatal(err)
 	}
 	var roundTripped []string
 	if err := tx.QueryRow(ctx,
 		`select query_matches from room_candidates where room_id = $1 and restaurant_id = $2`,
-		roomID, loaded[0].ID).Scan(&roundTripped); err != nil {
+		roomID, restaurants[0].ID).Scan(&roundTripped); err != nil {
 		t.Fatal(err)
 	}
 	if len(roundTripped) != 1 || roundTripped[0] != "ramen" {

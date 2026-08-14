@@ -290,7 +290,7 @@ func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, 
 // SearchNearby(lat, lng, radiusM, cuisines)
 //   ├─ searchNearby ────────────────────────────► 20 筆熱門（圓形 locationRestriction）
 //   │    └─ 失敗（重試×2 後）→ 整體 error → handler 走 30 天快取 fallback（text 結果全棄）
-//   ├─ ∥ textSearch("拉麵") ─────────────────────► ≤20 筆語意相關
+//   ├─ ∥ textSearch("拉麵") ─────────────────────► ≤15 筆語意相關（pageSize 15，eng review 6）
 //   ├─ ∥ textSearch("火鍋") … K 支並行 ──────────►（locationBias 圓＋haversine 硬過濾 radiusM 外）
 //   │    ├─ meal gate：gIsMealPrimaryType fail-closed（拒者入 RejectedPlaceIDs）
 //   │    ├─ 衝突防護：tier1 甜品專門型拒 match／tier2 純輕飲無供餐證據拒 match（店保留、match 不標）
@@ -392,7 +392,8 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 	return base, nil
 }
 
-// chainKey：連鎖分店分組鍵（eng review 6 裁定；heuristic，寧漏勿誤殺）。
+// chainKey：連鎖分店分組鍵（eng review 6 裁定；heuristic）。
+// dash／括號裁切寧漏勿誤殺；空格裁切對共用 2 字 CJK 前綴的不同品牌有誤併風險（已知取捨）。
 // 規則：砍第一個 -／－／(／（ 之後；再者若首段為 ≥2 個 CJK 字元且後接空格，砍空格後
 // （「麥當勞-台北民生餐廳」→「麥當勞」、「丸龜製麵 台北車站店」→「丸龜製麵」）。
 // 英文名不做空格裁切（「Burger King」不可變「Burger」）。分不到組的連鎖保留原樣。
@@ -458,6 +459,7 @@ func dedupeChains(rs []Restaurant, lat, lng float64) []Restaurant {
 }
 
 // filterInheritedMatches：tier1 再把關——熱食 match 不得掛在甜品專門型留存分店上。
+// filterInheritedMatches 會破壞性原地改寫 matches 的底層陣列；呼叫端不得再持有原 slice。
 func filterInheritedMatches(primaryType string, matches []string) []string {
 	out := matches[:0]
 	for _, c := range matches {
@@ -469,6 +471,7 @@ func filterInheritedMatches(primaryType string, matches []string) []string {
 	return out
 }
 
+// dedupeStrings 會破壞性原地改寫 ss 的底層陣列；呼叫端不得再持有原 slice。
 func dedupeStrings(ss []string) []string {
 	seen := map[string]bool{}
 	out := ss[:0]
