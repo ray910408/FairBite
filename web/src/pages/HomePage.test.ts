@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   stateIndex: 0,
   stateValues: [] as unknown[],
-  getUser: vi.fn(),
+  getUid: vi.fn(),
   rpc: vi.fn(),
   from: vi.fn(),
   navigate: vi.fn(),
@@ -31,12 +31,9 @@ vi.mock('react-router-dom', () => ({
 }))
 
 vi.mock('../lib/supabase', () => ({
-  supabase: {
-    auth: { getUser: mocks.getUser },
-    rpc: mocks.rpc,
-    from: mocks.from,
-  },
+  supabase: { auth: { signOut: vi.fn() }, rpc: mocks.rpc, from: mocks.from },
 }))
+vi.mock('../lib/uid', () => ({ getUid: mocks.getUid }))
 
 vi.mock('../lib/departure', async importOriginal => {
   const actual = await importOriginal<typeof import('../lib/departure')>()
@@ -69,6 +66,18 @@ function findButton(node: unknown, label: string): ElementLike {
   return findButton(element.props?.children, label)
 }
 
+function findSections(node: unknown, out: ElementLike[] = []): ElementLike[] {
+  if (Array.isArray(node)) {
+    for (const child of node) findSections(child, out)
+    return out
+  }
+  if (!node || typeof node !== 'object') return out
+  const element = node as ElementLike
+  if (element.type === 'section') out.push(element)
+  findSections(element.props?.children, out)
+  return out
+}
+
 async function clickCreateRoom() {
   const { default: HomePage } = await import('./HomePage')
   const tree = HomePage()
@@ -81,10 +90,10 @@ describe('HomePage persistRoom', () => {
   beforeEach(() => {
     mocks.stateIndex = 0
     mocks.stateValues = [
-      '', '', { lat: 25.0478, lng: 121.517, label: '台北車站' },
+      '', '', '', '', { lat: 25.0478, lng: 121.517, label: '台北車站' },
       'now', '', '', false, '', {}, [],
     ]
-    mocks.getUser.mockReset()
+    mocks.getUid.mockReset()
     mocks.rpc.mockReset().mockResolvedValue({ data: 'room-1', error: null })
     mocks.from.mockReset().mockImplementation(() => {
       throw new Error('已套用偏好時不應查表')
@@ -102,26 +111,58 @@ describe('HomePage persistRoom', () => {
   })
 
   it('以發起建房時的 uid 儲存出發點，不受 pending 期間換帳號影響', async () => {
-    mocks.getUser
-      .mockResolvedValueOnce({ data: { user: { id: 'creator' } } })
-      .mockResolvedValueOnce({ data: { user: { id: 'replacement' } } })
-      .mockResolvedValue({ data: { user: { id: 'replacement' } } })
+    mocks.getUid
+      .mockResolvedValueOnce('creator')
+      .mockResolvedValue('replacement')
 
     await clickCreateRoom()
 
-    expect(mocks.getUser.mock.invocationCallOrder[0]).toBeLessThan(mocks.rpc.mock.invocationCallOrder[0])
+    expect(mocks.getUid.mock.invocationCallOrder[0]).toBeLessThan(mocks.rpc.mock.invocationCallOrder[0])
     expect(mocks.saveLastDeparture).toHaveBeenCalledWith('creator', {
       lat: 25.0478, lng: 121.517, label: '台北車站',
     })
   })
 
   it('發起時未登入便不建立房間', async () => {
-    mocks.getUser.mockResolvedValue({ data: { user: null } })
+    mocks.getUid.mockResolvedValue(null)
 
     await clickCreateRoom()
 
     expect(mocks.rpc).not.toHaveBeenCalled()
     expect(mocks.saveLastDeparture).not.toHaveBeenCalled()
     expect(mocks.navigate).not.toHaveBeenCalled()
+  })
+})
+
+describe('HomePage 錯誤就地顯示（QA ISSUE-003）', () => {
+  beforeEach(() => {
+    mocks.stateIndex = 0
+    mocks.getUid.mockReset().mockResolvedValue('creator')
+    mocks.rpc.mockReset()
+    mocks.from.mockReset()
+    mocks.navigate.mockReset()
+    mocks.saveLastDeparture.mockReset()
+    vi.stubGlobal('localStorage', { getItem: vi.fn(() => '1'), setItem: vi.fn() })
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('自訂時間未選完整就按建立房間：不打 API', async () => {
+    mocks.stateValues = [
+      '', '', '', '', { lat: 25.0478, lng: 121.517, label: '台北車站' },
+      'custom', '', '', false, '', {}, [],
+    ]
+    await clickCreateRoom()
+    expect(mocks.rpc).not.toHaveBeenCalled()
+  })
+
+  it('建房錯誤渲染在建立房間的卡片內，不在頁尾', async () => {
+    mocks.stateValues = [
+      '', '請選擇完整的用餐時間', '', '', { lat: 25.0478, lng: 121.517, label: '台北車站' },
+      'custom', '', '', false, '', {}, [],
+    ]
+    const { default: HomePage } = await import('./HomePage')
+    const sections = findSections(HomePage())
+    expect(textContent(sections[0])).toContain('請選擇完整的用餐時間')
+    expect(textContent(sections[1])).not.toContain('請選擇完整的用餐時間')
   })
 })

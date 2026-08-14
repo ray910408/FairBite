@@ -69,6 +69,7 @@ export default function LocationPicker({ value, onChange }: Props) {
 
   // label 變更代表搜尋/GPS/外部帶入或遠距移動產生新標籤；錨點只在此時更新。
   // 同 label 的 250m 內微調不得搬移錨點，避免連續小步拖曳讓地名一路漂移。
+  // 明確選擇（搜尋結果/GPS）走直接重設，不依賴 label 比對（同名結果 label 相同比不出來）。
   useEffect(() => {
     if (!value) {
       anchorRef.current = null
@@ -108,6 +109,8 @@ export default function LocationPicker({ value, onChange }: Props) {
     try {
       const pos = await getPosition(navigator.geolocation)
       if (gen !== selectionGen.current) return
+      anchorRef.current = { lat: pos.lat, lng: pos.lng }
+      lastLabelRef.current = '目前位置'
       onChange({ ...pos, label: '目前位置' })
     } catch (err) {
       if (gen !== selectionGen.current) return
@@ -141,8 +144,15 @@ export default function LocationPicker({ value, onChange }: Props) {
               {results.map((r, i) => (
                 <li key={i}>
                   <button type="button" className="btn btn-quiet w-full justify-start px-3 text-left text-sm"
-                    onClick={() => { selectionGen.current++; onChange(r); setResults([]) }}>
-                    {r.label}
+                    onClick={() => {
+                      selectionGen.current++
+                      anchorRef.current = { lat: r.lat, lng: r.lng }
+                      lastLabelRef.current = r.label
+                      onChange(r)
+                      setResults([])
+                    }}>
+                    <span className="min-w-0 flex-1 truncate text-left">{r.label}</span>
+                    {r.context && <span className="ml-2 max-w-[45%] truncate text-xs text-fg-muted">{r.context}</span>}
                   </button>
                 </li>
               ))}
