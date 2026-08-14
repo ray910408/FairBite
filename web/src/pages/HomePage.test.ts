@@ -26,6 +26,7 @@ vi.mock('react', async importOriginal => {
 })
 
 vi.mock('react-router-dom', () => ({
+  Link: 'a',
   useNavigate: () => mocks.navigate,
 }))
 
