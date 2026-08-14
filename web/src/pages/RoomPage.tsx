@@ -45,7 +45,7 @@ function Stepper({ status }: { status: Room['status'] }) {
 
 export default function RoomPage() {
   const { id = '' } = useParams()
-  const { room, members, candidates, draw, myUserId, connected, notFound,
+  const { room, members, candidates, draw, myUserId, connected, notFound, loadError, refetch,
     toggleVote, myVote, ups, vetoesRemaining } = useRoom(id)
   const [spun, setSpun] = useState(false)
   const [actionError, setActionError] = useState('')
@@ -63,18 +63,27 @@ export default function RoomPage() {
     setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
     setDraftMM(d ? String(d.getMinutes()).padStart(2, '0') : '')
   }, [room?.meal_time])
-  if (!room) return notFound ? (
-    <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
-      <Logo className="h-12 w-12 opacity-60" />
-      <p className="text-fg-muted">找不到房間，或你不是成員</p>
-      <Link to="/" className="btn btn-primary px-6">回首頁</Link>
-    </main>
-  ) : (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-fg-muted">
-      <Spinner className="h-7 w-7 text-brand" />
-      <p className="text-sm">讀取房間…</p>
-    </div>
-  )
+  if (!room) {
+    if (loadError) return (
+      <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
+        <Logo className="h-12 w-12 opacity-60" />
+        <p className="text-fg-muted">房間載入失敗，請稍後再試</p>
+        <button type="button" className="btn btn-primary px-6" onClick={() => { void refetch() }}>重試</button>
+      </main>
+    )
+    return notFound ? (
+      <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
+        <Logo className="h-12 w-12 opacity-60" />
+        <p className="text-fg-muted">找不到房間，或你不是成員</p>
+        <Link to="/" className="btn btn-primary px-6">回首頁</Link>
+      </main>
+    ) : (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-fg-muted">
+        <Spinner className="h-7 w-7 text-brand" />
+        <p className="text-sm">讀取房間…</p>
+      </div>
+    )
+  }
 
   const me = members.find(m => m.user_id === myUserId)
   const isHost = room.host_id === myUserId

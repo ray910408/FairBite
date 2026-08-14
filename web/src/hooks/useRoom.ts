@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { voteRoom } from '../lib/api'
+import { classifyRoomLoad } from '../lib/roomLoad'
 import { supabase } from '../lib/supabase'
 import type { CandidateRow, DrawRow, MemberRow, Room, VoteRow } from '../lib/types'
 import { VETO_QUOTA, applyVoteMirror, myVetoCount, myVoteKind, upCounts } from '../lib/votes'
@@ -13,6 +14,7 @@ export function useRoom(roomId: string) {
   const [myUserId, setMyUserId] = useState('')
   const [connected, setConnected] = useState(true)
   const [notFound, setNotFound] = useState(false)
+  const [loadError, setLoadError] = useState(false)
 
   const refetch = useCallback(async () => {
     const [r, m, c, d, v] = await Promise.all([
@@ -27,8 +29,10 @@ export function useRoom(roomId: string) {
       supabase.from('draws').select('*').eq('room_id', roomId).maybeSingle(),
       supabase.from('votes').select('*').eq('room_id', roomId),
     ])
-    // 讀不到房間（不存在、或 RLS 擋掉非成員）要讓 UI 停止無限「載入中」
-    setNotFound(!r.data)
+    // 讀不到房間要讓 UI 停止無限「載入中」；DB/網路錯誤與查無列分開呈現（QA ISSUE-002）
+    const state = classifyRoomLoad(r.data, r.error)
+    setNotFound(state === 'not-found')
+    setLoadError(state === 'error')
     if (r.data) setRoom(r.data as Room)
     setMembers((m.data ?? []) as MemberRow[])
     setCandidates((c.data ?? []) as CandidateRow[])
@@ -96,6 +100,6 @@ export function useRoom(roomId: string) {
   const ups = upCounts(votes)
   const vetoesRemaining = VETO_QUOTA - myVetoCount(votes, myUserId)
 
-  return { room, members, candidates, draw, myUserId, connected, notFound, refetch,
+  return { room, members, candidates, draw, myUserId, connected, notFound, loadError, refetch,
     toggleVote, myVote, ups, vetoesRemaining }
 }
