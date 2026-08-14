@@ -31,8 +31,17 @@ jobs:
           version: 2.113.0
       # 先在 runner 的本機 stack 重放全部 migrations＋pgTAP，紅就不碰 production：
       # push 觸發的 CI 與本 workflow 平行跑，不能指望 CI 先紅（Codex P1）
+      # pgTAP＋DB-backed Go 測試都綠才碰 production，與 ci.yml db job 同套驗證。
       - run: supabase start
       - run: supabase test db
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - run: go test ./...
+        working-directory: server
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
       - run: supabase link --project-ref zltocdydngmdnutzarlq
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
