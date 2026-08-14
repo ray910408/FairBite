@@ -283,7 +283,8 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     // 房內 RatingPrompt 的已評靜態分支：回房驗回讀（history → home → room）
     await a.goBack()
     await a.goBack()
-    await expect(a.getByText('已評分 4 顆星')).toBeVisible()
+    // 回房是真重載：轉盤重播 SPIN_MS+200≈4.2s 後 RatingPrompt 才回讀，預設 10s expect 預算吃掉近半——放寬（final review）
+    await expect(a.getByText('已評分 4 顆星')).toBeVisible({ timeout: 15_000 })
   } finally {
     await ctxA.close()
     await ctxB.close()

@@ -192,7 +192,13 @@ export default function HistoryPage() {
                           </div>
                         ) : (
                           <button type="button" className="chip text-fg-muted"
-                            onClick={() => setExpandedId(r.id)}>
+                            onClick={() => {
+                              setExpandedId(r.id)
+                              // 展開側焦點對稱（final review）：chip 卸載後焦點會落空，
+                              // 移進星排第一顆星
+                              requestAnimationFrame(() =>
+                                expandedLiRef.current?.querySelector<HTMLButtonElement>('button')?.focus())
+                            }}>
                             尚未評分 · 補評
                           </button>
                         )

@@ -9,13 +9,15 @@
 
 - ~~**dining_history 刪除語意：** `dining_history.room_id` 目前 `on delete cascade`（0003 migration），與 ADR-0002「紀錄跟人」矛盾~~ 已解決：migration 0011 改為 nullable + `on delete set null`（本 commit）。
 
-- **房間清理政策的前置：** 刪房會使 `restaurants_select`（0005）對舊紀錄的巢狀讀取失效（room_candidates cascade 消失）——實作清理時需同步決定 restaurants 的歷史可見性（web 偏好學習與 RecentRatingPrompt 依賴 embed；程式已優雅降級但訊號會靜默流失）。2026-08-11 batch2 final review 發現。
+- **房間清理政策的前置：** 刪房會使 `restaurants_select`（0005）對舊紀錄的巢狀讀取失效（room_candidates cascade 消失）——實作清理時需同步決定 restaurants 的歷史可見性（web 偏好學習與 RecentRatingPrompt 依賴 embed；程式已優雅降級但訊號會靜默流失）。2026-08-11 batch2 final review 發現。Round 2 足跡頁（/history）清單同樣依賴此 embed，波及面擴大為全史最多 500 筆——屆時整頁餐廳名降級為「（餐廳已下架）」。
 
 - **restaurants.cuisine_tags 無 jsonb 元素型別 CHECK：** 0001 連 array CHECK 都沒有；D5 的論證同樣適用，但僅 service role 寫入且來源為 Google Places，風險低。下次修改 `restaurants` schema 時順手補。
 
 - **晚餐/其他時段 × 菜系加成：** 待 provider tag 詞彙擴充、`googleTypeTags` 有真實對映後回歸；新增 slot 的前置條件已註記於 `server/weights.go`（P3 eng review D23）。（2026-08-13：hotpot 已有真實映射，前置滿足；開 slot 與否仍是獨立產品決策。）
 
 - **均勻倍率 chip 策略：** timeslot 全場命中、rain 全場飽和、「推薦過但尚未中選」穩態 chip 三案併為一次決策：由引擎 guard 或 web 端過濾（P3 batch 1 final review）。
+
+- **dining_history 排序索引**：足跡頁查詢為 `user_id` 過濾＋`decided_at` 排序，既有 `dining_history_recency (user_id, restaurant_id, decided_at)` 中欄卡住排序用不上；個人規模無感，下次動 `dining_history` schema 時順手補 `(user_id, decided_at desc)`（2026-08-14 Round 2 eng review）。
 
 - ~~CUISINE 選項的 Google 缺口~~ 已結案（2026-08-13）：cantonese/hotpot 補真實映射（0018 回填）、sichuan 移除；tags_test gap pin 清空。
 
@@ -56,8 +58,6 @@
 
 - **What:** 審查建議讓 web 消費 vote 回應的 `vetoes_remaining`，取代目前由票列本地推導剩餘否決額度。
 - **Why:** 多分頁或 Realtime 中斷時，本地推導的剩餘額度會落後真實值。現況依 ADR-0003（`docs/adr/0003-centralized-vote-write-command.md`）：payload 仍是 API contract 的一部分，但 web 不消費，成功後靠 Realtime + debounce refetch 對齊。若日後出現實際回報再改。
-
-- **dining_history 排序索引**：足跡頁查詢為 `user_id` 過濾＋`decided_at` 排序，既有 `dining_history_recency (user_id, restaurant_id, decided_at)` 中欄卡住排序用不上；個人規模無感，下次動 `dining_history` schema 時順手補 `(user_id, decided_at desc)`（2026-08-14 Round 2 eng review）。
 
 ## Round 1 final review 遞延（2026-08-13）
 
@@ -105,7 +105,7 @@ feat/phase-1 全分支 final review 的 DEFER-P2 批次。前三項優先（安�
 11. 並發 draw 的 23505 / transition conflict 無實測（僅狀態前置檢查覆蓋）。
 12. `[]` / `null` 契約無測試斷言（現有測試 excluded/kept 皆非空）。
 13. createRoom 錯誤訊息透傳 raw message，與 join 不對稱。
-14. **UI 元件測試基建（@testing-library + jsdom）一次性補全** — slider label、toggle `aria-pressed`、auth/home `aria-label` 已於 2026-08-06 /qa 處理；殘留料理/禁忌群組的程式化關聯，與 RatingPrompt、RecentRatingPrompt、偏好建議橫幅、`applyDefaultPrefs` 的元件層零自動化覆蓋一次補全。偏好建議橫幅 UI 膠水依既有 test-plan artifact 手動 QA，不另上 E2E（P3 eng review D14/D15）。Round 2 足跡頁新增缺口一併納入：HistoryPage 載入／錯誤＋重試／空狀態／>500 footer 四態，與清單列 StarRow 錯誤分支。
+14. **UI 元件測試基建（@testing-library + jsdom）一次性補全** — slider label、toggle `aria-pressed`、auth/home `aria-label` 已於 2026-08-06 /qa 處理；殘留料理/禁忌群組的程式化關聯，與 RatingPrompt、RecentRatingPrompt、偏好建議橫幅、`applyDefaultPrefs` 的元件層零自動化覆蓋一次補全。偏好建議橫幅 UI 膠水依既有 test-plan artifact 手動 QA，不另上 E2E（P3 eng review D14/D15）。Round 2 足跡頁新增缺口一併納入：HistoryPage 載入／錯誤＋重試／空狀態／>500 footer 四態，與清單列 StarRow 錯誤分支；另 Round 2 E2E 重排後，房內 RatingPrompt 的互動寫入分支（點星後 onRated=setRating 即時切靜態文案的膠水）E2E 覆蓋歸零，批次補全時一併恢復。
 15. unmount 未清 debounce timer。
 16. ~~搜尋鈕無 in-flight guard（可連按）~~ — 已解決：`RoomPage.tsx` 的 `searchInFlight` ref 擋連按（7e322c4），伺服器端另有 per-room single-flight（`TestSearchSingleFlightPerRoom`），E2E 斷言快速連點只送一次 request。
 17. ~~首次掛載期的暫時性讀取失敗會閃「找不到房間」頁 — 應三態化（loading / notFound / ok）~~ — 已解決：`useRoom.ts` 回傳 `notFound`，`RoomPage.tsx:53` 僅在 `notFound` 為真時顯示該頁。
