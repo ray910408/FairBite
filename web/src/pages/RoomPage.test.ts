@@ -132,4 +132,23 @@ describe('RoomPage 載入失敗（QA ISSUE-002）', () => {
     await retry.props.onClick()
     expect(refetch).toHaveBeenCalled()
   })
+
+  it('房間已載入時 loadError 顯示部分資料失敗並可重試', async () => {
+    const refetch = vi.fn()
+    mocks.useRoom.mockReset().mockReturnValue({
+      room: {
+        id: 'room-1', code: 'ABC123', host_id: 'host', status: 'lobby',
+        exploration: 'balanced', meal_time: null,
+      },
+      members: [], candidates: [], draw: null, myUserId: 'host', connected: true,
+      notFound: false, loadError: true, refetch,
+      toggleVote: vi.fn(), myVote: null, ups: new Map(), vetoesRemaining: 2,
+    })
+    const tree = await renderRoomPage()
+    expect(textContent(tree)).toContain('部分資料載入失敗')
+    const retry = findButton(tree, '重試')
+    if (!retry.props?.onClick) throw new Error('找不到重試按鈕')
+    await retry.props.onClick()
+    expect(refetch).toHaveBeenCalled()
+  })
 })

@@ -171,6 +171,15 @@ export default function RoomPage() {
           </p>
         )}
 
+        {loadError && (
+          <p role="alert" className="banner bg-danger-soft text-danger">
+            <Alert className="h-5 w-5 shrink-0" />
+            <span>部分資料載入失敗，畫面可能不完整</span>
+            <button type="button" className="ml-auto shrink-0 font-semibold underline"
+              onClick={() => { void refetch() }}>重試</button>
+          </p>
+        )}
+
         {actionError && (
           <p role="alert" className="banner bg-danger-soft whitespace-pre-line text-danger">
             <Alert className="h-5 w-5 shrink-0" />
