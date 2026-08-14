@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 )
@@ -188,6 +189,22 @@ func lowestSatisfactionMember(in EngineInput) string {
 		return ""
 	}
 	return lowID
+}
+
+// cuisineUnion：全員料理偏好聯集（sorted＋dedup）。檢索 fan-out 與菜系過濾共用。
+func cuisineUnion(ms []Member) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range ms {
+		for _, c := range m.Cuisines {
+			if !seen[c] {
+				seen[c] = true
+				out = append(out, c)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // memberLikes：成員任一 cuisine 命中餐廳 tags。偏好因素與滿足度樣本（prefHit）

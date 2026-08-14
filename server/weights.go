@@ -9,6 +9,27 @@ const PriceLevelUnknown = -1
 
 var PriceLevelMaxTWD = map[int]int{0: 100, 1: 200, 2: 400, 3: 800, 4: 1600}
 
+// 菜系→Text Search 查詢詞（Round 3 spec §5.2；key 必須是 CUISINE_OPTIONS 的 cuisine key）。
+// 查詢詞是檢索召回用，不是分類判準；調詞只影響召回率，正確性仍由候選管線把關。
+var CuisineSearchQueries = map[string]string{
+	"taiwanese": "台式料理", "japanese": "日式料理", "korean": "韓式料理",
+	"cantonese": "港式料理", "western": "西式料理", "fast_food": "速食",
+	"indian": "印度料理", "hotpot": "火鍋", "seafood": "海鮮餐廳",
+	"ramen": "拉麵", "dessert": "甜點", "light_meal": "輕食", "breakfast": "早午餐",
+}
+
+// 衝突防護（Round 3 spec §5.3 決策 #9，條件式兩層；寧漏勿誤殺，表為資料可擴充）。
+// tier1：熱食十類的 query match 遇甜品專門 primaryType 無條件拒收。
+// tier2：primaryType 為輕飲（cafe/coffee_shop）且 types 無正向料理證據才拒收。
+var HotMealCuisines = map[string]bool{
+	"taiwanese": true, "japanese": true, "korean": true, "cantonese": true, "western": true,
+	"indian": true, "hotpot": true, "seafood": true, "ramen": true, "fast_food": true,
+}
+var DessertOnlyPrimaryTypes = map[string]bool{
+	"dessert_shop": true, "ice_cream_shop": true, "dessert_restaurant": true,
+}
+var LightDrinkPrimaryTypes = map[string]bool{"cafe": true, "coffee_shop": true}
+
 // 嚴格禁忌：餐廳必須具備正向認證 tag 才保留 — 負向推斷會錯誤放行
 // （例：滷肉飯店沒有衝突 tag 但素食者不能吃），codex review #4
 var DietaryRequires = map[string]string{

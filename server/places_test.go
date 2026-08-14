@@ -103,7 +103,7 @@ func TestMinutesUntilCloseTwentyFourSevenIsNotClosingSoon(t *testing.T) {
 
 func TestMockProviderRadius(t *testing.T) {
 	p := NewMockProvider()
-	all, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 2000)
+	all, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 2000, nil)
 	if err != nil || len(all.Restaurants) < 10 {
 		t.Fatalf("2km 內應有至少 10 家，got %d err %v", len(all.Restaurants), err)
 	}
@@ -112,13 +112,60 @@ func TestMockProviderRadius(t *testing.T) {
 			t.Errorf("mock 餐廳 %s 缺少合格 primaryType：%q", r.PlaceID, r.PrimaryType)
 		}
 	}
-	near, _ := p.SearchNearby(context.Background(), 25.0478, 121.5170, 300)
+	near, _ := p.SearchNearby(context.Background(), 25.0478, 121.5170, 300, nil)
 	if len(near.Restaurants) == 0 || len(near.Restaurants) >= len(all.Restaurants) {
 		t.Fatalf("300m 應為非空真子集，got %d / %d", len(near.Restaurants), len(all.Restaurants))
 	}
 	for _, r := range near.Restaurants {
 		if Haversine(25.0478, 121.5170, r.Lat, r.Lng) > 300 {
 			t.Errorf("%s 超出半徑", r.Name)
+		}
+	}
+}
+
+func TestMockProviderSynthesizesCuisineQueryMatches(t *testing.T) {
+	result, err := NewMockProvider().SearchNearby(context.Background(), 25.0478, 121.5170, 3000, []string{"ramen", "indian"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := make(map[string]Restaurant, len(result.Restaurants))
+	for _, restaurant := range result.Restaurants {
+		byID[restaurant.PlaceID] = restaurant
+	}
+	for _, tc := range []struct {
+		placeID string
+		want    []string
+	}{
+		{"mock-002", []string{"ramen"}},
+		{"mock-009", []string{"indian"}},
+		{"mock-003", nil},
+	} {
+		got := byID[tc.placeID]
+		if len(got.QueryMatches) != len(tc.want) {
+			t.Errorf("%s QueryMatches = %v，want %v", tc.placeID, got.QueryMatches, tc.want)
+			continue
+		}
+		for i := range tc.want {
+			if got.QueryMatches[i] != tc.want[i] {
+				t.Errorf("%s QueryMatches = %v，want %v", tc.placeID, got.QueryMatches, tc.want)
+				break
+			}
+		}
+	}
+}
+
+func TestCuisineUnionIsSortedAndDeduplicated(t *testing.T) {
+	got := cuisineUnion([]Member{
+		{Cuisines: []string{"ramen", "hotpot"}},
+		{Cuisines: []string{"indian", "ramen"}},
+	})
+	want := []string{"hotpot", "indian", "ramen"}
+	if len(got) != len(want) {
+		t.Fatalf("cuisineUnion = %v，want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("cuisineUnion = %v，want %v", got, want)
 		}
 	}
 }

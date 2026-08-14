@@ -8,8 +8,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
+	"sync"
 	"time"
+	"unicode"
 )
 
 // Places API (New) Nearby Search。快取條款：place_id 永存、其餘欄位 30 天內刷新
@@ -137,20 +140,8 @@ type gPlace struct {
 
 func (*googleProvider) Source() string { return "google" }
 
-func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, radiusM int) (PlacesSearchResult, error) {
-	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ { // spec §8：失敗重試一次
-		rs, err := g.call(ctx, lat, lng, radiusM)
-		if err == nil {
-			return rs, nil
-		}
-		lastErr = err
-	}
-	return PlacesSearchResult{}, lastErr
-}
-
 func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int) (PlacesSearchResult, error) {
-	body, _ := json.Marshal(map[string]any{
+	body := map[string]any{
 		// includedTypes 只擴大 Google 的召回範圍；正確性仍由 gIsMealPrimaryType 單一把關，
 		// 多列幾個類型不會放寬正確性閘門。反過來，沒列進來的類型只要店家 types 裡沒有
 		// restaurant 就會被這道 request 端過濾擋掉，永遠進不了候選——所以映射到 light_meal
@@ -165,11 +156,25 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 				"radius": float64(radiusM),
 			},
 		},
-	})
-	req, err := http.NewRequestWithContext(ctx, "POST",
-		g.baseURL+"/v1/places:searchNearby", bytes.NewReader(body))
+	}
+	places, rejected, err := g.fetchPlaces(ctx, "/v1/places:searchNearby", body)
 	if err != nil {
 		return PlacesSearchResult{}, err
+	}
+	result := PlacesSearchResult{Restaurants: make([]Restaurant, 0, len(places)), RejectedPlaceIDs: rejected}
+	for _, p := range places {
+		result.Restaurants = append(result.Restaurants, gRestaurant(p))
+	}
+	return result, nil
+}
+
+// fetchPlaces：對指定 endpoint 發請求並 parse＋meal gate。nearby 與 textSearch 共用。
+// eng review 2A：只回原始 gPlace（gate 後），轉換交給 gRestaurant——不維護平行陣列對齊。
+func (g *googleProvider) fetchPlaces(ctx context.Context, endpoint string, body map[string]any) ([]gPlace, []string, error) {
+	payload, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, "POST", g.baseURL+endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Goog-Api-Key", g.apiKey)
@@ -178,47 +183,302 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 			"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours,places.servesVegetarianFood")
 	resp, err := g.client.Do(req)
 	if err != nil {
-		return PlacesSearchResult{}, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return PlacesSearchResult{}, fmt.Errorf("places api status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+		return nil, nil, fmt.Errorf("places api status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}
 	var out struct {
 		Places []gPlace `json:"places"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return PlacesSearchResult{}, err
+		return nil, nil, err
 	}
-	result := PlacesSearchResult{Restaurants: make([]Restaurant, 0, len(out.Places))}
-	filtered := 0
+	kept := out.Places[:0]
+	var rejected []string
 	for _, p := range out.Places {
 		if !gIsMealPrimaryType(p.PrimaryType) {
-			filtered++
-			result.RejectedPlaceIDs = append(result.RejectedPlaceIDs, p.ID)
+			rejected = append(rejected, p.ID)
 			continue
 		}
-		// Absent status is common, so only explicit closure carries the tombstone signal.
-		closed := p.BusinessStatus == "CLOSED_TEMPORARILY" || p.BusinessStatus == "CLOSED_PERMANENTLY"
-		result.Restaurants = append(result.Restaurants, Restaurant{
-			PlaceID:     p.ID,
-			Closed:      closed,
-			Name:        p.DisplayName.Text,
-			PrimaryType: p.PrimaryType,
-			CuisineTags: gTags(p),
-			PriceLevel:  gPrice(p.PriceLevel),
-			Lat:         p.Location.Latitude,
-			Lng:         p.Location.Longitude,
-			Address:     p.FormattedAddress,
-			Hours:       gHours(p),
-			Rating:      p.Rating,
-		})
+		kept = append(kept, p)
 	}
-	if filtered > 0 {
-		log.Printf("primaryType 過濾掉 %d 筆非餐廳", filtered)
+	if len(rejected) > 0 {
+		log.Printf("primaryType 過濾掉 %d 筆非餐廳", len(rejected))
 	}
-	return result, nil
+	return kept, rejected, nil
+}
+
+// gRestaurant：gPlace → Restaurant 的唯一轉換點（自現 call 的 parse 迴圈抽出，欄位不變）。
+func gRestaurant(p gPlace) Restaurant {
+	closed := p.BusinessStatus == "CLOSED_TEMPORARILY" || p.BusinessStatus == "CLOSED_PERMANENTLY"
+	return Restaurant{
+		PlaceID: p.ID, Closed: closed, Name: p.DisplayName.Text, PrimaryType: p.PrimaryType,
+		CuisineTags: gTags(p), PriceLevel: gPrice(p.PriceLevel),
+		Lat: p.Location.Latitude, Lng: p.Location.Longitude,
+		Address: p.FormattedAddress, Hours: gHours(p), Rating: p.Rating,
+	}
+}
+
+// gHasMealEvidence：types 含任何供餐正向證據（tier2 防護用；spec 決策 #9）。
+var gMealEvidenceTypes = map[string]bool{
+	"noodle_shop": true, "food_court": true, "diner": true, "bistro": true,
+	"cafeteria": true, "steak_house": true, "meal_takeaway": true,
+}
+
+func gHasMealEvidence(types []string) bool {
+	for _, t := range types {
+		if t == "restaurant" || strings.HasSuffix(t, "_restaurant") || gMealEvidenceTypes[t] {
+			return true
+		}
+	}
+	return false
+}
+
+// gRejectQueryMatch：條件式衝突防護（spec 決策 #9）。回 true = 拒收該筆 query match
+// （店仍保留為一般候選，只是不帶這個菜系證據）。
+func gRejectQueryMatch(cuisine string, p gPlace) bool {
+	if !HotMealCuisines[cuisine] {
+		return false
+	}
+	if DessertOnlyPrimaryTypes[p.PrimaryType] {
+		return true // tier1：甜品專門店標熱食＝明顯荒謬
+	}
+	if LightDrinkPrimaryTypes[p.PrimaryType] && !gHasMealEvidence(p.Types) {
+		return true // tier2：純輕飲、無任何供餐證據
+	}
+	return false
+}
+
+// textSearch：單一菜系的定向檢索。locationBias 圓形非硬性範圍（searchText 的
+// locationRestriction 只支援矩形），radiusM 外的結果以 haversine 硬過濾，
+// 維持 fetch envelope 語意（spec §5.1）。
+func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, lat, lng float64, radiusM int) ([]Restaurant, []string, error) {
+	body := map[string]any{
+		// eng review 6：相關性尾段是弱匹配，15 名保真剪雜訊（池子上限與投票體驗的取捨）
+		"textQuery": query, "languageCode": "zh-TW", "pageSize": 15,
+		"locationBias": map[string]any{
+			"circle": map[string]any{
+				"center": map[string]float64{"latitude": lat, "longitude": lng},
+				"radius": float64(radiusM),
+			},
+		},
+	}
+	places, rejected, err := g.fetchPlaces(ctx, "/v1/places:searchText", body)
+	if err != nil {
+		return nil, nil, err
+	}
+	var kept []Restaurant
+	for _, p := range places {
+		r := gRestaurant(p)
+		if Haversine(lat, lng, r.Lat, r.Lng) > float64(radiusM) {
+			continue
+		}
+		if !gRejectQueryMatch(cuisine, p) {
+			r.QueryMatches = []string{cuisine}
+		}
+		kept = append(kept, r)
+	}
+	return kept, rejected, nil
+}
+
+// handleSearch（host 按「開始搜尋餐廳」）          Google Places API (New)
+//   │ members(call-time) → cuisineUnion(K 個菜系)
+//   ▼
+// SearchNearby(lat, lng, radiusM, cuisines)
+//   ├─ searchNearby ────────────────────────────► 20 筆熱門（圓形 locationRestriction）
+//   │    └─ 失敗（重試×2 後）→ 整體 error → handler 走 30 天快取 fallback（text 結果全棄）
+//   ├─ ∥ textSearch("拉麵") ─────────────────────► ≤20 筆語意相關
+//   ├─ ∥ textSearch("火鍋") … K 支並行 ──────────►（locationBias 圓＋haversine 硬過濾 radiusM 外）
+//   │    ├─ meal gate：gIsMealPrimaryType fail-closed（拒者入 RejectedPlaceIDs）
+//   │    ├─ 衝突防護：tier1 甜品專門型拒 match／tier2 純輕飲無供餐證據拒 match（店保留、match 不標）
+//   │    └─ 失敗（重試×2 後）→ log 容忍，其餘支照常（部分成功不降級）
+//   ▼
+// merge by place_id：QueryMatches 聯集；RejectedPlaceIDs 聯集去重
+//   → dedupeChains：同 chainKey（連鎖）只留離圓心最近分店、matches 聯集（不進 Rejected）
+//   → QueryMatches sort（決定性）
+//   ▼
+// closed→tombstone／rejected→逐出 ▶ 快取交易先 commit（restaurants upsert；QueryMatches 不落快取）
+//   ▼
+// 候選交易：freeze（tx 內重讀 cuisine_filter＋成員、半徑收斂）
+//   → Evaluate（memberLikes = tags ∪ query_matches；cuisine_filter=true 時菜系為硬性條件 kind "cuisine"）
+//   → ReplaceCandidates（query_matches 隨 kept/excluded 列落 room_candidates）→ rescore/draw 讀同欄位回圈
+func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, radiusM int, cuisines []string) (PlacesSearchResult, error) {
+	type textOut struct {
+		rs       []Restaurant
+		rejected []string
+	}
+	var (
+		base    PlacesSearchResult
+		baseErr error
+		outs    = make([]textOut, len(cuisines))
+		wg      sync.WaitGroup
+	)
+	// eng review D8（codex #8 收束）：nearby 與 text 同時發車——總延遲才真正≈最慢一支。
+	// 失敗語意不變：nearby 敗（重試後）即整場敗、text 結果丟棄（spec §7 骨幹語意）。
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for attempt := 0; attempt < 2; attempt++ { // spec §8：失敗重試一次
+			rs, err := g.call(ctx, lat, lng, radiusM)
+			if err == nil {
+				base, baseErr = rs, nil
+				return
+			}
+			baseErr = err
+		}
+	}()
+	for i, c := range cuisines {
+		q, ok := CuisineSearchQueries[c]
+		if !ok {
+			continue // 沒有查詢詞的菜系（防未來 key 漂移）：只靠 nearby＋types
+		}
+		wg.Add(1)
+		go func(i int, cuisine, query string) {
+			defer wg.Done()
+			for attempt := 0; attempt < 2; attempt++ {
+				rs, rejected, err := g.textSearch(ctx, cuisine, query, lat, lng, radiusM)
+				if err == nil {
+					outs[i] = textOut{rs, rejected}
+					return
+				}
+				if attempt == 1 {
+					// 單支定向檢索失敗只容忍不降級（spec §7）：nearby 池仍在，缺的只是該菜系的補召回
+					log.Printf("text search %q failed after retry: %v", cuisine, err)
+				}
+			}
+		}(i, c, q)
+	}
+	wg.Wait()
+	if baseErr != nil {
+		// nearby 是骨幹：失敗即整體失敗，走既有 30 天快取 fallback（spec §7）；text 結果不單獨救場
+		return PlacesSearchResult{}, baseErr
+	}
+	byPlaceID := make(map[string]int, len(base.Restaurants))
+	for i := range base.Restaurants {
+		byPlaceID[base.Restaurants[i].PlaceID] = i
+	}
+	rejectedSeen := map[string]bool{}
+	for _, id := range base.RejectedPlaceIDs {
+		rejectedSeen[id] = true
+	}
+	for _, o := range outs {
+		for _, r := range o.rs {
+			if idx, ok := byPlaceID[r.PlaceID]; ok {
+				// 既有列：併入 query match（union，避免重複）
+				for _, m := range r.QueryMatches {
+					if !hasTag(base.Restaurants[idx].QueryMatches, m) {
+						base.Restaurants[idx].QueryMatches = append(base.Restaurants[idx].QueryMatches, m)
+					}
+				}
+				continue
+			}
+			byPlaceID[r.PlaceID] = len(base.Restaurants)
+			base.Restaurants = append(base.Restaurants, r)
+		}
+		for _, id := range o.rejected {
+			if !rejectedSeen[id] {
+				rejectedSeen[id] = true
+				base.RejectedPlaceIDs = append(base.RejectedPlaceIDs, id)
+			}
+		}
+	}
+	base.Restaurants = dedupeChains(base.Restaurants, lat, lng)
+	for i := range base.Restaurants {
+		sort.Strings(base.Restaurants[i].QueryMatches) // 決定性輸出，測試與 trace 穩定
+	}
+	return base, nil
+}
+
+// chainKey：連鎖分店分組鍵（eng review 6 裁定；heuristic，寧漏勿誤殺）。
+// 規則：砍第一個 -／－／(／（ 之後；再者若首段為 ≥2 個 CJK 字元且後接空格，砍空格後
+// （「麥當勞-台北民生餐廳」→「麥當勞」、「丸龜製麵 台北車站店」→「丸龜製麵」）。
+// 英文名不做空格裁切（「Burger King」不可變「Burger」）。分不到組的連鎖保留原樣。
+func chainKey(name string) string {
+	if i := strings.IndexAny(name, "-－(（"); i >= 0 {
+		cut := strings.TrimSpace(name[:i])
+		// 防英文名誤併（Mo-Mo-Paradise ≠「Mo」）：裁切結果須含 CJK 才採用
+		if strings.ContainsFunc(cut, func(r rune) bool { return unicode.Is(unicode.Han, r) }) {
+			name = cut
+		}
+	}
+	name = strings.TrimSpace(name)
+	if i := strings.IndexByte(name, ' '); i >= 2 {
+		head := name[:i]
+		cjk := 0
+		for _, r := range head {
+			if !unicode.Is(unicode.Han, r) {
+				cjk = 0
+				break
+			}
+			cjk++
+		}
+		if cjk >= 2 {
+			name = head
+		}
+	}
+	return name
+}
+
+// dedupeChains：同 chainKey 只留一家分店；query_matches 取聯集。
+// 被去重的分店不是壞店——絕不能進 RejectedPlaceIDs（會被 tombstone 逐出快取）。
+// eng review D4（codex #1 收束）兩道防線：
+//
+//	(1) 選店優先「非歇業」再比距離——歇業店稍後會被 closed 過濾丟掉，選它＝整組連鎖消失；
+//	(2) 繼承的 match 以留存分店自身 primaryType 重跑 tier1——甜品專門分店不得因姐妹店帶熱食證據
+//	   （tier2 需 gPlace.Types，此處無從重跑；同連鎖輕飲分店繼承熱食 match 的殘風險接受並記錄）。
+func dedupeChains(rs []Restaurant, lat, lng float64) []Restaurant {
+	nearest := map[string]int{} // chainKey → out 內留存者 index
+	out := rs[:0]
+	for _, r := range rs {
+		key := chainKey(r.Name)
+		idx, seen := nearest[key]
+		if !seen {
+			nearest[key] = len(out)
+			out = append(out, r)
+			continue
+		}
+		keep := &out[idx]
+		better := (keep.Closed && !r.Closed) ||
+			(keep.Closed == r.Closed &&
+				Haversine(lat, lng, r.Lat, r.Lng) < Haversine(lat, lng, keep.Lat, keep.Lng))
+		if better {
+			r.QueryMatches = append(r.QueryMatches, keep.QueryMatches...)
+			*keep = r
+		} else {
+			keep.QueryMatches = append(keep.QueryMatches, r.QueryMatches...)
+		}
+	}
+	for i := range out {
+		out[i].QueryMatches = filterInheritedMatches(out[i].PrimaryType, dedupeStrings(out[i].QueryMatches))
+	}
+	return out
+}
+
+// filterInheritedMatches：tier1 再把關——熱食 match 不得掛在甜品專門型留存分店上。
+func filterInheritedMatches(primaryType string, matches []string) []string {
+	out := matches[:0]
+	for _, c := range matches {
+		if HotMealCuisines[c] && DessertOnlyPrimaryTypes[primaryType] {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func dedupeStrings(ss []string) []string {
+	seen := map[string]bool{}
+	out := ss[:0]
+	for _, s := range ss {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func gIsMealPrimaryType(primaryType string) bool {
@@ -231,7 +491,7 @@ func gIsMealPrimaryType(primaryType string) bool {
 
 func gTags(p gPlace) []string {
 	seen := map[string]bool{}
-	var tags []string
+	tags := []string{}
 	add := func(t string) {
 		if !seen[t] {
 			seen[t] = true

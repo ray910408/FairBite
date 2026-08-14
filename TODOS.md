@@ -65,7 +65,7 @@
 - **雙頁時/分 select JSX 抽共用元件**：HomePage/RoomPage 各 18 行複製；第三處出現再動手。
 - ~~**E2E 地圖渲染守門**：full-loop 補一行 `.leaflet-container` visible 斷言（原斷言在選點器改版時被刪）。~~ 已結清（Round 2 Task 5 捆綁）。
 - ~~**mealTimeForE2E 守門加 +60s 緩衝**：`t <= now` 瞬時比較在每日 19:55–20:00 有數秒級 flaky 窗口。~~ 已結清（Round 2 Task 5 捆綁）。
-- **mockdata mock-008 的 sichuan 詞彙孤兒**：下次動 mockdata.go 時順手清（本輪 brief 禁改）。
+- ~~**mockdata mock-008 的 sichuan 詞彙孤兒**：下次動 mockdata.go 時順手清。~~ 已結案：Round 3 Task 3 移除孤兒 tag，保留 hotpot。
 
 ## P2 候選
 

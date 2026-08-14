@@ -41,7 +41,7 @@ type failingProvider struct{}
 // "mock" 維持既有語意：非 google 出身 → fallback 不過濾 mock 快取。
 func (failingProvider) Source() string { return "mock" }
 
-func (failingProvider) SearchNearby(context.Context, float64, float64, int) (PlacesSearchResult, error) {
+func (failingProvider) SearchNearby(context.Context, float64, float64, int, []string) (PlacesSearchResult, error) {
 	return PlacesSearchResult{}, fmt.Errorf("simulated outage")
 }
 
@@ -125,7 +125,7 @@ type fixedProvider []Restaurant
 
 func (fixedProvider) Source() string { return "mock" }
 
-func (p fixedProvider) SearchNearby(context.Context, float64, float64, int) (PlacesSearchResult, error) {
+func (p fixedProvider) SearchNearby(context.Context, float64, float64, int, []string) (PlacesSearchResult, error) {
 	return PlacesSearchResult{Restaurants: p}, nil
 }
 
@@ -135,7 +135,7 @@ type resultProvider struct {
 
 func (resultProvider) Source() string { return "google" }
 
-func (p resultProvider) SearchNearby(context.Context, float64, float64, int) (PlacesSearchResult, error) {
+func (p resultProvider) SearchNearby(context.Context, float64, float64, int, []string) (PlacesSearchResult, error) {
 	return p.result, nil
 }
 
@@ -148,7 +148,7 @@ type conditionUpdateProvider struct {
 
 func (conditionUpdateProvider) Source() string { return "mock" }
 
-func (p conditionUpdateProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) (PlacesSearchResult, error) {
+func (p conditionUpdateProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int, _ []string) (PlacesSearchResult, error) {
 	if _, err := p.pool.Exec(ctx, `update room_members set budget_max = 100, max_distance_m = 300
 		where room_id = $1 and user_id = $2`, p.roomID, p.userID); err != nil {
 		return PlacesSearchResult{}, err
@@ -165,7 +165,7 @@ type radiusGrowthProvider struct {
 
 func (radiusGrowthProvider) Source() string { return "mock" }
 
-func (p radiusGrowthProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) (PlacesSearchResult, error) {
+func (p radiusGrowthProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int, _ []string) (PlacesSearchResult, error) {
 	if _, err := p.pool.Exec(ctx, `update room_members set max_distance_m = 2000
 		where room_id = $1 and user_id = $2`, p.roomID, p.userID); err != nil {
 		return PlacesSearchResult{}, err
@@ -186,7 +186,7 @@ type memberJoinProvider struct {
 
 func (memberJoinProvider) Source() string { return "mock" }
 
-func (p memberJoinProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) (PlacesSearchResult, error) {
+func (p memberJoinProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int, _ []string) (PlacesSearchResult, error) {
 	if _, err := p.pool.Exec(ctx, `insert into public.room_members
 		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
 		values ($1, $2, 500, '[]', '[]', $3, 'walking')
@@ -209,7 +209,7 @@ type blockingProvider struct {
 
 func (*blockingProvider) Source() string { return "mock" }
 
-func (p *blockingProvider) SearchNearby(context.Context, float64, float64, int) (PlacesSearchResult, error) {
+func (p *blockingProvider) SearchNearby(context.Context, float64, float64, int, []string) (PlacesSearchResult, error) {
 	if p.calls.Add(1) == 1 {
 		close(p.firstStarted)
 		<-p.releaseFirst
