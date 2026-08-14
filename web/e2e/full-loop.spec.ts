@@ -25,7 +25,8 @@ function mealTimeForE2E(now = new Date()): string | null {
   const t = new Date(Math.min(now.getTime() + 2 * 60 * 60 * 1000,
     new Date(now).setHours(20, 0, 0, 0)))
   t.setMinutes(Math.floor(t.getMinutes() / 5) * 5, 0, 0)
-  if (t.getTime() <= now.getTime()) return null
+  // +60s 緩衝：t 與 now 的瞬時比較在每日 19:55–20:00 有數秒級 flaky 窗口（Round 1 遞延）
+  if (t.getTime() <= now.getTime() + 60_000) return null
   return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
 }
 
@@ -44,6 +45,7 @@ async function createAndJoinRoom(a: Page, b: Page) {
   await a.getByRole('button', { name: '選擇出發點' }).click()
   await a.getByRole('button', { name: '使用目前位置' }).click()
   await expect(a.getByText('目前位置', { exact: true })).toBeVisible()
+  await expect(a.locator('.leaflet-container')).toBeVisible()
   await a.getByRole('button', { name: '完成' }).click()
   const hhmm = mealTimeForE2E()
   if (hhmm) {
@@ -250,16 +252,39 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await expect(a.getByRole('link', { name: navigationName })).toBeVisible({ timeout: 30_000 })
     await expect(b.getByRole('link', { name: navigationName })).toBeVisible({ timeout: 30_000 })
 
-    // P3 餐後評分雙觸點：A 在房內評 4 星；B 不在房內評，回首頁從「最近 1 筆未評」提示評 5 星
-    // （既有 spec 的兩個 Page 變數名就是 a / b —— OV#24）
-    await a.getByRole('button', { name: '4 顆星' }).click()
-    await expect(a.getByText('已評分 4 顆星')).toBeVisible()
+    // P3 餐後評分觸點（OV#24 雙觸點自 Round 2 起擴為三處）：A 的寫入改在足跡頁
+    // （StarRow 已共用，同一寫入路徑）；房內 RatingPrompt 改驗已評靜態回讀；
+    // B 維持首頁「最近 1 筆未評」提示評 5 星。
     await b.goto('/')
     await expect(b.getByText(/滿意嗎？/)).toBeVisible()
     await b.getByRole('button', { name: '5 顆星' }).click()
     await expect(b.getByText(/滿意嗎？/)).toBeHidden()
     await b.reload()
     await expect(b.getByText(/滿意嗎？/)).toBeHidden()
+
+    // Round 2 足跡頁閉環：host 進 /history，剛定案的店在第一列且未評，
+    // 在清單上補 4 星 → 不 reload 本地補列即顯已評、彙總卡同步重算。
+    // 店名取自結果卡 <h2>——導航連結括號內是交通方式不是店名（outside voice #1）
+    const winnerName = (await a.locator('div.card').filter({ hasText: '今天就吃' })
+      .getByRole('heading').textContent())?.trim() ?? ''
+    expect(winnerName).not.toBe('')
+    await a.goto('/')
+    await a.getByRole('link', { name: '足跡' }).click()
+    await expect(a.getByRole('heading', { name: '足跡' })).toBeVisible()
+    const firstRow = a.getByRole('listitem').first()
+    await expect(firstRow).toContainText(winnerName)
+    // 未評列預設收合為 chip，點擊展開 StarRow（design review D4）
+    await firstRow.getByRole('button', { name: '尚未評分 · 補評' }).click()
+    await firstRow.getByRole('button', { name: '4 顆星' }).click()
+    await expect(firstRow.getByLabel('已評 4 顆星')).toBeVisible()
+    // hero 彙總卡：主數字「1 餐」驗 count:'exact' 接線；已評行驗本地補列重算
+    await expect(a.getByText(/^1 餐$/)).toBeVisible()
+    await expect(a.getByText('已評 1 筆 · 平均 4.0 ★')).toBeVisible()
+    // 房內 RatingPrompt 的已評靜態分支：回房驗回讀（history → home → room）
+    await a.goBack()
+    await a.goBack()
+    // 回房是真重載：轉盤重播 SPIN_MS+200≈4.2s 後 RatingPrompt 才回讀，預設 10s expect 預算吃掉近半——放寬（final review）
+    await expect(a.getByText('已評分 4 顆星')).toBeVisible({ timeout: 15_000 })
   } finally {
     await ctxA.close()
     await ctxB.close()

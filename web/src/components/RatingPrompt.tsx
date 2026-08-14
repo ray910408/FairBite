@@ -1,39 +1,10 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { Star } from './icons'
+import StarRow from './StarRow'
 
 // 餐後評分（spec §5 滿足度）：輕量、永遠可跳過。跳過 = 不寫任何東西，
 // 滿足度樣本改用伺服器端 pref_hit。房間一次性（ADR-0004）→「餐後」的
 // 真正入口是 HomePage 的 RecentRatingPrompt（最近 1 筆未評，eng review D4）。
-function StarRow({ historyId, onRated }: { historyId: string; onRated: (n: number) => void }) {
-  const [saveError, setSaveError] = useState('')
-  const [busy, setBusy] = useState(false)
-  return (
-    <>
-      <div className="flex justify-center gap-1">
-        {[1, 2, 3, 4, 5].map(n => (
-          <button key={n} type="button" aria-label={`${n} 顆星`}
-            disabled={busy}
-            className="flex h-11 w-11 items-center justify-center rounded-xl text-fg-muted hover:text-brand disabled:opacity-50"
-            onClick={async () => {
-              setSaveError('')
-              setBusy(true)
-              // count:'exact'：RLS 擋下時 204 無 error，只看 error 會誤判成功
-              const { error, count } = await supabase.from('dining_history')
-                .update({ rating: n }, { count: 'exact' }).eq('id', historyId)
-              if (error || count === 0) {
-                setSaveError('評分儲存失敗，請再試一次')
-                setBusy(false)
-              } else onRated(n)
-            }}>
-            <Star className="h-7 w-7" />
-          </button>
-        ))}
-      </div>
-      {saveError && <p role="alert" className="text-sm text-danger">{saveError}</p>}
-    </>
-  )
-}
 
 // decided 房間頁：抽完當下想先評的人用
 export default function RatingPrompt({ roomId }: { roomId: string }) {
