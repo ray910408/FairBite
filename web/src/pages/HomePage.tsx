@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
 import { buildMealTimeISO } from '../lib/mealTime'
@@ -157,10 +157,13 @@ export default function HomePage() {
           <Logo className="h-8 w-8" />
           <span className="text-lg font-bold">今天吃什麼</span>
         </div>
-        <button className="btn btn-quiet min-h-11 px-3 text-sm" onClick={() => supabase.auth.signOut()}>
-          <LogOut className="h-4 w-4" />
-          登出
-        </button>
+        <div className="flex items-center gap-2">
+          <Link to="/history" className="btn btn-quiet min-h-11 px-3 text-sm">足跡</Link>
+          <button className="btn btn-quiet min-h-11 px-3 text-sm" onClick={() => supabase.auth.signOut()}>
+            <LogOut className="h-4 w-4" />
+            登出
+          </button>
+        </div>
       </header>
 
       <main className="mx-auto w-full max-w-md space-y-4 p-4">

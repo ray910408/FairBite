@@ -7,6 +7,7 @@ import { supabase } from './lib/supabase'
 import { Spinner } from './components/icons'
 import AuthPage from './pages/AuthPage'
 import HomePage from './pages/HomePage'
+import HistoryPage from './pages/HistoryPage'
 import RoomPage from './pages/RoomPage'
 
 export function useSession() {
@@ -45,6 +46,7 @@ export default function App() {
       <Routes>
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/" element={<Guard><HomePage /></Guard>} />
+        <Route path="/history" element={<Guard><HistoryPage /></Guard>} />
         <Route path="/room/:id" element={<Guard><RoomPage /></Guard>} />
       </Routes>
     </HashRouter>
