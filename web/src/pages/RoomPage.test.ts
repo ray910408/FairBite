@@ -39,6 +39,11 @@ vi.mock('../lib/supabase', () => ({
   },
 }))
 
+vi.mock('../lib/api', () => ({
+  searchRoom: vi.fn(async () => ({ error: null, warning: null })),
+  startVoting: vi.fn(async () => null),
+}))
+
 type ElementLike = {
   type?: unknown
   props?: { children?: unknown; onClick?: () => void | Promise<void> }
@@ -62,6 +67,13 @@ function findButton(node: unknown, label: string): ElementLike {
   if (!node || typeof node !== 'object') return {}
   const element = node as ElementLike
   if (element.type === 'button' && textContent(element.props?.children) === label) return element
+  if (typeof element.type === 'function') {
+    const parentStateIndex = mocks.stateIndex
+    mocks.stateIndex = mocks.stateValues.length
+    const rendered = element.type(element.props ?? {})
+    mocks.stateIndex = parentStateIndex
+    return findButton(rendered, label)
+  }
   return findButton(element.props?.children, label)
 }
 
@@ -150,5 +162,93 @@ describe('RoomPage 載入失敗（QA ISSUE-002）', () => {
     if (!retry.props?.onClick) throw new Error('找不到重試按鈕')
     await retry.props.onClick()
     expect(refetch).toHaveBeenCalled()
+  })
+})
+
+describe('房主免準備與搜尋 loading（Round 3）', () => {
+  const lobbyRoom = {
+    id: 'room-1', code: 'C', host_id: 'host-1', status: 'lobby',
+    exploration: 'balanced', meal_time: null, cuisine_filter: false,
+  }
+  const hostMe = {
+    room_id: 'room-1', user_id: 'host-1', budget_max: 800, cuisines: [], dietary: [],
+    max_distance_m: 1000, transport: 'walking', ready: false,
+    profiles: { display_name: '房主' },
+  }
+  const memberB = { ...hostMe, user_id: 'user-b', profiles: { display_name: '小B' } }
+
+  function roomState(overrides: Record<string, unknown> = {}) {
+    return {
+      room: lobbyRoom,
+      members: [hostMe, memberB],
+      candidates: [],
+      draw: null,
+      myUserId: 'host-1',
+      connected: true,
+      notFound: false,
+      loadError: false,
+      refetch: vi.fn(),
+      toggleVote: vi.fn(),
+      myVote: () => null,
+      ups: {},
+      vetoesRemaining: 2,
+      ...overrides,
+    }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.stateIndex = 0
+    mocks.stateValues = [false, '', '', false, false, '', '']
+    mocks.stateSetters = []
+    mocks.eq.mockReset().mockResolvedValue({ error: null, count: 1 })
+    mocks.update.mockReset().mockReturnValue({ eq: mocks.eq })
+    mocks.from.mockReset().mockReturnValue({ update: mocks.update })
+    mocks.useRoom.mockReset().mockReturnValue(roomState())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('房主在 lobby 看不到「我準備好了」按鈕', async () => {
+    const tree = await renderRoomPage()
+    expect(findButton(tree, '我準備好了').type).toBeUndefined()
+  })
+
+  it('成員列表房主列不顯示「設定中」badge', async () => {
+    const tree = await renderRoomPage()
+    const text = textContent(tree)
+    expect(text.split('設定中').length - 1).toBe(1)
+  })
+
+  it('確認視窗計數排除房主：僅房主未準備時不彈 confirm', async () => {
+    const confirmSpy = vi.fn(() => true)
+    vi.stubGlobal('confirm', confirmSpy)
+    mocks.useRoom.mockReturnValue(roomState({ members: [hostMe, { ...memberB, ready: true }] }))
+    const tree = await renderRoomPage()
+    await findButton(tree, '開始搜尋餐廳').props!.onClick!()
+    expect(confirmSpy).not.toHaveBeenCalled()
+  })
+
+  it('searching=true 時按鈕 disabled 顯示「搜尋中…」', async () => {
+    mocks.stateValues[7] = true
+    const tree = await renderRoomPage()
+    const btn = findButton(tree, '搜尋中…') as { props?: { disabled?: boolean } }
+    expect(btn.props?.disabled).toBe(true)
+  })
+
+  it('成員視角仍有「我準備好了」按鈕', async () => {
+    mocks.useRoom.mockReturnValue(roomState({ myUserId: 'user-b' }))
+    const tree = await renderRoomPage()
+    expect(findButton(tree, '我準備好了').type).toBe('button')
+  })
+
+  it('startingVoting=true 時投票鈕 disabled 顯示「處理中…」', async () => {
+    mocks.stateValues[8] = true
+    mocks.useRoom.mockReturnValue(roomState({ room: { ...lobbyRoom, status: 'candidates' } }))
+    const tree = await renderRoomPage()
+    const btn = findButton(tree, '處理中…') as { props?: { disabled?: boolean } }
+    expect(btn.props?.disabled).toBe(true)
   })
 })
