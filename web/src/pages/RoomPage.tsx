@@ -327,6 +327,32 @@ export default function RoomPage() {
             )}
           </section>
         )}
+        {room.status === 'lobby' && (
+          <section className="card animate-rise">
+            <h2 className="mb-1 text-sm font-semibold text-fg-muted">菜系過濾</h2>
+            <p className="mb-3 text-xs text-fg-muted">
+              開啟後只保留符合成員菜系偏好的店；大家都沒選菜系時不會作用
+              {!isHost && '（由房主設定）'}
+            </p>
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
+              {([[false, '關閉'], [true, '開啟']] as const).map(([value, label]) => (
+                <button key={label} type="button" aria-pressed={room.cuisine_filter === value}
+                  disabled={!isHost}
+                  className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                    room.cuisine_filter === value ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
+                  } disabled:cursor-default`}
+                  onClick={async () => {
+                    setActionError('')
+                    const { error, count } = await supabase.from('rooms')
+                      .update({ cuisine_filter: value }, { count: 'exact' }).eq('id', room.id)
+                    if (error || count === 0) setActionError('菜系過濾更新失敗')
+                  }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
         {room.status === 'lobby' && me && <ConditionsForm me={me} isHost={isHost} />}
         {room.status === 'lobby' && isHost && (
           <button className="btn btn-primary w-full" disabled={searching} aria-busy={searching}

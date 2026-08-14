@@ -29,6 +29,18 @@ describe('searchRoom', () => {
     })
   })
 
+  it('422 菜系排除時顯示菜系 label', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: 'no_candidates',
+      excluded_by: { cuisine: 3 },
+    }), { status: 422, headers: { 'Content-Type': 'application/json' } })))
+
+    await expect(searchRoom('room-1')).resolves.toEqual({
+      error: '找不到符合所有條件的餐廳。\n最主要原因：菜系（排除 3 家）。\n請放寬條件後再試。',
+      warning: null,
+    })
+  })
+
   it('422 無附近餐廳時保留 degraded warning', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       error: 'no_restaurants_in_range',

@@ -24,7 +24,7 @@ export function useRoom(roomId: string) {
       // 欄位得寫明：select('*') 會展開成全欄位，撞上 0015 的欄級 grant（center_* 只給
       // service role）會整包 permission denied
       supabase.from('rooms')
-        .select('id, code, host_id, status, exploration, meal_time').eq('id', roomId).single(),
+        .select('id, code, host_id, status, exploration, meal_time, cuisine_filter').eq('id', roomId).single(),
       supabase.from('room_members').select('*, profiles(display_name)').eq('room_id', roomId),
       supabase.from('room_candidates')
         .select('*, restaurants(name, lat, lng, place_id, source)').eq('room_id', roomId)

@@ -11,6 +11,8 @@ export type Room = {
   exploration: 'familiar' | 'balanced' | 'explore'
   // NULL = 馬上出發（migration 0017）
   meal_time: string | null
+  // 房主菜系過濾開關（migration 0021）：開啟時不符成員菜系偏好的店被硬性排除
+  cuisine_filter: boolean
 }
 
 export type MemberRow = {

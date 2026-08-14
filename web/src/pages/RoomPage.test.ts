@@ -244,6 +244,31 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     expect(findButton(tree, '我準備好了').type).toBe('button')
   })
 
+  it('lobby 顯示菜系過濾開關；成員視角 disabled', async () => {
+    mocks.useRoom.mockReturnValue({ room: { ...lobbyRoom, cuisine_filter: false },
+      members: [hostMe, memberB], myUserId: 'user-b',
+      candidates: [], draw: null, connected: true, notFound: false, loadError: false,
+      refetch: vi.fn(), toggleVote: vi.fn(), myVote: () => null, ups: {}, vetoesRemaining: 2 })
+    const tree = await renderRoomPage()
+    const toggle = findButton(tree, '關閉')
+    expect((toggle as { props?: { disabled?: boolean } }).props?.disabled).toBe(true)
+    expect(textContent(tree)).toContain('開啟後只保留符合成員菜系偏好的店')
+  })
+
+  // eng review 5A：寫入路徑防線——點了沒寫進 DB（或漏 count 防線）這條會紅
+  it('host 點「開啟」以 count:exact 寫入 cuisine_filter', async () => {
+    mocks.from.mockReturnValue({ update: mocks.update })
+    mocks.update.mockReturnValue({ eq: mocks.eq })
+    mocks.eq.mockResolvedValue({ error: null, count: 1 })
+    mocks.useRoom.mockReturnValue({ room: { ...lobbyRoom, cuisine_filter: false },
+      members: [hostMe, memberB], myUserId: 'host-1',
+      candidates: [], draw: null, connected: true, notFound: false, loadError: false,
+      refetch: vi.fn(), toggleVote: vi.fn(), myVote: () => null, ups: {}, vetoesRemaining: 2 })
+    const tree = await renderRoomPage()
+    await findButton(tree, '開啟').props!.onClick!()
+    expect(mocks.update).toHaveBeenCalledWith({ cuisine_filter: true }, { count: 'exact' })
+  })
+
   it('startingVoting=true 時投票鈕 disabled 顯示「處理中…」', async () => {
     mocks.stateValues[8] = true
     mocks.useRoom.mockReturnValue(roomState({ room: { ...lobbyRoom, status: 'candidates' } }))
