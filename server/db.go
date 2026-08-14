@@ -273,6 +273,10 @@ func LoadSatisfaction(ctx context.Context, q querier, memberIDs []string) (map[s
 // 同一列被不同 provider 重抓時，provenance 跟著最新寫入者走。
 func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant, source string) error {
 	for i := range rs {
+		// migration 0021 的 cuisine_tags CHECK 只接受字串陣列；nil slice 必須寫成 []，不能是 JSON null。
+		if rs[i].CuisineTags == nil {
+			rs[i].CuisineTags = []string{}
+		}
 		tags, _ := json.Marshal(rs[i].CuisineTags)
 		hours, _ := json.Marshal(rs[i].Hours)
 		err := tx.QueryRow(ctx, `
