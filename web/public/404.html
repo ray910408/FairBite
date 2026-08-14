@@ -5,6 +5,7 @@
   // GH Pages 對不存在的路徑回這一頁（QA ISSUE-004）：App 用 HashRouter，
   // 站內導航不會產生路徑 URL，但手打網址/外部貼路徑連結會 404。
   // 把 /FairBite/room/x 轉成 /FairBite/#/room/x 交給 App 路由，查無路由由 App 處理。
+  // base 推導假設 project site（/FairBite/）；搬 root 網域要改這裡。
   var segments = location.pathname.split('/')
   var base = segments.slice(0, 2).join('/') + '/' // "/FairBite/"
   var rest = location.pathname.slice(base.length)
