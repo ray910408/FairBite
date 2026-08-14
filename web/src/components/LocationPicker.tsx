@@ -142,7 +142,8 @@ export default function LocationPicker({ value, onChange }: Props) {
                 <li key={i}>
                   <button type="button" className="btn btn-quiet w-full justify-start px-3 text-left text-sm"
                     onClick={() => { selectionGen.current++; onChange(r); setResults([]) }}>
-                    {r.label}
+                    <span className="truncate">{r.label}</span>
+                    {r.context && <span className="ml-2 shrink-0 text-xs text-fg-muted">{r.context}</span>}
                   </button>
                 </li>
               ))}
