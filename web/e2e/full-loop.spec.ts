@@ -70,11 +70,15 @@ async function createAndJoinRoom(a: Page, b: Page) {
   await expect(b.getByText(expected)).toBeVisible() // meal_time 經 Realtime 同步到加入方
 }
 
-async function setConditionsAndReady(page: Page, budget: number) {
+async function setConditions(page: Page, budget: number) {
   await page.getByRole('slider', { name: /每人預算上限/ }).fill(String(budget))
   await expect(page.getByText(`NT$${budget}`, { exact: true })).toBeVisible()
   await page.getByRole('slider', { name: /距離偏好/ }).fill('3000')
   await expect(page.getByText('3000 公尺', { exact: true })).toBeVisible()
+}
+
+async function setConditionsAndReady(page: Page, budget: number) {
+  await setConditions(page, budget)
   await page.getByRole('button', { name: '我準備好了' }).click()
   await expect(page.getByRole('button', { name: '已準備（點擊取消）' })).toBeVisible()
 }
@@ -134,9 +138,9 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     }
 
     // 開店時段會隨測試執行時間改變；兩人皆將預算與距離拉到最大。
-    await setConditionsAndReady(a, 1600)
+    await setConditions(a, 1600)
     await setConditionsAndReady(b, 1600)
-    await expect(a.getByText('已準備', { exact: true })).toHaveCount(2)
+    await expect(a.getByText('已準備', { exact: true })).toHaveCount(1)
 
     // A 快速連點搜尋只送一次 request → 兩邊同步看到候選；後續投票定位不依賴排序。
     let searchRequestCount = 0
@@ -305,10 +309,10 @@ test('全否決擋抽選（嚴格條件房）', async ({ browser }) => {
     await signup(b, 'strictMemberB')
     await createAndJoinRoom(a, b)
 
-    await setConditionsAndReady(a, 1600)
+    await setConditions(a, 1600)
     // Slider minimum NT$100 only admits price level 0 (PriceLevelMaxTWD[0] == 100).
     await setConditionsAndReady(b, 100)
-    await expect(a.getByText('已準備', { exact: true })).toHaveCount(2)
+    await expect(a.getByText('已準備', { exact: true })).toHaveCount(1)
 
     const searchResponsePromise = a.waitForResponse(response =>
       response.request().method() === 'POST' && response.url().endsWith('/search'))

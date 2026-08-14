@@ -6,7 +6,7 @@ import { Alert, Check } from './icons'
 
 const TRANSPORTS = Object.entries(TRANSPORT_LABELS) as [MemberRow['transport'], string][]
 
-export default function ConditionsForm({ me }: { me: MemberRow }) {
+export default function ConditionsForm({ me, isHost }: { me: MemberRow; isHost: boolean }) {
   const [form, setForm] = useState(me)
   const [saveError, setSaveError] = useState('')
   const savedRef = useRef(me)   // 最後一次確認寫入成功的值（失敗時還原用）
@@ -115,13 +115,15 @@ export default function ConditionsForm({ me }: { me: MemberRow }) {
         </div>
       </div>
 
-      <button type="button" aria-pressed={form.ready}
-        className={`btn w-full ${form.ready
-          ? 'bg-ok text-white hover:bg-ok/90' : 'btn-quiet'}`}
-        onClick={() => save({ ready: !form.ready })}>
-        {form.ready && <Check className="h-5 w-5" />}
-        {form.ready ? '已準備（點擊取消）' : '我準備好了'}
-      </button>
+      {!isHost && (
+        <button type="button" aria-pressed={form.ready}
+          className={`btn w-full ${form.ready
+            ? 'bg-ok text-white hover:bg-ok/90' : 'btn-quiet'}`}
+          onClick={() => save({ ready: !form.ready })}>
+          {form.ready && <Check className="h-5 w-5" />}
+          {form.ready ? '已準備（點擊取消）' : '我準備好了'}
+        </button>
+      )}
     </div>
   )
 }

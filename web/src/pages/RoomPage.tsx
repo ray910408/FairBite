@@ -54,6 +54,9 @@ export default function RoomPage() {
   const [editingCustom, setEditingCustom] = useState(false)
   const [draftHH, setDraftHH] = useState('')
   const [draftMM, setDraftMM] = useState('')
+  // ref 管互斥（同步）、state 管 loading 畫面（非同步）——分工見 e2e 快速連點斷言
+  const [searching, setSearching] = useState(false)
+  const [startingVoting, setStartingVoting] = useState(false)
   const mealTimeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const mealTimeChain = useRef(Promise.resolve())
   const searchInFlight = useRef(false)
@@ -211,12 +214,14 @@ export default function RoomPage() {
                     <span className="ml-1 text-xs text-fg-muted">（房主）</span>
                   )}
                 </span>
-                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
-                  m.ready ? 'bg-ok-soft text-ok' : 'bg-brand-soft/60 text-fg-muted'
-                }`}>
-                  {m.ready && <Check className="h-3.5 w-3.5" />}
-                  {m.ready ? '已準備' : '設定中'}
-                </span>
+                {m.user_id !== room.host_id && (
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
+                    m.ready ? 'bg-ok-soft text-ok' : 'bg-brand-soft/60 text-fg-muted'
+                  }`}>
+                    {m.ready && <Check className="h-3.5 w-3.5" />}
+                    {m.ready ? '已準備' : '設定中'}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
@@ -322,39 +327,41 @@ export default function RoomPage() {
             )}
           </section>
         )}
-        {room.status === 'lobby' && me && <ConditionsForm me={me} />}
+        {room.status === 'lobby' && me && <ConditionsForm me={me} isHost={isHost} />}
         {room.status === 'lobby' && isHost && (
-          <button className="btn btn-primary w-full"
+          <button className="btn btn-primary w-full" disabled={searching} aria-busy={searching}
             onClick={() => {
-              const notReady = members.filter(m => !m.ready).length
+              const notReady = members.filter(m => !m.ready && m.user_id !== room.host_id).length
               if (notReady > 0 &&
                 !confirm(`還有 ${notReady} 位成員未按準備，開始後條件將凍結。確定開始搜尋？`)) return
               if (searchInFlight.current) return
               searchInFlight.current = true
+              setSearching(true)
               setActionError('')
               import('../lib/api').then(m => m.searchRoom(room.id))
                 .then(o => { setActionError(o.error ?? ''); setActionWarning(o.warning ?? '') })
                 .catch(() => setActionError('搜尋失敗：無法連線到伺服器'))
-                .finally(() => { searchInFlight.current = false })
+                .finally(() => { searchInFlight.current = false; setSearching(false) })
             }}>
-            開始搜尋餐廳
+            {searching ? <><Spinner className="h-5 w-5" />搜尋中…</> : '開始搜尋餐廳'}
           </button>
         )}
         {room.status === 'candidates' && (
           <>
             <CandidateList rows={candidates} />
             {isHost && (
-              <button className="btn btn-primary w-full"
+              <button className="btn btn-primary w-full" disabled={startingVoting} aria-busy={startingVoting}
                 onClick={async () => {
                   if (startVotingInFlight.current) return
                   startVotingInFlight.current = true
+                  setStartingVoting(true)
                   setActionError('')
                   const msg = await startVoting(room.id)
                     .catch(() => '開始投票失敗：無法連線到伺服器')
-                  startVotingInFlight.current = false
+                    .finally(() => { startVotingInFlight.current = false; setStartingVoting(false) })
                   if (msg) setActionError(msg)
                 }}>
-                開始投票
+                {startingVoting ? <><Spinner className="h-5 w-5" />處理中…</> : '開始投票'}
               </button>
             )}
           </>
