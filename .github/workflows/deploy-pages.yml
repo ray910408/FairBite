@@ -1,6 +1,8 @@
 name: Deploy web
 
-# main 綠燈後把 web/dist 推上 GitHub Pages。後端在 Render，由 Render 自己監看 main。
+# main 綠燈後先把 pending migrations 推上 Supabase，再把 web/dist 推上 GitHub Pages。
+# 後端在 Render，由 Render 自己監看 main（Go 新碼可能早於 migrate job 幾分鐘，
+# 靠「migrations 只增不改」維持相容；見 docs/deploy.md）。
 on:
   push:
     branches: [main]
@@ -17,7 +19,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # pin 同 ci.yml：供應鏈防護，也避免解析 latest 打 GitHub API 撞 rate limit
+      - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1
+        with:
+          version: 2.113.0
+      - run: supabase link --project-ref zltocdydngmdnutzarlq
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      - run: supabase db push
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
   deploy:
+    needs: migrate
     runs-on: ubuntu-latest
     environment:
       name: github-pages

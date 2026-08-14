@@ -74,6 +74,22 @@ DB 連線字串與 Places key 只存在 Render，永遠不進前端。
 路徑形式的深連結由 `web/public/404.html` 轉成對應的 hash 路由（手打網址、
 外部貼路徑連結的救援；站內導航本來就只產生 hash URL）。
 
+## 日常 release 的 DB migration
+
+push 到 `main` 時 `deploy-pages.yml` 的 `migrate` job 會自動 `supabase db push`，
+前端部署被 `needs: migrate` 擋在後面——**DB 永遠先於前端**。需要兩個 repo secrets：
+`SUPABASE_ACCESS_TOKEN`（Account → Access Tokens）與 `SUPABASE_DB_PASSWORD`。
+
+已知限制：Render 的 Go 部署獨立監看 `main`，可能早於 migrate job 完成幾分鐘。
+靠「migrations 只增不改（additive）」維持新舊相容；若未來出現非相容 migration，
+先拆兩個 PR（先 DB 後程式）。
+
+手動 fallback（Actions 壞掉時）：`supabase link --project-ref zltocdydngmdnutzarlq`
+後 `supabase db push`。
+
+> 教訓（2026-08-14 QA）：Round 1 的 0017 沒推上線，前端照常自動部署，
+> 線上建房/進房整整壞了一天——`column rooms.meal_time does not exist`。
+
 ## 換網域或改服務名時
 
 CORS 只允許單一來源。改前端網域時要同時改兩處，少一處就整站 API 全部被瀏覽器擋：
