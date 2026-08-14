@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 // HashRouter：GitHub Pages 是純靜態，/room/:id 深連結在 BrowserRouter 下會 404，
-// hash 路由不需要 404.html 轉址 hack。
+// 站內連結一律 hash URL，手打的路徑形式深連結由 public/404.html 轉回 hash 路由。
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
@@ -48,6 +48,7 @@ export default function App() {
         <Route path="/" element={<Guard><HomePage /></Guard>} />
         <Route path="/history" element={<Guard><HistoryPage /></Guard>} />
         <Route path="/room/:id" element={<Guard><RoomPage /></Guard>} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </HashRouter>
   )
