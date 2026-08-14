@@ -13,7 +13,11 @@ alter table public.room_candidates add column query_matches text[] not null defa
 
 -- TODOS 結清（eng review TODO-1 裁定 C）：restaurants.cuisine_tags 補 D5 式元素型別 CHECK。
 -- 複用 0010 的 jsonb_is_string_array（CHECK 不允許 subquery，helper 正是為此而生）；
--- 既有列全為 Go json.Marshal 產出的 array，直接上約束安全。
+-- Go json.Marshal 對 nil []string 產出 'null'::jsonb（gTags 無 type 命中時），不是 '[]'；
+-- 先歸一化既有列，add constraint 的全表驗證才不會在有資料的 DB 上失敗。
+update public.restaurants set cuisine_tags = '[]'::jsonb
+where not public.jsonb_is_string_array(cuisine_tags);
+
 alter table public.restaurants
   add constraint restaurants_cuisine_tags_strings
   check (public.jsonb_is_string_array(cuisine_tags));
