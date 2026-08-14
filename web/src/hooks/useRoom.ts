@@ -31,14 +31,16 @@ export function useRoom(roomId: string) {
       supabase.from('votes').select('*').eq('room_id', roomId),
     ])
     // 讀不到房間要讓 UI 停止無限「載入中」；DB/網路錯誤與查無列分開呈現（QA ISSUE-002）
+    // 任一查詢失敗都算 loadError；失敗的資料集不覆寫既有 state。
     const state = classifyRoomLoad(r.data, r.error)
+    const siblingError = [m, c, d, v].some(x => x.error)
     setNotFound(state === 'not-found')
-    setLoadError(state === 'error')
+    setLoadError(state === 'error' || siblingError)
     if (r.data) setRoom(r.data as Room)
-    setMembers((m.data ?? []) as MemberRow[])
-    setCandidates((c.data ?? []) as CandidateRow[])
-    setDraw((d.data ?? null) as DrawRow | null)
-    setVotes((v.data ?? []) as VoteRow[])
+    if (!m.error) setMembers((m.data ?? []) as MemberRow[])
+    if (!c.error) setCandidates((c.data ?? []) as CandidateRow[])
+    if (!d.error) setDraw((d.data ?? null) as DrawRow | null)
+    if (!v.error) setVotes((v.data ?? []) as VoteRow[])
   }, [roomId])
 
   useEffect(() => {
