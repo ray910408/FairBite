@@ -374,9 +374,10 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	fetchedRadius := averageMemberRadius(members)
+	fetchedCuisines := cuisineUnion(members)
 	// Provider fetch envelope 採 call-time 成員平均距離；tx 內重讀若縮小，會在 Evaluate 前重濾。
 	// 若期間放寬，既有 fetch envelope 只會 under-fetch，不會錯誤納入更遠餐廳（freeze.go 回 409）。
-	searchResult, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, fetchedRadius, cuisineUnion(members))
+	searchResult, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, fetchedRadius, fetchedCuisines)
 	found := searchResult.Restaurants
 	degraded := false
 	var closedIDs []string
@@ -472,7 +473,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	defer tx.Rollback(ctx)
-	members, found, err = freezeAndLoadMembers(ctx, tx, &room, fetchedRadius, found)
+	members, found, err = freezeAndLoadMembers(ctx, tx, &room, fetchedRadius, fetchedCuisines, found)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrConflict):
@@ -502,7 +503,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	}
 	result := Evaluate(EngineInput{Restaurants: found, Members: members,
 		Now: roomEvalTime(room), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Weather: wx, Recency: recency, Exposure: exposure, Satisfaction: satisfaction, Exploration: room.Exploration})
+		Weather: wx, Recency: recency, Exposure: exposure, Satisfaction: satisfaction,
+		Exploration: room.Exploration, CuisineFilter: room.CuisineFilter})
 
 	if len(result.Kept) == 0 {
 		byKind := map[string]int{}

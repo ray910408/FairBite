@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -16,22 +17,22 @@ var ErrMembersChanged = errors.New("member conditions changed during search")
 // 凍結 room 欄位、0003 擴充 guard 至 exploration、0005 is_room_lobby_locked 與
 // rooms→members 的鎖序、0006 join_room 對 rooms 的 for update。
 // 本函式在同一交易內：轉場 lobby→candidates（取得 room row lock、凍結生效）→
-// 鎖序一致地重讀 exploration 與成員（LoadMembersForUpdate 的 order by user_id 即鎖序 pin）→
+// 鎖序一致地重讀 exploration/meal_time/cuisine_filter 與成員（LoadMembersForUpdate 的 order by user_id 即鎖序 pin）→
 // 對照 call-time fetchedRadius 收斂半徑：放大代表 fetch envelope under-fetch，回
 // ErrMembersChanged 讓 host 重搜（deferred rollback 留在 lobby）；縮小則就地重濾 found。
 // 圓心不在重讀之列：它是房主建房當下的位置，create_room 寫進去之後沒有任何路徑會改它，
 // 搜尋期間不可能被挪走。
-// 成功時就地更新 room.Exploration 與 room.MealTime 並回傳權威成員與存活的 found。
-func freezeAndLoadMembers(ctx context.Context, tx pgx.Tx, room *RoomRow, fetchedRadius int, found []Restaurant) ([]Member, []Restaurant, error) {
+// 成功時就地更新 room.Exploration、room.MealTime 與 room.CuisineFilter 並回傳權威成員與存活的 found。
+func freezeAndLoadMembers(ctx context.Context, tx pgx.Tx, room *RoomRow, fetchedRadius int, fetchedCuisines []string, found []Restaurant) ([]Member, []Restaurant, error) {
 	if err := TransitionRoom(ctx, tx, room.ID, "lobby", "candidates"); err != nil {
 		// ErrConflict 原樣透傳，呼叫端據以回 409。
 		return nil, nil, err
 	}
-	// exploration/meal_time 在 lobby 可變（房主自己調），鎖定後重讀
+	// exploration/meal_time/cuisine_filter 在 lobby 可變（房主自己調），鎖定後重讀
 	if err := tx.QueryRow(ctx,
-		`select exploration, meal_time from rooms where id = $1`,
-		room.ID).Scan(&room.Exploration, &room.MealTime); err != nil {
-		return nil, nil, fmt.Errorf("凍結重讀 exploration/meal_time: %w", err)
+		`select exploration, meal_time, cuisine_filter from rooms where id = $1`,
+		room.ID).Scan(&room.Exploration, &room.MealTime, &room.CuisineFilter); err != nil {
+		return nil, nil, fmt.Errorf("凍結重讀 exploration/meal_time/cuisine_filter: %w", err)
 	}
 	members, err := LoadMembersForUpdate(ctx, tx, room.ID)
 	if err != nil {
@@ -39,6 +40,11 @@ func freezeAndLoadMembers(ctx context.Context, tx pgx.Tx, room *RoomRow, fetched
 	}
 	if len(members) == 0 {
 		return nil, nil, fmt.Errorf("凍結重讀成員: 房間無成員")
+	}
+	// 菜系聯集在檢索後、凍結前被改動＝定向檢索 under-fetch（比照半徑放大的 ErrMembersChanged 語意）。
+	// 只在硬過濾開啟時阻斷：此時聯集是入池門檻，漏檢索的菜系會造成一次性池的永久漏召回。
+	if room.CuisineFilter && !slices.Equal(cuisineUnion(members), fetchedCuisines) {
+		return nil, nil, ErrMembersChanged
 	}
 	reloadedRadius := averageMemberRadius(members)
 	// tx 內重讀的「全員平均距離」有三種情況：縮小則重濾、相等則直接繼續；

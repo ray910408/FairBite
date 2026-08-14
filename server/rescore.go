@@ -10,7 +10,8 @@ import (
 // rescoreRoom：重算（Rescore）— 投票/抽選前在同一交易內以當下成員、投票與
 // 歷史狀態權威重算候選機率並落盤（ADR-0003 inline rescore、spec §5.5）。
 // 僅供 vote/draw；search 的初次評分（外部餐廳、無票、成員 ForUpdate）不在此列。
-// pre-tx room 設定可信：center_* 永凍、exploration 在 lobby 外由 guard_room_columns 凍結、meal_time 同受 guard 凍結。
+// pre-tx room 設定可信：center_* 永凍、exploration 在 lobby 外由 guard_room_columns 凍結、
+// meal_time 與 cuisine_filter 同受 guard 凍結。
 // 回傳本次重算採用的成員快照，draw 的 RecordDecision 需要它。
 func rescoreRoom(ctx context.Context, tx pgx.Tx, room RoomRow, wx *Weather) (EngineResult, []Member, error) {
 	members, err := LoadMembers(ctx, tx, room.ID)
@@ -44,7 +45,7 @@ func rescoreRoom(ctx context.Context, tx pgx.Tx, room RoomRow, wx *Weather) (Eng
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
 		Now: roomEvalTime(room), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
 		Weather: wx, Votes: votes, Recency: recency, Exposure: exposure, ExposureCounted: exposureCounted,
-		Satisfaction: satisfaction, Exploration: room.Exploration})
+		Satisfaction: satisfaction, Exploration: room.Exploration, CuisineFilter: room.CuisineFilter})
 	// exposureCounted 從 LoadRoomRestaurants 到 Evaluate 到 ReplaceCandidates 全程同一份，round-trip 不外洩。
 	if err := ReplaceCandidates(ctx, tx, room.ID, result, exposureCounted); err != nil {
 		return EngineResult{}, nil, fmt.Errorf("寫入候選: %w", err)

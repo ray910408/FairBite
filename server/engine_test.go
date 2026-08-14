@@ -889,3 +889,52 @@ func TestNewFactorsChangeOutcome(t *testing.T) {
 		}
 	})
 }
+
+func TestCuisineFilterAndQueryMatches(t *testing.T) {
+	now := at(time.Monday, 12, 0)
+	ramenFan := Member{UserID: "u1", DisplayName: "小明", BudgetMax: 1600, Cuisines: []string{"ramen"}, MaxDistanceM: 3000, Transport: "walking"}
+	noPref := Member{UserID: "u2", DisplayName: "無偏好", BudgetMax: 1600, MaxDistanceM: 3000, Transport: "walking"}
+	tagged := Restaurant{PlaceID: "p-tag", Name: "正牌拉麵", CuisineTags: []string{"japanese", "ramen"}, PriceLevel: 1, Hours: daily([2]int{0, 1440})}
+	matched := Restaurant{PlaceID: "p-qm", Name: "麵框框", CuisineTags: nil, QueryMatches: []string{"ramen"}, PriceLevel: 1, Hours: daily([2]int{0, 1440})}
+	other := Restaurant{PlaceID: "p-other", Name: "無關店", CuisineTags: []string{"korean"}, PriceLevel: 1, Hours: daily([2]int{0, 1440})}
+
+	t.Run("query match 命中偏好因素", func(t *testing.T) {
+		if !memberLikes(ramenFan, matched) {
+			t.Fatal("query_matches 應納入 memberLikes 命中定義（spec §5.4）")
+		}
+	})
+	t.Run("開關開：無關店被排除、kind=cuisine", func(t *testing.T) {
+		res := Evaluate(EngineInput{Restaurants: []Restaurant{tagged, matched, other},
+			Members: []Member{ramenFan}, Now: now, CuisineFilter: true})
+		if len(res.Kept) != 2 {
+			t.Fatalf("kept = %d, want 2（tags 命中＋query match 命中）", len(res.Kept))
+		}
+		if len(res.Excluded) != 1 || !hasKind(res.Excluded[0].Kinds, "cuisine") {
+			t.Fatalf("無關店應以 cuisine kind 排除：%+v", res.Excluded)
+		}
+		if !strings.Contains(res.Excluded[0].Reason, "不符成員菜系偏好") {
+			t.Fatalf("排除理由應含固定文案：%s", res.Excluded[0].Reason)
+		}
+	})
+	t.Run("開關開但全員無偏好：不作用", func(t *testing.T) {
+		res := Evaluate(EngineInput{Restaurants: []Restaurant{other},
+			Members: []Member{noPref}, Now: now, CuisineFilter: true})
+		if len(res.Kept) != 1 {
+			t.Fatalf("聯集為空時開關不得排除任何店：%+v", res.Excluded)
+		}
+	})
+	t.Run("開關關：無關店照常保留", func(t *testing.T) {
+		res := Evaluate(EngineInput{Restaurants: []Restaurant{other},
+			Members: []Member{ramenFan}, Now: now})
+		if len(res.Kept) != 1 {
+			t.Fatal("開關關時菜系不觸發排除（維持偏好制）")
+		}
+	})
+	t.Run("飲食禁忌不吃 query match（planning 補訂邊界）", func(t *testing.T) {
+		noPork := Member{UserID: "u3", DisplayName: "不吃豬", BudgetMax: 1600, Dietary: []string{"no_pork"}, MaxDistanceM: 3000, Transport: "walking"}
+		res := Evaluate(EngineInput{Restaurants: []Restaurant{matched}, Members: []Member{noPork}, Now: now})
+		if len(res.Kept) != 1 {
+			t.Fatalf("query_match=ramen 不得觸發 no_pork 禁忌排除（canonical tags 才算）：%+v", res.Excluded)
+		}
+	})
+}
