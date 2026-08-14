@@ -21,6 +21,12 @@
 
 - ~~CUISINE 選項的 Google 缺口~~ 已結案（2026-08-13）：cantonese/hotpot 補真實映射（0018 回填）、sichuan 移除；tags_test gap pin 清空。
 
+### Round 3 審查遞延（2026-08-15）
+
+- **連鎖去重早於歇業 tombstone 收集**：`dedupeChains` 在 provider 內先於 `closedIDs` 收集；被連鎖去重丟棄的歇業分店逃過 tombstone，快取可能殘留至多 30 天（TTL 自癒）。修法：讓 `dedupeChains` 回傳被丟棄的 closed `place_id`，或將 closed 過濾前移。
+
+- **無名店 chain key 碰撞**：`chainKey("")` 會把多家 `displayName` 缺漏的無名店塌成一家；Google 幾乎必回 `displayName`，機率低。修法：key 為空時跳過 dedupe。
+
 ### Google Places attribution logo 確認（正式上線前）
 
 - **What:** 依當時最新版 Google 品牌指南確認「Powered by Google」logo 資產與使用方式；目前 UI 已依 `place_id` 自動為 Google 來源資料顯示文字歸因。
