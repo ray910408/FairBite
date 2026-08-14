@@ -5,6 +5,7 @@ import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
 import { buildMealTimeISO } from '../lib/mealTime'
 import { suggestCuisines, type HistoryRow } from '../lib/prefsLearning'
 import { loadLastDeparture, saveLastDeparture, type DeparturePoint } from '../lib/departure'
+import { getUid } from '../lib/uid'
 import { Alert, Logo, LogOut, Spinner } from '../components/icons'
 import LocationPicker from '../components/LocationPicker'
 import { RecentRatingPrompt } from '../components/RatingPrompt'
@@ -13,12 +14,12 @@ import { RecentRatingPrompt } from '../components/RatingPrompt'
 // 建/加成功後、導頁前，若有預設偏好就寫進自己的 member row（lobby 的 members_update
 // RLS 本來就允許）。失敗只影響預設值（罕見：搜尋凍結競態），靜默接受不擋導頁。
 async function applyDefaultPrefs(roomId: string) {
-  const { data: auth } = await supabase.auth.getUser()
-  if (!auth.user) return
-  const appliedKey = `prefs-applied:${roomId}:${auth.user.id}`
+  const uid = await getUid()
+  if (!uid) return
+  const appliedKey = `prefs-applied:${roomId}:${uid}`
   if (localStorage.getItem(appliedKey)) return
   const { data: profile, error: profileError } = await supabase.from('profiles')
-    .select('default_prefs').eq('id', auth.user.id).single()
+    .select('default_prefs').eq('id', uid).single()
   if (profileError) return
   const raw = (profile?.default_prefs as { cuisines?: string[] } | null)?.cuisines
   // 詞彙可能收縮（如 2026-08-13 移除 sichuan）：只帶入仍在選單上的 tag，
@@ -30,7 +31,7 @@ async function applyDefaultPrefs(roomId: string) {
     return
   }
   const { error } = await supabase.from('room_members').update({ cuisines })
-    .eq('room_id', roomId).eq('user_id', auth.user.id)
+    .eq('room_id', roomId).eq('user_id', uid)
     .eq('cuisines', '[]') // 只填仍是預設的列：重複加入不得覆蓋使用者已調好的條件（task6 review r1）
   if (!error) localStorage.setItem(appliedKey, '1')
 }
@@ -54,11 +55,11 @@ export default function HomePage() {
     if (!suggestionsMounted.current) return
     const request = ++suggestionRequest.current
     setSuggestion([]) // 評分後先撤下舊快照，避免 refetch 完成前仍可採納已失效建議
-    const { data: auth } = await supabase.auth.getUser()
-    if (!auth.user || request !== suggestionRequest.current) return
-    setDeparture(prev => prev ?? loadLastDeparture(auth.user.id))
+    const uid = await getUid()
+    if (!uid || request !== suggestionRequest.current) return
+    setDeparture(prev => prev ?? loadLastDeparture(uid))
     const [{ data: profile }, { data: history }, { data: lowRows }] = await Promise.all([
-      supabase.from('profiles').select('default_prefs').eq('id', auth.user.id).single(),
+      supabase.from('profiles').select('default_prefs').eq('id', uid).single(),
       supabase.from('dining_history')
         .select('rating, restaurants(cuisine_tags)')
         .order('decided_at', { ascending: false }).limit(50),
@@ -70,8 +71,8 @@ export default function HomePage() {
     const current = Array.isArray(dp.cuisines) ? (dp.cuisines as string[]) : []
     const tags = suggestCuisines([...(lowRows ?? []), ...(history ?? [])] as unknown as HistoryRow[], current,
       CUISINE_OPTIONS.map(([k]) => k))
-    const dismissed = (localStorage.getItem(`prefs-suggest-dismissed:${auth.user.id}`) ?? '').split(',')
-    setMyUserId(auth.user.id)
+    const dismissed = (localStorage.getItem(`prefs-suggest-dismissed:${uid}`) ?? '').split(',')
+    setMyUserId(uid)
     setPrefs(dp)
     setSuggestion(tags.filter(t => !dismissed.includes(t)))
   }, [])
@@ -88,9 +89,8 @@ export default function HomePage() {
   }, [cancelSuggestionLoads, loadSuggestions])
 
   async function persistRoom(pos: DeparturePoint) {
-    const { data: auth } = await supabase.auth.getUser()
-    if (!auth.user) return
-    const creatorUid = auth.user.id
+    const creatorUid = await getUid()
+    if (!creatorUid) return
     let mealISO: string | null = null
     if (mealMode === 'custom') {
       if (!mealHH || !mealMM) {

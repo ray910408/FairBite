@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { getUid } from '../lib/uid'
 import StarRow from './StarRow'
 
 // 餐後評分（spec §5 滿足度）：輕量、永遠可跳過。跳過 = 不寫任何東西，
@@ -50,8 +51,8 @@ export function RecentRatingPrompt({ onRated }: { onRated?: () => void } = {}) {
   useEffect(() => {
     let live = true
     ;(async () => {
-      const { data: auth } = await supabase.auth.getUser()
-      if (!live || !auth.user) return
+      const uid = await getUid()
+      if (!live || !uid) return
       const { data } = await supabase.from('dining_history')
         .select('id, rating, decided_at, restaurants(name)')
         .is('rating', null)
@@ -60,9 +61,9 @@ export function RecentRatingPrompt({ onRated }: { onRated?: () => void } = {}) {
         .limit(1)
       const r = data?.[0]
       if (!live || !r) return
-      const dismissed = (localStorage.getItem(`rating-dismissed:${auth.user.id}`) ?? '').split(',')
+      const dismissed = (localStorage.getItem(`rating-dismissed:${uid}`) ?? '').split(',')
       if (dismissed.includes(r.id)) return
-      setUserId(auth.user.id)
+      setUserId(uid)
       setRow({ id: r.id, name: (r.restaurants as unknown as { name: string } | null)?.name ?? '上一餐' })
     })()
     return () => { live = false }

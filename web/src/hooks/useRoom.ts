@@ -3,6 +3,7 @@ import { voteRoom } from '../lib/api'
 import { classifyRoomLoad } from '../lib/roomLoad'
 import { supabase } from '../lib/supabase'
 import type { CandidateRow, DrawRow, MemberRow, Room, VoteRow } from '../lib/types'
+import { getUid } from '../lib/uid'
 import { VETO_QUOTA, applyVoteMirror, myVetoCount, myVoteKind, upCounts } from '../lib/votes'
 
 export function useRoom(roomId: string) {
@@ -41,7 +42,7 @@ export function useRoom(roomId: string) {
   }, [roomId])
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setMyUserId(data.user?.id ?? ''))
+    getUid().then(uid => setMyUserId(uid ?? ''))
     refetch()
     // ponytail: 任何相關表變更就整包重抓，P1 資料量小；量大再改增量更新
     const tables = [
@@ -64,7 +65,9 @@ export function useRoom(roomId: string) {
       ch = ch.on('postgres_changes',
         { event: '*', schema: 'public', table: t.table, filter: t.filter }, scheduleRefetch)
     }
-    // 斷線不能靜默：非 SUBSCRIBED 顯示橫幅，恢復時整包重拉補上漏掉的事件
+    // 斷線不能靜默：非 SUBSCRIBED 顯示橫幅，恢復時整包重拉補上漏掉的事件。
+    // 首次 SUBSCRIBED 的 refetch 與 mount refetch 重疊是刻意的：補訂閱生效前的
+    // 事件空窗（QA ISSUE-006 判定不修，代價是每次進房多一輪查詢）。
     ch.subscribe(status => {
       if (!live) return
       if (status === 'SUBSCRIBED') {
