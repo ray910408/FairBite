@@ -39,7 +39,9 @@ async function applyDefaultPrefs(roomId: string) {
 export default function HomePage() {
   const nav = useNavigate()
   const [code, setCode] = useState('')
-  const [error, setError] = useState('')
+  const [createError, setCreateError] = useState('')
+  const [joinError, setJoinError] = useState('')
+  const [prefsError, setPrefsError] = useState('')
   const [departure, setDeparture] = useState<DeparturePoint | null>(null)
   const [mealMode, setMealMode] = useState<'now' | 'custom'>('now')
   const [mealHH, setMealHH] = useState('')
@@ -94,12 +96,12 @@ export default function HomePage() {
     let mealISO: string | null = null
     if (mealMode === 'custom') {
       if (!mealHH || !mealMM) {
-        setError('請選擇完整的用餐時間')
+        setCreateError('請選擇完整的用餐時間')
         return
       }
       const r = buildMealTimeISO(`${mealHH}:${mealMM}`)
       if ('error' in r) {
-        setError(r.error)
+        setCreateError(r.error)
         return
       }
       mealISO = r.iso
@@ -108,7 +110,7 @@ export default function HomePage() {
       p_lat: pos.lat, p_lng: pos.lng,
     })
     if (error) {
-      setError(error.message)
+      setCreateError(error.message)
       return
     }
     if (mealISO) {
@@ -123,7 +125,7 @@ export default function HomePage() {
   async function createRoom() {
     if (!departure) return
     setBusy(true)
-    setError('')
+    setCreateError('')
     try {
       await persistRoom(departure)
     } finally {
@@ -133,12 +135,12 @@ export default function HomePage() {
 
   async function joinRoom(e: React.FormEvent) {
     e.preventDefault()
-    setError('')
+    setJoinError('')
     setBusy(true)
     try {
       const { data, error } = await supabase.rpc('join_room', { p_code: code })
       if (error || !data) {
-        setError(error?.message?.includes('頻繁')
+        setJoinError(error?.message?.includes('頻繁')
           ? '嘗試過於頻繁，請稍後再試'
           : '房間不存在或已開始')
       } else {
@@ -172,7 +174,7 @@ export default function HomePage() {
           <p className="text-sm text-fg-muted">
             選好出發點與用餐時間建立房間，把邀請碼給大家，各自設好條件就能開始搜尋。
           </p>
-          <LocationPicker value={departure} onChange={setDeparture} />
+          <LocationPicker value={departure} onChange={p => { setDeparture(p); setCreateError('') }} />
           <div className="space-y-2">
             <span className="text-sm font-semibold text-fg-muted">用餐時間</span>
             <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
@@ -181,7 +183,7 @@ export default function HomePage() {
                   className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                     mealMode === key ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                   }`}
-                  onClick={() => setMealMode(key)}>
+                  onClick={() => { setMealMode(key); setCreateError('') }}>
                   {label}
                 </button>
               ))}
@@ -190,7 +192,7 @@ export default function HomePage() {
               <div className="flex items-center gap-2">
                 <select className="field flex-1" aria-label="用餐時間（時）"
                   value={mealHH}
-                  onChange={e => setMealHH(e.target.value)}>
+                  onChange={e => { setMealHH(e.target.value); setCreateError('') }}>
                   <option value="" disabled>時</option>
                   {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0')).map(h => (
                     <option key={h} value={h}>{h}</option>
@@ -199,7 +201,7 @@ export default function HomePage() {
                 <span className="text-fg-muted">:</span>
                 <select className="field flex-1" aria-label="用餐時間（分）"
                   value={mealMM}
-                  onChange={e => setMealMM(e.target.value)}>
+                  onChange={e => { setMealMM(e.target.value); setCreateError('') }}>
                   <option value="" disabled>分</option>
                   {Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0')).map(m => (
                     <option key={m} value={m}>{m}</option>
@@ -212,6 +214,12 @@ export default function HomePage() {
             {busy && <Spinner className="h-5 w-5" />}
             {busy ? '建立中…' : '建立房間'}
           </button>
+          {createError && (
+            <p role="alert" className="banner bg-danger-soft text-danger">
+              <Alert className="h-5 w-5 shrink-0" />
+              <span>{createError}</span>
+            </p>
+          )}
         </section>
 
         <section className="card animate-rise space-y-3">
@@ -222,6 +230,12 @@ export default function HomePage() {
               value={code} onChange={e => setCode(e.target.value)} required maxLength={12} />
             <button className="btn btn-quiet px-5" type="submit" disabled={busy}>加入</button>
           </form>
+          {joinError && (
+            <p role="alert" className="banner bg-danger-soft text-danger">
+              <Alert className="h-5 w-5 shrink-0" />
+              <span>{joinError}</span>
+            </p>
+          )}
         </section>
 
         {suggestion.length > 0 && (
@@ -240,7 +254,7 @@ export default function HomePage() {
                   default_prefs: { ...prefs, cuisines: [...new Set([...cur, ...suggestion])] },
                 }).eq('id', myUserId)
                 if (!error) setSuggestion([])
-                else setError('偏好儲存失敗，請稍後再試')
+                else setPrefsError('偏好儲存失敗，請稍後再試')
               }}>加入預設偏好</button>
               <button className="btn btn-quiet" onClick={() => {
                 const dismissedKey = `prefs-suggest-dismissed:${myUserId}`
@@ -255,10 +269,10 @@ export default function HomePage() {
 
         <RecentRatingPrompt onRated={loadSuggestions} />
 
-        {error && (
+        {prefsError && (
           <p role="alert" className="banner bg-danger-soft text-danger">
             <Alert className="h-5 w-5 shrink-0" />
-            <span>{error}</span>
+            <span>{prefsError}</span>
           </p>
         )}
       </main>

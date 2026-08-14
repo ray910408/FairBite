@@ -66,6 +66,18 @@ function findButton(node: unknown, label: string): ElementLike {
   return findButton(element.props?.children, label)
 }
 
+function findSections(node: unknown, out: ElementLike[] = []): ElementLike[] {
+  if (Array.isArray(node)) {
+    for (const child of node) findSections(child, out)
+    return out
+  }
+  if (!node || typeof node !== 'object') return out
+  const element = node as ElementLike
+  if (element.type === 'section') out.push(element)
+  findSections(element.props?.children, out)
+  return out
+}
+
 async function clickCreateRoom() {
   const { default: HomePage } = await import('./HomePage')
   const tree = HomePage()
@@ -78,7 +90,7 @@ describe('HomePage persistRoom', () => {
   beforeEach(() => {
     mocks.stateIndex = 0
     mocks.stateValues = [
-      '', '', { lat: 25.0478, lng: 121.517, label: '台北車站' },
+      '', '', '', '', { lat: 25.0478, lng: 121.517, label: '台北車站' },
       'now', '', '', false, '', {}, [],
     ]
     mocks.getUid.mockReset()
@@ -119,5 +131,38 @@ describe('HomePage persistRoom', () => {
     expect(mocks.rpc).not.toHaveBeenCalled()
     expect(mocks.saveLastDeparture).not.toHaveBeenCalled()
     expect(mocks.navigate).not.toHaveBeenCalled()
+  })
+})
+
+describe('HomePage 錯誤就地顯示（QA ISSUE-003）', () => {
+  beforeEach(() => {
+    mocks.stateIndex = 0
+    mocks.getUid.mockReset().mockResolvedValue('creator')
+    mocks.rpc.mockReset()
+    mocks.from.mockReset()
+    mocks.navigate.mockReset()
+    mocks.saveLastDeparture.mockReset()
+    vi.stubGlobal('localStorage', { getItem: vi.fn(() => '1'), setItem: vi.fn() })
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('自訂時間未選完整就按建立房間：不打 API', async () => {
+    mocks.stateValues = [
+      '', '', '', '', { lat: 25.0478, lng: 121.517, label: '台北車站' },
+      'custom', '', '', false, '', {}, [],
+    ]
+    await clickCreateRoom()
+    expect(mocks.rpc).not.toHaveBeenCalled()
+  })
+
+  it('建房錯誤渲染在建立房間的卡片內，不在頁尾', async () => {
+    mocks.stateValues = [
+      '', '請選擇完整的用餐時間', '', '', { lat: 25.0478, lng: 121.517, label: '台北車站' },
+      'custom', '', '', false, '', {}, [],
+    ]
+    const { default: HomePage } = await import('./HomePage')
+    const sections = findSections(HomePage())
+    expect(textContent(sections[0])).toContain('請選擇完整的用餐時間')
+    expect(textContent(sections[1])).not.toContain('請選擇完整的用餐時間')
   })
 })
