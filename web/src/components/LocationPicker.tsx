@@ -151,8 +151,8 @@ export default function LocationPicker({ value, onChange }: Props) {
                       onChange(r)
                       setResults([])
                     }}>
-                    <span className="truncate">{r.label}</span>
-                    {r.context && <span className="ml-2 shrink-0 text-xs text-fg-muted">{r.context}</span>}
+                    <span className="min-w-0 flex-1 truncate text-left">{r.label}</span>
+                    {r.context && <span className="ml-2 max-w-[45%] truncate text-xs text-fg-muted">{r.context}</span>}
                   </button>
                 </li>
               ))}

@@ -53,6 +53,11 @@ export default function HomePage() {
   const suggestionRequest = useRef(0)
   const suggestionsMounted = useRef(false)
 
+  const handleDepartureChange = useCallback((p: DeparturePoint) => {
+    setDeparture(p)
+    setCreateError('')
+  }, [])
+
   const loadSuggestions = useCallback(async () => {
     if (!suggestionsMounted.current) return
     const request = ++suggestionRequest.current
@@ -174,7 +179,7 @@ export default function HomePage() {
           <p className="text-sm text-fg-muted">
             選好出發點與用餐時間建立房間，把邀請碼給大家，各自設好條件就能開始搜尋。
           </p>
-          <LocationPicker value={departure} onChange={p => { setDeparture(p); setCreateError('') }} />
+          <LocationPicker value={departure} onChange={handleDepartureChange} />
           <div className="space-y-2">
             <span className="text-sm font-semibold text-fg-muted">用餐時間</span>
             <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">

@@ -16,8 +16,10 @@ export function useRoom(roomId: string) {
   const [connected, setConnected] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [loadError, setLoadError] = useState(false)
+  const refetchGen = useRef(0)
 
   const refetch = useCallback(async () => {
+    const gen = ++refetchGen.current
     const [r, m, c, d, v] = await Promise.all([
       // 欄位得寫明：select('*') 會展開成全欄位，撞上 0015 的欄級 grant（center_* 只給
       // service role）會整包 permission denied
@@ -30,6 +32,7 @@ export function useRoom(roomId: string) {
       supabase.from('draws').select('*').eq('room_id', roomId).maybeSingle(),
       supabase.from('votes').select('*').eq('room_id', roomId),
     ])
+    if (gen !== refetchGen.current) return // 有更新一輪在跑，這輪結果作廢
     // 讀不到房間要讓 UI 停止無限「載入中」；DB/網路錯誤與查無列分開呈現（QA ISSUE-002）
     // 任一查詢失敗都算 loadError；失敗的資料集不覆寫既有 state。
     const state = classifyRoomLoad(r.data, r.error)
