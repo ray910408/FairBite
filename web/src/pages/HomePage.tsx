@@ -249,6 +249,7 @@ export default function HomePage() {
             </p>
             <div className="flex gap-2">
               <button className="btn btn-primary flex-1" onClick={async () => {
+                setPrefsError('')
                 const cur = Array.isArray(prefs.cuisines) ? (prefs.cuisines as string[]) : []
                 const { error } = await supabase.from('profiles').update({
                   default_prefs: { ...prefs, cuisines: [...new Set([...cur, ...suggestion])] },

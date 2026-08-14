@@ -54,6 +54,7 @@ describe('searchPlaces', () => {
     expect(url).toContain('nominatim.openstreetmap.org/search')
     expect(url).toContain('countrycodes=tw')
     expect(url).toContain('addressdetails=1')
+    expect(url).toContain('limit=5')
   })
 
   it('name 缺席時退回 display_name 第一段，無 address 就不給脈絡', async () => {
