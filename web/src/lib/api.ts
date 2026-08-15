@@ -34,7 +34,7 @@ export async function searchRoom(roomId: string): Promise<SearchOutcome> {
     if (body.error === 'no_restaurants_in_range') return { error: body.message, warning }
     const by = Object.entries((body.excluded_by ?? {}) as Record<string, number>)
       .sort((a, b) => b[1] - a[1])
-    const label: Record<string, string> = { budget: '預算', dietary: '飲食禁忌', closed: '營業時間' }
+    const label: Record<string, string> = { budget: '預算', dietary: '飲食禁忌', closed: '營業時間', cuisine: '菜系' }
     // excluded_by 缺席/空物件時別把 undefined 插進字串
     return {
       error: by.length === 0

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 )
@@ -72,6 +73,7 @@ type EngineInput struct {
 	ExposureCounted      map[string]bool          // search 時 kept（收到本房曝光 +1）的候選；nil/false = 不扣
 	Satisfaction         map[string]float64       // key = UserID；無樣本的成員不在 map；nil = 無資料
 	Exploration          string                   // familiar/balanced/explore；"" 視為 balanced
+	CuisineFilter        bool                     // 房主菜系過濾開關（Round 3 spec §6）：開啟時菜系成為房間層硬性條件
 }
 
 type EngineResult struct {
@@ -98,7 +100,7 @@ func rkey(r Restaurant) string {
 
 // hardExclude 收集「全部」違反的硬性條件（不是只記第一個）：
 // 統計才不受檢查順序污染，且理由帶成員名，UI 能建議「誰」放寬什麼（spec §8）
-func hardExclude(r Restaurant, ms []Member, now time.Time) (kinds, reasons []string) {
+func hardExclude(r Restaurant, ms []Member, now time.Time, cuisineFilter bool) (kinds, reasons []string) {
 	seenKind := map[string]bool{}
 	addKind := func(k string) {
 		if !seenKind[k] {
@@ -141,6 +143,24 @@ func hardExclude(r Restaurant, ms []Member, now time.Time) (kinds, reasons []str
 	if len(r.Hours) > 0 && !r.Hours.IsOpenAt(now) {
 		addKind("closed")
 		reasons = append(reasons, "用餐時間未營業")
+	}
+	// Round 3（spec §6／CONTEXT.md 菜系過濾）：房主開啟時，全員偏好聯集成為入池門檻。
+	// 全員皆無偏好＝聯集空＝不作用；命中定義沿用 memberLikes（tags ∪ query_matches）。
+	if cuisineFilter {
+		anyPref, matched := false, false
+		for _, m := range ms {
+			if len(m.Cuisines) > 0 {
+				anyPref = true
+				if memberLikes(m, r) {
+					matched = true
+					break
+				}
+			}
+		}
+		if anyPref && !matched {
+			addKind("cuisine")
+			reasons = append(reasons, "不符成員菜系偏好")
+		}
 	}
 	return kinds, reasons
 }
@@ -190,11 +210,28 @@ func lowestSatisfactionMember(in EngineInput) string {
 	return lowID
 }
 
-// memberLikes：成員任一 cuisine 命中餐廳 tags。偏好因素與滿足度樣本（prefHit）
-// 共用的唯一命中定義——兩者語意必須同步，改這裡即兩處同時生效（eng review D11）。
+// cuisineUnion：全員料理偏好聯集（sorted＋dedup）。檢索 fan-out 與菜系過濾共用。
+func cuisineUnion(ms []Member) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range ms {
+		for _, c := range m.Cuisines {
+			if !seen[c] {
+				seen[c] = true
+				out = append(out, c)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// memberLikes：成員任一 cuisine 命中餐廳 tags 或本房查詢命中（query match）。偏好因素與
+// 滿足度樣本（prefHit）共用的唯一命中定義——兩者語意必須同步，改這裡即兩處同時生效
+// （eng review D11；Round 3 起含 query_matches，spec §5.4／ADR-0006）。
 func memberLikes(m Member, r Restaurant) bool {
 	for _, c := range m.Cuisines {
-		if hasTag(r.CuisineTags, c) {
+		if hasTag(r.CuisineTags, c) || hasTag(r.QueryMatches, c) {
 			return true
 		}
 	}
@@ -452,7 +489,7 @@ func Evaluate(in EngineInput) EngineResult {
 	var res EngineResult
 	survivors := make([]Restaurant, 0, len(in.Restaurants))
 	for _, r := range in.Restaurants {
-		if kinds, reasons := hardExclude(r, in.Members, in.Now); len(kinds) > 0 {
+		if kinds, reasons := hardExclude(r, in.Members, in.Now, in.CuisineFilter); len(kinds) > 0 {
 			res.Excluded = append(res.Excluded, Excluded{r, kinds, strings.Join(reasons, "；")})
 			continue
 		}

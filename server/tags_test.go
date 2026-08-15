@@ -133,6 +133,15 @@ func TestCuisineOptionsMockGapIsPinned(t *testing.T) {
 	}
 }
 
+func TestCuisineSearchQueriesCoverAllCuisineOptions(t *testing.T) {
+	// codex #4 校正：該檔的 web key 清單取得方式是 webOptionKeys(t, "CUISINE_OPTIONS")（c7 既有 helper）
+	for _, key := range webOptionKeys(t, "CUISINE_OPTIONS") {
+		if _, ok := CuisineSearchQueries[key]; !ok {
+			t.Errorf("菜系 %q 沒有 Text Search 查詢詞——定向檢索會對它靜默失效（fan-out 的 continue 分支）", key)
+		}
+	}
+}
+
 // DIETARY_OPTIONS 與 tag 不是 1:1：只有 DietaryRequires 子集（目前僅 vegetarian）
 // 要求餐廳具備正向認證 tag，才有「adapter 產得出來」的語意；
 // no_beef/no_pork 是負向衝突排除，不需要任何 tag 被產出，故不在本檢查範圍。

@@ -289,3 +289,11 @@ func TestRecordDecisionWritesPrefHit(t *testing.T) {
 		}
 	}
 }
+
+func TestPrefHitCountsQueryMatches(t *testing.T) {
+	m := Member{UserID: "u1", Cuisines: []string{"ramen"}}
+	winner := Restaurant{ID: "r1", QueryMatches: []string{"ramen"}}
+	if v, ok := prefHit(m, winner); !ok || v != 1 {
+		t.Fatalf("prefHit = (%v,%v), want (1,true)——滿足度樣本吃 query_match（決策 #8）", v, ok)
+	}
+}

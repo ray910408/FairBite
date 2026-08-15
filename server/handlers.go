@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -349,6 +350,22 @@ func memberRadiusGrew(ctx context.Context, pool *pgxpool.Pool, roomID string, fe
 	return averageMemberRadius(members) > fetchedRadius, nil
 }
 
+func memberCuisinesDrifted(ctx context.Context, pool *pgxpool.Pool, roomID string, fetched []string) (bool, error) {
+	var filterEnabled bool
+	if err := pool.QueryRow(ctx, `select cuisine_filter from rooms where id = $1`, roomID).Scan(&filterEnabled); err != nil {
+		return false, err
+	}
+	if !filterEnabled {
+		return false, nil
+	}
+	members, err := LoadMembers(ctx, pool, roomID)
+	if err != nil {
+		return false, err
+	}
+	// 期間全員退房：聯集變空 ≠ fetched 時刻意回 409（人走了條件確實變了，freeze 同樣會擋）；與 memberRadiusGrew 回 false 的不對稱是有意為之。
+	return !slices.Equal(cuisineUnion(members), fetched), nil
+}
+
 func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider, inFlight *sync.Map) {
 	ctx := r.Context()
 	room, ok := loadHostRoom(w, r, pool)
@@ -374,9 +391,10 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	fetchedRadius := averageMemberRadius(members)
+	fetchedCuisines := cuisineUnion(members)
 	// Provider fetch envelope 採 call-time 成員平均距離；tx 內重讀若縮小，會在 Evaluate 前重濾。
 	// 若期間放寬，既有 fetch envelope 只會 under-fetch，不會錯誤納入更遠餐廳（freeze.go 回 409）。
-	searchResult, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, fetchedRadius)
+	searchResult, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, fetchedRadius, fetchedCuisines)
 	found := searchResult.Restaurants
 	degraded := false
 	var closedIDs []string
@@ -421,6 +439,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		}
 		found = deduped
 	}
+	closedIDs = append(closedIDs, searchResult.DiscardedClosedPlaceIDs...)
 	// 快取寫入獨立交易先 commit：即使零候選 rollback，真 API 的呼叫成果仍留作快取。
 	// fallback 的 found 已含 DB uuid 且本來就出自快取，因此跳過重寫。
 	if !degraded && (len(found) > 0 || len(closedIDs) > 0 || len(rejectedIDs) > 0) {
@@ -448,12 +467,20 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	// 混成同一個 422 會叫使用者去放寬條件卻永遠沒用 — 分流才誠實
 	if len(found) == 0 {
 		// 零筆也可能只是因為搜尋繞的是舊的、更小的半徑（成員在 SearchNearby 期間加入把平均推大）。
+		// 菜系聯集在 fan-out 期間漂移也有同型窗口：過濾開啟時，舊聯集的空結果不能當成權威結果。
 		// 這條檢查必須自己做一次，不能與 502 那條合併成 SearchNearby 之後的單一檢查：
 		// 那樣從檢查點到這裡之間仍有殘留窗口，422 又會回到叫使用者「縮小距離」的反方向建議。
 		if grew, radiusErr := memberRadiusGrew(ctx, pool, room.ID, fetchedRadius); radiusErr != nil {
 			// 檢查本身失敗不遮蔽原本的結果，照常回 422。
 			log.Printf("member radius growth check failed: %v", radiusErr)
 		} else if grew {
+			jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
+			return
+		}
+		if drifted, cuisineErr := memberCuisinesDrifted(ctx, pool, room.ID, fetchedCuisines); cuisineErr != nil {
+			// 檢查本身失敗不遮蔽原本的結果，照常回 422。
+			log.Printf("member cuisine drift check failed: %v", cuisineErr)
+		} else if drifted {
 			jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
 			return
 		}
@@ -472,7 +499,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	defer tx.Rollback(ctx)
-	members, found, err = freezeAndLoadMembers(ctx, tx, &room, fetchedRadius, found)
+	members, found, err = freezeAndLoadMembers(ctx, tx, &room, fetchedRadius, fetchedCuisines, found)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrConflict):
@@ -502,7 +529,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	}
 	result := Evaluate(EngineInput{Restaurants: found, Members: members,
 		Now: roomEvalTime(room), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
-		Weather: wx, Recency: recency, Exposure: exposure, Satisfaction: satisfaction, Exploration: room.Exploration})
+		Weather: wx, Recency: recency, Exposure: exposure, Satisfaction: satisfaction,
+		Exploration: room.Exploration, CuisineFilter: room.CuisineFilter})
 
 	if len(result.Kept) == 0 {
 		byKind := map[string]int{}

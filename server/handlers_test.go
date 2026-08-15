@@ -41,7 +41,7 @@ type failingProvider struct{}
 // "mock" 維持既有語意：非 google 出身 → fallback 不過濾 mock 快取。
 func (failingProvider) Source() string { return "mock" }
 
-func (failingProvider) SearchNearby(context.Context, float64, float64, int) (PlacesSearchResult, error) {
+func (failingProvider) SearchNearby(context.Context, float64, float64, int, []string) (PlacesSearchResult, error) {
 	return PlacesSearchResult{}, fmt.Errorf("simulated outage")
 }
 
@@ -125,7 +125,7 @@ type fixedProvider []Restaurant
 
 func (fixedProvider) Source() string { return "mock" }
 
-func (p fixedProvider) SearchNearby(context.Context, float64, float64, int) (PlacesSearchResult, error) {
+func (p fixedProvider) SearchNearby(context.Context, float64, float64, int, []string) (PlacesSearchResult, error) {
 	return PlacesSearchResult{Restaurants: p}, nil
 }
 
@@ -135,7 +135,7 @@ type resultProvider struct {
 
 func (resultProvider) Source() string { return "google" }
 
-func (p resultProvider) SearchNearby(context.Context, float64, float64, int) (PlacesSearchResult, error) {
+func (p resultProvider) SearchNearby(context.Context, float64, float64, int, []string) (PlacesSearchResult, error) {
 	return p.result, nil
 }
 
@@ -146,9 +146,26 @@ type conditionUpdateProvider struct {
 	restaurants []Restaurant
 }
 
+type cuisineUpdateProvider struct {
+	pool        *pgxpool.Pool
+	roomID      string
+	userID      string
+	restaurants []Restaurant
+}
+
+func (cuisineUpdateProvider) Source() string { return "mock" }
+
+func (p cuisineUpdateProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int, _ []string) (PlacesSearchResult, error) {
+	if _, err := p.pool.Exec(ctx, `update room_members set cuisines = '["korean"]'
+		where room_id = $1 and user_id = $2`, p.roomID, p.userID); err != nil {
+		return PlacesSearchResult{}, err
+	}
+	return PlacesSearchResult{Restaurants: append([]Restaurant(nil), p.restaurants...)}, nil
+}
+
 func (conditionUpdateProvider) Source() string { return "mock" }
 
-func (p conditionUpdateProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) (PlacesSearchResult, error) {
+func (p conditionUpdateProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int, _ []string) (PlacesSearchResult, error) {
 	if _, err := p.pool.Exec(ctx, `update room_members set budget_max = 100, max_distance_m = 300
 		where room_id = $1 and user_id = $2`, p.roomID, p.userID); err != nil {
 		return PlacesSearchResult{}, err
@@ -165,7 +182,7 @@ type radiusGrowthProvider struct {
 
 func (radiusGrowthProvider) Source() string { return "mock" }
 
-func (p radiusGrowthProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) (PlacesSearchResult, error) {
+func (p radiusGrowthProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int, _ []string) (PlacesSearchResult, error) {
 	if _, err := p.pool.Exec(ctx, `update room_members set max_distance_m = 2000
 		where room_id = $1 and user_id = $2`, p.roomID, p.userID); err != nil {
 		return PlacesSearchResult{}, err
@@ -186,7 +203,7 @@ type memberJoinProvider struct {
 
 func (memberJoinProvider) Source() string { return "mock" }
 
-func (p memberJoinProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int) (PlacesSearchResult, error) {
+func (p memberJoinProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int, _ []string) (PlacesSearchResult, error) {
 	if _, err := p.pool.Exec(ctx, `insert into public.room_members
 		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
 		values ($1, $2, 500, '[]', '[]', $3, 'walking')
@@ -209,12 +226,105 @@ type blockingProvider struct {
 
 func (*blockingProvider) Source() string { return "mock" }
 
-func (p *blockingProvider) SearchNearby(context.Context, float64, float64, int) (PlacesSearchResult, error) {
+func (p *blockingProvider) SearchNearby(context.Context, float64, float64, int, []string) (PlacesSearchResult, error) {
 	if p.calls.Add(1) == 1 {
 		close(p.firstStarted)
 		<-p.releaseFirst
 	}
 	return PlacesSearchResult{Restaurants: append([]Restaurant(nil), p.restaurants...)}, nil
+}
+
+func TestQueryMatchesSurviveRescoreRoundTrip(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const (
+		hostID          = "ae4ae4ae-ae4a-4e4a-8e4a-ae4ae4ae4ae4"
+		roomID          = "be4be4be-be4b-4e4b-8e4b-be4be4be4be4"
+		placeID         = "test-query-matches-round-trip"
+		excludedPlaceID = "test-query-matches-round-trip-excluded"
+	)
+	pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+	pool.Exec(ctx, `delete from auth.users where id = $1`, hostID)
+	pool.Exec(ctx, `delete from public.restaurants where place_id in ($1, $2)`, placeID, excludedPlaceID)
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `delete from public.rooms where id = $1`, roomID)
+		pool.Exec(context.Background(), `delete from auth.users where id = $1`, hostID)
+		pool.Exec(context.Background(), `delete from public.restaurants where place_id in ($1, $2)`, placeID, excludedPlaceID)
+	})
+	if _, err := pool.Exec(ctx,
+		`insert into auth.users (id, email) values ($1, 'query-matches-round-trip@test.dev')`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`insert into public.rooms (id, host_id, status) values ($1, $2, 'candidates')`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	restaurants := []Restaurant{
+		{
+			PlaceID: placeID, Name: "查詢命中拉麵", PrimaryType: "restaurant",
+			CuisineTags: []string{}, QueryMatches: []string{"ramen"}, PriceLevel: 1,
+			Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
+		},
+		{
+			PlaceID: excludedPlaceID, Name: "被排除的查詢命中火鍋", PrimaryType: "restaurant",
+			CuisineTags: []string{}, QueryMatches: []string{"hotpot"}, PriceLevel: 1,
+			Lat: 25.0478, Lng: 121.5171, Hours: daily([2]int{0, 1440}),
+		},
+	}
+	if err := UpsertRestaurants(ctx, tx, restaurants, "google"); err != nil {
+		t.Fatal(err)
+	}
+	result := EngineResult{
+		Kept:     []Candidate{{Restaurant: restaurants[0], Probability: 1}},
+		Excluded: []Excluded{{Restaurant: restaurants[1], Kinds: []string{"cuisine"}, Reason: "不符成員菜系偏好"}},
+	}
+	if err := ReplaceCandidates(ctx, tx, roomID, result, map[string]bool{}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, counted, err := LoadRoomRestaurants(ctx, tx, roomID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedByPlaceID := make(map[string]Restaurant, len(loaded))
+	for _, restaurant := range loaded {
+		loadedByPlaceID[restaurant.PlaceID] = restaurant
+	}
+	if got := loadedByPlaceID[placeID].QueryMatches; len(got) != 1 || got[0] != "ramen" {
+		t.Fatalf("載回 kept query_matches = %v, want [ramen]", got)
+	}
+	if got := loadedByPlaceID[excludedPlaceID].QueryMatches; len(got) != 1 || got[0] != "hotpot" {
+		t.Fatalf("載回 excluded query_matches = %v, want [hotpot]", got)
+	}
+
+	if err := ReplaceCandidates(ctx, tx, roomID,
+		EngineResult{Kept: []Candidate{{Restaurant: loadedByPlaceID[placeID], Probability: 1}}}, counted); err != nil {
+		t.Fatal(err)
+	}
+	var roundTripped []string
+	if err := tx.QueryRow(ctx,
+		`select query_matches from room_candidates where room_id = $1 and restaurant_id = $2`,
+		roomID, restaurants[0].ID).Scan(&roundTripped); err != nil {
+		t.Fatal(err)
+	}
+	if len(roundTripped) != 1 || roundTripped[0] != "ramen" {
+		t.Fatalf("二次 ReplaceCandidates 後 query_matches = %v, want [ramen]", roundTripped)
+	}
 }
 
 func TestSearchRequiresAuth(t *testing.T) {
@@ -335,6 +445,93 @@ func TestSearchReloadsMemberConditionsAfterProviderCall(t *testing.T) {
 		if candidate.Name == farName {
 			t.Fatalf("超出更新後 frozen radius 的餐廳不可出現在 kept/excluded：%s", w.Body.String())
 		}
+	}
+}
+
+func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const hostID = "c1414141-4141-4141-8141-414141414141"
+	const roomID = "c2424242-4242-4242-8242-424242424242"
+	const placeID = "cuisine-union-drift"
+	if _, err := pool.Exec(ctx,
+		`insert into auth.users (id, email) values ($1, 'cuisine-union-drift@test.dev') on conflict do nothing`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.rooms
+		(id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 25.0478, 121.5170)
+		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
+		values ($1, $2, 1600, '["ramen"]', '[]', 2000, 'walking')
+		on conflict (room_id, user_id) do update set cuisines = '["ramen"]'`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+		pool.Exec(ctx, `delete from public.restaurants where place_id = $1`, placeID)
+	})
+
+	restaurants := []Restaurant{{
+		PlaceID: placeID, Name: "韓式測試餐廳", PrimaryType: "restaurant", CuisineTags: []string{"korean"},
+		PriceLevel: 1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
+	}}
+	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
+
+	for _, tc := range []struct {
+		name          string
+		filterEnabled bool
+		empty         bool
+		wantStatus    int
+	}{
+		{name: "過濾開啟", filterEnabled: true, wantStatus: http.StatusConflict},
+		{name: "過濾關閉", filterEnabled: false, wantStatus: http.StatusOK},
+		{name: "過濾開啟且零結果", filterEnabled: true, empty: true, wantStatus: http.StatusConflict},
+		{name: "過濾關閉且零結果", filterEnabled: false, empty: true, wantStatus: http.StatusUnprocessableEntity},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := pool.Exec(ctx,
+				`update public.rooms set status = 'lobby', cuisine_filter = $2 where id = $1`, roomID, tc.filterEnabled); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx,
+				`update public.room_members set cuisines = '["ramen"]' where room_id = $1 and user_id = $2`, roomID, hostID); err != nil {
+				t.Fatal(err)
+			}
+			providerRestaurants := restaurants
+			if tc.empty {
+				providerRestaurants = nil
+			}
+			h := newTestAppWithProvider(t, pool, cuisineUpdateProvider{
+				pool: pool, roomID: roomID, userID: hostID, restaurants: providerRestaurants,
+			})
+			r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+			r.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.filterEnabled && !strings.Contains(w.Body.String(), searchConditionsChangedMessage) {
+				t.Fatalf("409 應回搜尋條件已變更：%s", w.Body.String())
+			}
+			if tc.empty && !tc.filterEnabled && !strings.Contains(w.Body.String(), `"error":"no_restaurants_in_range"`) {
+				t.Fatalf("過濾關閉的零結果應維持 no_restaurants_in_range：%s", w.Body.String())
+			}
+		})
 	}
 }
 
@@ -1000,6 +1197,34 @@ func TestSearchEdgeCases(t *testing.T) {
 	if body.Degraded == nil || *body.Degraded {
 		t.Fatalf("非降級 422 應明確含 degraded=false：%s", w.Body.String())
 	}
+	if _, err := pool.Exec(ctx,
+		`update public.rooms set status = 'lobby', cuisine_filter = true where id = $1`, roomID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`update public.room_members set budget_max = 1600, cuisines = '["ramen"]' where room_id = $1 and user_id = $2`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	cuisineApp := newTestAppWithProvider(t, pool, fixedProvider{{
+		PlaceID: persistedPlaceID, Name: "台菜測試餐廳", PrimaryType: "restaurant",
+		CuisineTags: []string{"taiwanese"}, PriceLevel: 1,
+		Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
+	}})
+	cuisineRequest := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	cuisineRequest.Header.Set("Authorization", "Bearer "+hostTok)
+	cuisineResponse := httptest.NewRecorder()
+	cuisineApp.ServeHTTP(cuisineResponse, cuisineRequest)
+	var cuisineBody struct {
+		ExcludedBy map[string]int `json:"excluded_by"`
+	}
+	if err := json.Unmarshal(cuisineResponse.Body.Bytes(), &cuisineBody); err != nil ||
+		cuisineResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("菜系全排除: want 422 got %d body %s", cuisineResponse.Code, cuisineResponse.Body.String())
+	}
+	if cuisineBody.ExcludedBy["cuisine"] != 1 {
+		t.Fatalf("422 應含 excluded_by.cuisine 統計：%s", cuisineResponse.Body.String())
+	}
 	emptyApp := newTestAppWithProvider(t, pool, fixedProvider{})
 	emptyRequest := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
 	emptyRequest.Header.Set("Authorization", "Bearer "+hostTok)
@@ -1222,6 +1447,86 @@ func TestSearchRejectedAndClosedPlacesTombstoneCache(t *testing.T) {
 	}
 
 	assertStaleAbsent(doSearch(newTestAppWithProvider(t, pool, failingProvider{}), fallbackRoomID), true)
+}
+
+func TestSearchDiscardedClosedPlaceTombstonesCache(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	const (
+		hostID           = "d1414141-4141-4141-8141-414141414141"
+		roomID           = "d2424242-4242-4242-8242-424242424242"
+		discardedPlaceID = "round14-handler-discarded-closed"
+		openPlaceID      = "round14-handler-open"
+	)
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
+		values ($1, 'discarded-closed-handler@test.dev') on conflict do nothing`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 24.1988, 121.6543)
+		on conflict (id) do update set status = 'lobby', center_lat = excluded.center_lat, center_lng = excluded.center_lng`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		values ($1, $2, 500, '[]', 2000, 'walking')
+		on conflict (room_id, user_id) do update set budget_max = excluded.budget_max,
+			cuisines = excluded.cuisines, max_distance_m = excluded.max_distance_m, transport = excluded.transport`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+		pool.Exec(ctx, `delete from public.restaurants where place_id in ($1, $2)`, discardedPlaceID, openPlaceID)
+		pool.Exec(ctx, `delete from auth.users where id = $1`, hostID)
+	})
+
+	discarded := []Restaurant{{
+		PlaceID: discardedPlaceID, Name: "連鎖去重落選歇業分店", PrimaryType: "restaurant", PriceLevel: 1,
+		Lat: 24.1988, Lng: 121.6543, Hours: daily([2]int{0, 1440}),
+	}}
+	txCache, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertRestaurants(ctx, txCache, discarded, "google"); err != nil {
+		_ = txCache.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := txCache.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := resultProvider{result: PlacesSearchResult{
+		Restaurants: []Restaurant{{
+			PlaceID: openPlaceID, Name: "仍營業餐廳", PrimaryType: "restaurant", PriceLevel: 1,
+			Lat: 24.1988, Lng: 121.6543, Hours: daily([2]int{0, 1440}),
+		}},
+		DiscardedClosedPlaceIDs: []string{discardedPlaceID},
+	}}
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
+	w := httptest.NewRecorder()
+	newTestAppWithProvider(t, pool, provider).ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("search: want 200 got %d body %s", w.Code, w.Body.String())
+	}
+	var fetchedAt time.Time
+	if err := pool.QueryRow(ctx, `select fetched_at from public.restaurants where place_id = $1`, discardedPlaceID).Scan(&fetchedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !fetchedAt.Before(time.Now().Add(-30 * 24 * time.Hour)) {
+		t.Fatalf("discarded closed restaurant fetched_at must be older than 30 days, got %s", fetchedAt)
+	}
 }
 
 func TestSearchFallbackAllExcludedIncludesDegraded(t *testing.T) {

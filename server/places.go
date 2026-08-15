@@ -89,15 +89,20 @@ type Restaurant struct {
 	Rating      float64
 	// Closed 是 transient provider 訊號；UpsertRestaurants 不會持久化。
 	Closed bool
+	// QueryMatches 是 transient 檢索訊號（查詢命中，CONTEXT.md）：本次搜尋哪些菜系查詢
+	// 命中了這家店；隨 room_candidates 落盤（round-trip 迴歸測試釘住），不進 restaurants 快取。
+	// canonical tags 只來自 types 映射（ADR-0006）。
+	QueryMatches []string
 }
 
 type PlacesSearchResult struct {
-	Restaurants      []Restaurant
-	RejectedPlaceIDs []string // provider 已辨識但拒絕的列；handler 用既有 tombstone 路徑逐出快取
+	Restaurants             []Restaurant
+	RejectedPlaceIDs        []string // provider 已辨識但拒絕的列；handler 用既有 tombstone 路徑逐出快取
+	DiscardedClosedPlaceIDs []string // 連鎖去重落選的歇業分店，供 handler 併入 closedIDs 做 tombstone；不是非餐廳逐出的 RejectedPlaceIDs
 }
 
 type PlacesProvider interface {
-	SearchNearby(ctx context.Context, lat, lng float64, radiusM int) (PlacesSearchResult, error)
+	SearchNearby(ctx context.Context, lat, lng float64, radiusM int, cuisines []string) (PlacesSearchResult, error)
 	// Source 是出身識別——寫入 restaurants.source 與快取 fallback 過濾都以此為準，
 	// 勿再比對 place_id 前綴或 type assert。
 	Source() string
@@ -118,12 +123,19 @@ func NewMockProvider() PlacesProvider { return mockProvider{} }
 
 func (mockProvider) Source() string { return "mock" }
 
-func (mockProvider) SearchNearby(_ context.Context, lat, lng float64, radiusM int) (PlacesSearchResult, error) {
+func (mockProvider) SearchNearby(_ context.Context, lat, lng float64, radiusM int, cuisines []string) (PlacesSearchResult, error) {
 	var out []Restaurant
 	for _, r := range mockRestaurants {
-		if Haversine(lat, lng, r.Lat, r.Lng) <= float64(radiusM) {
-			out = append(out, r)
+		if Haversine(lat, lng, r.Lat, r.Lng) > float64(radiusM) {
+			continue
 		}
+		// r 是值複本，設定 QueryMatches 不會污染共享的 mockRestaurants
+		for _, c := range cuisines {
+			if hasTag(r.CuisineTags, c) {
+				r.QueryMatches = append(r.QueryMatches, c)
+			}
+		}
+		out = append(out, r)
 	}
 	return PlacesSearchResult{Restaurants: out}, nil
 }

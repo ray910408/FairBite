@@ -24,21 +24,22 @@ type querier interface {
 }
 
 type RoomRow struct {
-	ID          string
-	HostID      string
-	Status      string
-	CenterLat   float64
-	CenterLng   float64
-	Exploration string
-	MealTime    *time.Time // NULL = 馬上出發（spec §4）
+	ID            string
+	HostID        string
+	Status        string
+	CenterLat     float64
+	CenterLng     float64
+	Exploration   string
+	MealTime      *time.Time // NULL = 馬上出發（spec §4）
+	CuisineFilter bool
 }
 
 func LoadRoom(ctx context.Context, q querier, roomID string) (RoomRow, error) {
 	var r RoomRow
 	err := q.QueryRow(ctx,
-		`select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), exploration, meal_time
+		`select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), exploration, meal_time, cuisine_filter
 		 from rooms where id = $1`, roomID).
-		Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.Exploration, &r.MealTime)
+		Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.Exploration, &r.MealTime, &r.CuisineFilter)
 	return r, err
 }
 
@@ -273,6 +274,10 @@ func LoadSatisfaction(ctx context.Context, q querier, memberIDs []string) (map[s
 // 同一列被不同 provider 重抓時，provenance 跟著最新寫入者走。
 func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant, source string) error {
 	for i := range rs {
+		// migration 0021 的 cuisine_tags CHECK 只接受字串陣列；nil slice 必須寫成 []，不能是 JSON null。
+		if rs[i].CuisineTags == nil {
+			rs[i].CuisineTags = []string{}
+		}
 		tags, _ := json.Marshal(rs[i].CuisineTags)
 		hours, _ := json.Marshal(rs[i].Hours)
 		err := tx.QueryRow(ctx, `
@@ -355,9 +360,10 @@ func ReplaceCandidates(ctx context.Context, tx pgx.Tx, roomID string, res Engine
 		trace, _ := json.Marshal(c.Trace)
 		if _, err := tx.Exec(ctx, `
 			insert into room_candidates
-				(room_id, restaurant_id, status, probability, weight_breakdown, exposure_counted)
-			values ($1, $2, 'kept', $3, $4, $5)`,
-			roomID, c.Restaurant.ID, c.Probability, trace, exposureCounted[c.Restaurant.ID]); err != nil {
+				(room_id, restaurant_id, status, probability, weight_breakdown, exposure_counted, query_matches)
+			values ($1, $2, 'kept', $3, $4, $5, $6)`,
+			roomID, c.Restaurant.ID, c.Probability, trace, exposureCounted[c.Restaurant.ID],
+			nonNilKinds(c.Restaurant.QueryMatches)); err != nil {
 			return err
 		}
 	}
@@ -365,9 +371,10 @@ func ReplaceCandidates(ctx context.Context, tx pgx.Tx, roomID string, res Engine
 		// arch c3：結構化 kinds 隨列持久化（kept 列吃欄位 default '{}'）
 		if _, err := tx.Exec(ctx, `
 			insert into room_candidates
-				(room_id, restaurant_id, status, exclusion_reason, exclusion_kinds, exposure_counted)
-			values ($1, $2, 'excluded', $3, $4, $5)`,
-			roomID, e.Restaurant.ID, e.Reason, nonNilKinds(e.Kinds), exposureCounted[e.Restaurant.ID]); err != nil {
+				(room_id, restaurant_id, status, exclusion_reason, exclusion_kinds, exposure_counted, query_matches)
+			values ($1, $2, 'excluded', $3, $4, $5, $6)`,
+			roomID, e.Restaurant.ID, e.Reason, nonNilKinds(e.Kinds), exposureCounted[e.Restaurant.ID],
+			nonNilKinds(e.Restaurant.QueryMatches)); err != nil {
 			return err
 		}
 	}
@@ -390,7 +397,7 @@ func TransitionRoom(ctx context.Context, tx pgx.Tx, roomID, from, to string) err
 func LoadRoomRestaurants(ctx context.Context, q querier, roomID string) ([]Restaurant, map[string]bool, error) {
 	rows, err := q.Query(ctx, `
 		select r.id, r.place_id, r.name, r.cuisine_tags, r.price_level,
-		       r.lat, r.lng, r.address, r.opening_hours, coalesce(r.rating, 0), rc.exposure_counted
+		       r.lat, r.lng, r.address, r.opening_hours, coalesce(r.rating, 0), rc.exposure_counted, rc.query_matches
 		from room_candidates rc join restaurants r on r.id = rc.restaurant_id
 		where rc.room_id = $1 order by rc.restaurant_id`, roomID)
 	if err != nil {
@@ -404,7 +411,7 @@ func LoadRoomRestaurants(ctx context.Context, q querier, roomID string) ([]Resta
 		var tags, hours []byte
 		var counted bool
 		if err := rows.Scan(&r.ID, &r.PlaceID, &r.Name, &tags, &r.PriceLevel,
-			&r.Lat, &r.Lng, &r.Address, &hours, &r.Rating, &counted); err != nil {
+			&r.Lat, &r.Lng, &r.Address, &hours, &r.Rating, &counted, &r.QueryMatches); err != nil {
 			return nil, nil, err
 		}
 		if err := json.Unmarshal(tags, &r.CuisineTags); err != nil {

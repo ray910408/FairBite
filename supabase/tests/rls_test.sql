@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(45);
+select plan(50);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -134,8 +134,8 @@ select results_eq(
       and table_name = 'rooms' and privilege_type = 'UPDATE'
     order by 1
   $$,
-  $$ values ('exploration'), ('meal_time') $$,
-  'rooms 的 UPDATE 欄級 grant 僅 exploration 與 meal_time');
+  $$ values ('cuisine_filter'), ('exploration'), ('meal_time') $$,
+  'rooms 的 UPDATE 欄級 grant 僅 cuisine_filter、exploration 與 meal_time');
 
 -- 0015：rooms 的 SELECT 也收成欄級。center_lat/center_lng 不在清單裡是刻意的——
 -- 搜尋圓心就是房主建房當下的精確位置，開給同房成員讀等於把房主的家門口攤給
@@ -149,7 +149,7 @@ select results_eq(
       and table_name = 'rooms' and privilege_type = 'SELECT'
     order by 1
   $$,
-  $$ values ('code'), ('created_at'), ('exploration'), ('host_id'), ('id'), ('meal_time'), ('status') $$,
+  $$ values ('code'), ('created_at'), ('cuisine_filter'), ('exploration'), ('host_id'), ('id'), ('meal_time'), ('status') $$,
   'rooms 的 SELECT 欄級 grant 精確等於預期欄位集合（center_* 加回去即紅）');
 
 -- 同一條防線的行為面。上面比對 catalog，這條實際用同房成員的身分去讀 center_lat。
@@ -189,6 +189,43 @@ select lives_ok(
 select ok(
   (select meal_time is not null from public.rooms where id = (select id from ctx)),
   '用餐時間已寫入');
+
+-- Round 3：菜系過濾開關——host 可在 lobby 切、非 host 寫不進、lobby 外被 guard 擋
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}';
+update public.rooms set cuisine_filter = true where id = (select id from ctx);
+select is((select cuisine_filter from public.rooms where id = (select id from ctx)),
+  true, 'host 可在 lobby 開啟菜系過濾');
+
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}';
+update public.rooms set cuisine_filter = false where id = (select id from ctx);
+select is((select cuisine_filter from public.rooms where id = (select id from ctx)),
+  true, '非 host 的 cuisine_filter 更新不生效（rooms_update RLS）');
+
+set local role postgres;
+update public.rooms set status = 'candidates' where id = (select id from ctx);
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}';
+select throws_ok(
+  format($$update public.rooms set cuisine_filter = false where id = %L$$, (select id from ctx)),
+  '菜系過濾僅能在等待階段調整');
+set local role postgres;
+update public.rooms set status = 'lobby' where id = (select id from ctx);
+
+-- codex #7：query_matches 欄位契約（catalog 面＋行為面各一）
+select results_eq(
+  $$
+    select column_default::text collate "default" from information_schema.columns
+    where table_schema = 'public' and table_name = 'room_candidates' and column_name = 'query_matches'
+  $$,
+  $$ values ('''{}''::text[]') $$,
+  'room_candidates.query_matches 存在且 default 空陣列（0021）');
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}';
+select lives_ok(
+  $$select query_matches from public.room_candidates limit 1$$,
+  '成員可讀 query_matches（table-level SELECT 涵蓋新欄）');
+-- authenticated 對 room_candidates 的不可寫已由檔頭 grant 矩陣 results_eq 釘住（僅 SELECT 一列），不另重複。
 reset role;
 update public.rooms set status = 'candidates' where id = (select id from ctx);
 set local role authenticated;

@@ -11,7 +11,7 @@
 
 - **房間清理政策的前置：** 刪房會使 `restaurants_select`（0005）對舊紀錄的巢狀讀取失效（room_candidates cascade 消失）——實作清理時需同步決定 restaurants 的歷史可見性（web 偏好學習與 RecentRatingPrompt 依賴 embed；程式已優雅降級但訊號會靜默流失）。2026-08-11 batch2 final review 發現。Round 2 足跡頁（/history）清單同樣依賴此 embed，波及面擴大為全史最多 500 筆——屆時整頁餐廳名降級為「（餐廳已下架）」。
 
-- **restaurants.cuisine_tags 無 jsonb 元素型別 CHECK：** 0001 連 array CHECK 都沒有；D5 的論證同樣適用，但僅 service role 寫入且來源為 Google Places，風險低。下次修改 `restaurants` schema 時順手補。
+- ~~**restaurants.cuisine_tags 無 jsonb 元素型別 CHECK：** 0001 連 array CHECK 都沒有；D5 的論證同樣適用，但僅 service role 寫入且來源為 Google Places，風險低。下次修改 `restaurants` schema 時順手補。~~ 已結案：migration 0021 已補上元素型別 CHECK。
 
 - **晚餐/其他時段 × 菜系加成：** 待 provider tag 詞彙擴充、`googleTypeTags` 有真實對映後回歸；新增 slot 的前置條件已註記於 `server/weights.go`（P3 eng review D23）。（2026-08-13：hotpot 已有真實映射，前置滿足；開 slot 與否仍是獨立產品決策。）
 
@@ -20,6 +20,12 @@
 - **dining_history 排序索引**：足跡頁查詢為 `user_id` 過濾＋`decided_at` 排序，既有 `dining_history_recency (user_id, restaurant_id, decided_at)` 中欄卡住排序用不上；個人規模無感，下次動 `dining_history` schema 時順手補 `(user_id, decided_at desc)`（2026-08-14 Round 2 eng review）。
 
 - ~~CUISINE 選項的 Google 缺口~~ 已結案（2026-08-13）：cantonese/hotpot 補真實映射（0018 回填）、sichuan 移除；tags_test gap pin 清空。
+
+### Round 3 審查遞延（2026-08-15）
+
+- ~~**連鎖去重早於歇業 tombstone 收集**：`dedupeChains` 在 provider 內先於 `closedIDs` 收集；被連鎖去重丟棄的歇業分店逃過 tombstone，快取可能殘留至多 30 天（TTL 自癒）。~~ 已結案（2026-08-15）：本輪讓 `dedupeChains` 回傳落選歇業分店的 `place_id`，由 handler 併入 `closedIDs` 做 tombstone。
+
+- **無名店 chain key 碰撞**：`chainKey("")` 會把多家 `displayName` 缺漏的無名店塌成一家；Google 幾乎必回 `displayName`，機率低。修法：key 為空時跳過 dedupe。
 
 ### Google Places attribution logo 確認（正式上線前）
 
@@ -65,7 +71,7 @@
 - **雙頁時/分 select JSX 抽共用元件**：HomePage/RoomPage 各 18 行複製；第三處出現再動手。
 - ~~**E2E 地圖渲染守門**：full-loop 補一行 `.leaflet-container` visible 斷言（原斷言在選點器改版時被刪）。~~ 已結清（Round 2 Task 5 捆綁）。
 - ~~**mealTimeForE2E 守門加 +60s 緩衝**：`t <= now` 瞬時比較在每日 19:55–20:00 有數秒級 flaky 窗口。~~ 已結清（Round 2 Task 5 捆綁）。
-- **mockdata mock-008 的 sichuan 詞彙孤兒**：下次動 mockdata.go 時順手清（本輪 brief 禁改）。
+- ~~**mockdata mock-008 的 sichuan 詞彙孤兒**：下次動 mockdata.go 時順手清。~~ 已結案：Round 3 Task 3 移除孤兒 tag，保留 hotpot。
 
 ## P2 候選
 
