@@ -422,6 +422,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		}
 		found = deduped
 	}
+	closedIDs = append(closedIDs, searchResult.DiscardedClosedPlaceIDs...)
 	// 快取寫入獨立交易先 commit：即使零候選 rollback，真 API 的呼叫成果仍留作快取。
 	// fallback 的 found 已含 DB uuid 且本來就出自快取，因此跳過重寫。
 	if !degraded && (len(found) > 0 || len(closedIDs) > 0 || len(rejectedIDs) > 0) {

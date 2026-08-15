@@ -568,20 +568,37 @@ func TestGoogleSearchNearbyDedupesChainToNearestBranch(t *testing.T) {
 	if slices.Contains(result.RejectedPlaceIDs, "chain-far") {
 		t.Fatalf("被連鎖去重分店不可進 RejectedPlaceIDs：%v", result.RejectedPlaceIDs)
 	}
+	if slices.Contains(result.DiscardedClosedPlaceIDs, "chain-far") {
+		t.Fatalf("營業中的連鎖去重分店不可進 DiscardedClosedPlaceIDs：%v", result.DiscardedClosedPlaceIDs)
+	}
 }
 
-func TestDedupeChainsPrefersOpenBranch(t *testing.T) {
-	got := dedupeChains([]Restaurant{
-		{PlaceID: "closed-near", Name: "一蘭 台北本店", Closed: true, Lat: 25.0479, Lng: 121.5170},
-		{PlaceID: "open-far", Name: "一蘭 信義店", Lat: 25.0520, Lng: 121.5170},
-	}, 25.0478, 121.5170)
-	if len(got) != 1 || got[0].PlaceID != "open-far" {
-		t.Fatalf("歇業近店必須讓位給營業中分店，got %+v", got)
+func TestGoogleSearchNearbyTombstonesDiscardedClosedBranch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/places:searchNearby" {
+			_, _ = w.Write([]byte(`{"places":[{"id":"closed-near","businessStatus":"CLOSED_PERMANENTLY","primaryType":"restaurant","displayName":{"text":"一蘭 台北本店"},"types":["restaurant"],"location":{"latitude":25.0479,"longitude":121.5170}}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"places":[{"id":"open-far","businessStatus":"OPERATIONAL","primaryType":"restaurant","displayName":{"text":"一蘭 信義店"},"types":["restaurant"],"location":{"latitude":25.0520,"longitude":121.5170}}]}`))
+	}))
+	defer srv.Close()
+
+	p := NewGooglePlacesProvider("test-key", srv.URL)
+	result, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000, []string{"ramen"})
+	if err != nil || len(result.Restaurants) != 1 || result.Restaurants[0].PlaceID != "open-far" {
+		t.Fatalf("歇業近店必須讓位給營業中分店，got %+v err %v", result.Restaurants, err)
+	}
+	if !slices.Contains(result.DiscardedClosedPlaceIDs, "closed-near") {
+		t.Fatalf("落選歇業分店應供 handler tombstone：%v", result.DiscardedClosedPlaceIDs)
+	}
+	if slices.Contains(result.RejectedPlaceIDs, "closed-near") {
+		t.Fatalf("落選歇業分店不可混入 RejectedPlaceIDs：%v", result.RejectedPlaceIDs)
 	}
 }
 
 func TestDedupeChainsFiltersTier1InheritedMatches(t *testing.T) {
-	got := dedupeChains([]Restaurant{
+	got, _ := dedupeChains([]Restaurant{
 		{PlaceID: "dessert-near", Name: "連鎖品牌 台北店", PrimaryType: "dessert_shop", Lat: 25.0479, Lng: 121.5170},
 		{PlaceID: "meal-far", Name: "連鎖品牌 信義店", PrimaryType: "restaurant", QueryMatches: []string{"ramen"}, Lat: 25.0520, Lng: 121.5170},
 	}, 25.0478, 121.5170)

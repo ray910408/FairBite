@@ -23,7 +23,7 @@
 
 ### Round 3 審查遞延（2026-08-15）
 
-- **連鎖去重早於歇業 tombstone 收集**：`dedupeChains` 在 provider 內先於 `closedIDs` 收集；被連鎖去重丟棄的歇業分店逃過 tombstone，快取可能殘留至多 30 天（TTL 自癒）。修法：讓 `dedupeChains` 回傳被丟棄的 closed `place_id`，或將 closed 過濾前移。
+- ~~**連鎖去重早於歇業 tombstone 收集**：`dedupeChains` 在 provider 內先於 `closedIDs` 收集；被連鎖去重丟棄的歇業分店逃過 tombstone，快取可能殘留至多 30 天（TTL 自癒）。~~ 已結案：本輪讓 `dedupeChains` 回傳落選歇業分店的 `place_id`，由 handler 併入 `closedIDs` 做 tombstone。
 
 - **無名店 chain key 碰撞**：`chainKey("")` 會把多家 `displayName` 缺漏的無名店塌成一家；Google 幾乎必回 `displayName`，機率低。修法：key 為空時跳過 dedupe。
 

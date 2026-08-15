@@ -96,8 +96,9 @@ type Restaurant struct {
 }
 
 type PlacesSearchResult struct {
-	Restaurants      []Restaurant
-	RejectedPlaceIDs []string // provider 已辨識但拒絕的列；handler 用既有 tombstone 路徑逐出快取
+	Restaurants             []Restaurant
+	RejectedPlaceIDs        []string // provider 已辨識但拒絕的列；handler 用既有 tombstone 路徑逐出快取
+	DiscardedClosedPlaceIDs []string // 連鎖去重落選的歇業分店，供 handler 併入 closedIDs 做 tombstone；不是非餐廳逐出的 RejectedPlaceIDs
 }
 
 type PlacesProvider interface {

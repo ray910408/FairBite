@@ -297,7 +297,7 @@ func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, 
 //   │    └─ 失敗（重試×2 後）→ log 容忍，其餘支照常（部分成功不降級）
 //   ▼
 // merge by place_id：QueryMatches 聯集；RejectedPlaceIDs 聯集去重
-//   → dedupeChains：同 chainKey（連鎖）只留離圓心最近分店、matches 聯集（不進 Rejected）
+//   → dedupeChains：同 chainKey（連鎖）只留離圓心最近分店、matches 聯集（不進 Rejected；落選歇業分店→DiscardedClosed 供 tombstone）
 //   → QueryMatches sort（決定性）
 //   ▼
 // closed→tombstone／rejected→逐出 ▶ 快取交易先 commit（restaurants upsert；QueryMatches 不落快取）
@@ -385,7 +385,7 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 			}
 		}
 	}
-	base.Restaurants = dedupeChains(base.Restaurants, lat, lng)
+	base.Restaurants, base.DiscardedClosedPlaceIDs = dedupeChains(base.Restaurants, lat, lng)
 	for i := range base.Restaurants {
 		sort.Strings(base.Restaurants[i].QueryMatches) // 決定性輸出，測試與 trace 穩定
 	}
@@ -430,9 +430,10 @@ func chainKey(name string) string {
 //	(1) 選店優先「非歇業」再比距離——歇業店稍後會被 closed 過濾丟掉，選它＝整組連鎖消失；
 //	(2) 繼承的 match 以留存分店自身 primaryType 重跑 tier1——甜品專門分店不得因姐妹店帶熱食證據
 //	   （tier2 需 gPlace.Types，此處無從重跑；同連鎖輕飲分店繼承熱食 match 的殘風險接受並記錄）。
-func dedupeChains(rs []Restaurant, lat, lng float64) []Restaurant {
+func dedupeChains(rs []Restaurant, lat, lng float64) ([]Restaurant, []string) {
 	nearest := map[string]int{} // chainKey → out 內留存者 index
 	out := rs[:0]
+	var discardedClosed []string
 	for _, r := range rs {
 		key := chainKey(r.Name)
 		idx, seen := nearest[key]
@@ -447,15 +448,21 @@ func dedupeChains(rs []Restaurant, lat, lng float64) []Restaurant {
 				Haversine(lat, lng, r.Lat, r.Lng) < Haversine(lat, lng, keep.Lat, keep.Lng))
 		if better {
 			r.QueryMatches = append(r.QueryMatches, keep.QueryMatches...)
+			if keep.Closed {
+				discardedClosed = append(discardedClosed, keep.PlaceID)
+			}
 			*keep = r
 		} else {
 			keep.QueryMatches = append(keep.QueryMatches, r.QueryMatches...)
+			if r.Closed {
+				discardedClosed = append(discardedClosed, r.PlaceID)
+			}
 		}
 	}
 	for i := range out {
 		out[i].QueryMatches = filterInheritedMatches(out[i].PrimaryType, dedupeStrings(out[i].QueryMatches))
 	}
-	return out
+	return out, discardedClosed
 }
 
 // filterInheritedMatches：tier1 再把關——熱食 match 不得掛在甜品專門型留存分店上。
