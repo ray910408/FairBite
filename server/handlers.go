@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -349,6 +350,32 @@ func memberRadiusGrew(ctx context.Context, pool *pgxpool.Pool, roomID string, fe
 	return averageMemberRadius(members) > fetchedRadius, nil
 }
 
+func memberCuisinesDrifted(ctx context.Context, pool *pgxpool.Pool, roomID string, fetched []string) (bool, error) {
+	var (
+		filterEnabled bool
+		cuisineLists  []byte
+	)
+	err := pool.QueryRow(ctx, `select r.cuisine_filter,
+		coalesce(jsonb_agg(rm.cuisines order by rm.user_id) filter (where rm.user_id is not null), '[]'::jsonb)
+		from rooms r left join room_members rm on rm.room_id = r.id
+		where r.id = $1 group by r.cuisine_filter`, roomID).Scan(&filterEnabled, &cuisineLists)
+	if err != nil {
+		return false, err
+	}
+	if !filterEnabled {
+		return false, nil
+	}
+	var raw [][]string
+	if err := json.Unmarshal(cuisineLists, &raw); err != nil {
+		return false, fmt.Errorf("member cuisines: %w", err)
+	}
+	members := make([]Member, len(raw))
+	for i := range raw {
+		members[i].Cuisines = raw[i]
+	}
+	return !slices.Equal(cuisineUnion(members), fetched), nil
+}
+
 func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider, inFlight *sync.Map) {
 	ctx := r.Context()
 	room, ok := loadHostRoom(w, r, pool)
@@ -450,12 +477,20 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	// 混成同一個 422 會叫使用者去放寬條件卻永遠沒用 — 分流才誠實
 	if len(found) == 0 {
 		// 零筆也可能只是因為搜尋繞的是舊的、更小的半徑（成員在 SearchNearby 期間加入把平均推大）。
+		// 菜系聯集在 fan-out 期間漂移也有同型窗口：過濾開啟時，舊聯集的空結果不能當成權威結果。
 		// 這條檢查必須自己做一次，不能與 502 那條合併成 SearchNearby 之後的單一檢查：
 		// 那樣從檢查點到這裡之間仍有殘留窗口，422 又會回到叫使用者「縮小距離」的反方向建議。
 		if grew, radiusErr := memberRadiusGrew(ctx, pool, room.ID, fetchedRadius); radiusErr != nil {
 			// 檢查本身失敗不遮蔽原本的結果，照常回 422。
 			log.Printf("member radius growth check failed: %v", radiusErr)
 		} else if grew {
+			jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
+			return
+		}
+		if drifted, cuisineErr := memberCuisinesDrifted(ctx, pool, room.ID, fetchedCuisines); cuisineErr != nil {
+			// 檢查本身失敗不遮蔽原本的結果，照常回 422。
+			log.Printf("member cuisine drift check failed: %v", cuisineErr)
+		} else if drifted {
 			jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
 			return
 		}

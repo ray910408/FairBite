@@ -485,20 +485,22 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 		pool.Exec(ctx, `delete from public.restaurants where place_id = $1`, placeID)
 	})
 
-	provider := cuisineUpdateProvider{pool: pool, roomID: roomID, userID: hostID, restaurants: []Restaurant{{
+	restaurants := []Restaurant{{
 		PlaceID: placeID, Name: "韓式測試餐廳", PrimaryType: "restaurant", CuisineTags: []string{"korean"},
 		PriceLevel: 1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
-	}}}
-	h := newTestAppWithProvider(t, pool, provider)
+	}}
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
 
 	for _, tc := range []struct {
 		name          string
 		filterEnabled bool
+		empty         bool
 		wantStatus    int
 	}{
 		{name: "過濾開啟", filterEnabled: true, wantStatus: http.StatusConflict},
 		{name: "過濾關閉", filterEnabled: false, wantStatus: http.StatusOK},
+		{name: "過濾開啟且零結果", filterEnabled: true, empty: true, wantStatus: http.StatusConflict},
+		{name: "過濾關閉且零結果", filterEnabled: false, empty: true, wantStatus: http.StatusUnprocessableEntity},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := pool.Exec(ctx,
@@ -509,6 +511,13 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 				`update public.room_members set cuisines = '["ramen"]' where room_id = $1 and user_id = $2`, roomID, hostID); err != nil {
 				t.Fatal(err)
 			}
+			providerRestaurants := restaurants
+			if tc.empty {
+				providerRestaurants = nil
+			}
+			h := newTestAppWithProvider(t, pool, cuisineUpdateProvider{
+				pool: pool, roomID: roomID, userID: hostID, restaurants: providerRestaurants,
+			})
 			r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
 			r.Header.Set("Authorization", "Bearer "+token)
 			w := httptest.NewRecorder()
@@ -518,6 +527,9 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 			}
 			if tc.filterEnabled && !strings.Contains(w.Body.String(), searchConditionsChangedMessage) {
 				t.Fatalf("409 應回搜尋條件已變更：%s", w.Body.String())
+			}
+			if tc.empty && !tc.filterEnabled && !strings.Contains(w.Body.String(), `"error":"no_restaurants_in_range"`) {
+				t.Fatalf("過濾關閉的零結果應維持 no_restaurants_in_range：%s", w.Body.String())
 			}
 		})
 	}
