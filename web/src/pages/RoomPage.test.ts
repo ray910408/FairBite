@@ -120,6 +120,18 @@ describe('RoomPage meal_time draft intent', () => {
     expect(mocks.stateSetters[4]).toHaveBeenCalledWith(true)
     expect(mocks.from).not.toHaveBeenCalled()
   })
+
+  it('馬上出發寫入鎖定房間 id；count 0（RLS 擋下）時顯示用餐時間錯誤', async () => {
+    mocks.eq.mockResolvedValue({ error: null, count: 0 })
+    const tree = await renderRoomPage()
+    const nowButton = findButton(tree, '馬上出發')
+    if (!nowButton.props?.onClick) throw new Error('找不到用餐時間按鈕')
+    await nowButton.props.onClick()
+    await vi.advanceTimersByTimeAsync(401)
+    expect(mocks.update).toHaveBeenCalledWith({ meal_time: null }, { count: 'exact' })
+    expect(mocks.eq).toHaveBeenCalledWith('id', 'room-1')
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('用餐時間更新失敗')
+  })
 })
 
 describe('RoomPage 載入失敗（QA ISSUE-002）', () => {
@@ -267,6 +279,25 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     const tree = await renderRoomPage()
     await findButton(tree, '開啟').props!.onClick!()
     expect(mocks.update).toHaveBeenCalledWith({ cuisine_filter: true }, { count: 'exact' })
+    expect(mocks.eq).toHaveBeenCalledWith('id', 'room-1')
+  })
+
+  it('cuisine_filter 寫入 count 0（RLS 擋下）時顯示菜系過濾錯誤', async () => {
+    mocks.eq.mockResolvedValue({ error: null, count: 0 })
+    const tree = await renderRoomPage()
+    await findButton(tree, '開啟').props!.onClick!()
+    expect(mocks.update).toHaveBeenCalledWith({ cuisine_filter: true }, { count: 'exact' })
+    expect(mocks.eq).toHaveBeenCalledWith('id', 'room-1')
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('菜系過濾更新失敗')
+  })
+
+  it('host 點探索檔位鎖定房間 id；count 0 時顯示探索檔位錯誤', async () => {
+    mocks.eq.mockResolvedValue({ error: null, count: 0 })
+    const tree = await renderRoomPage()
+    await findButton(tree, '熟悉').props!.onClick!()
+    expect(mocks.update).toHaveBeenCalledWith({ exploration: 'familiar' }, { count: 'exact' })
+    expect(mocks.eq).toHaveBeenCalledWith('id', 'room-1')
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('探索檔位更新失敗')
   })
 
   it('startingVoting=true 時投票鈕 disabled 顯示「處理中…」', async () => {
