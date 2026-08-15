@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   stateIndex: 0,
   stateSetters: [] as ReturnType<typeof vi.fn>[],
   effects: [] as Array<() => void | (() => void)>,
+  refs: [] as Array<{ current: unknown }>,
   from: vi.fn(),
   update: vi.fn(),
   eqRoom: vi.fn(),
@@ -20,7 +21,11 @@ vi.mock('react', async importOriginal => {
       mocks.stateSetters[mocks.stateIndex++] = setter
       return [initial, setter]
     },
-    useRef: (initial: unknown) => ({ current: initial }),
+    useRef: (initial: unknown) => {
+      const ref = { current: initial }
+      mocks.refs.push(ref)
+      return ref
+    },
     useEffect: (effect: () => void | (() => void)) => { mocks.effects.push(effect) },
   }
 })
@@ -29,7 +34,11 @@ vi.mock('../lib/supabase', () => ({ supabase: { from: mocks.from } }))
 
 type ElementLike = {
   type?: unknown
-  props?: { children?: unknown; onClick?: () => void | Promise<void> }
+  props?: {
+    children?: unknown
+    onClick?: () => void | Promise<void>
+    onChange?: (event: { target: { value: string } }) => void
+  }
 }
 
 type InputLike = { type?: unknown; props?: { disabled?: boolean; children?: unknown } }
@@ -55,6 +64,20 @@ function findButton(node: unknown, label: string): ElementLike {
   return findButton(element.props?.children, label)
 }
 
+function findInput(node: unknown): ElementLike {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findInput(child)
+      if (found.type) return found
+    }
+    return {}
+  }
+  if (!node || typeof node !== 'object') return {}
+  const element = node as ElementLike
+  if (element.type === 'input') return element
+  return findInput(element.props?.children)
+}
+
 function collectDisabledStates(node: unknown, out: boolean[] = []): boolean[] {
   if (Array.isArray(node)) {
     for (const child of node) collectDisabledStates(child, out)
@@ -78,6 +101,7 @@ describe('ConditionsForm 條件寫入防線', () => {
     mocks.stateIndex = 0
     mocks.stateSetters = []
     mocks.effects = []
+    mocks.refs = []
     mocks.eqUser.mockReset().mockResolvedValue({ error: null, count: 1 })
     mocks.eqRoom.mockReset().mockReturnValue({ eq: mocks.eqUser })
     mocks.update.mockReset().mockReturnValue({ eq: mocks.eqRoom })
@@ -95,25 +119,57 @@ describe('ConditionsForm 條件寫入防線', () => {
     const ready = findButton(tree, '我準備好了')
     if (!ready.props?.onClick) throw new Error('找不到準備按鈕')
     await ready.props.onClick()
-    await vi.advanceTimersByTimeAsync(401)
   }
 
-  it('儲存以 count:exact 寫入並鎖定 room_id 與 user_id 兩個條件', async () => {
-    await clickReady()
-    expect(mocks.update).toHaveBeenCalledWith({
-      budget_max: 800, cuisines: [], dietary: [], max_distance_m: 1000,
-      transport: 'walking', ready: true,
-    }, { count: 'exact' })
+  it('條件批次寫入只含五個條件欄位，不夾帶 ready', async () => {
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me, isHost: false })
+    const budget = findInput(tree)
+    if (!budget.props?.onChange) throw new Error('找不到預算輸入')
+    budget.props.onChange({ target: { value: '900' } })
+    await vi.advanceTimersByTimeAsync(401)
+
+    const [payload, options] = mocks.update.mock.calls.at(-1)!
+    expect(payload).toEqual({
+      budget_max: 900, cuisines: [], dietary: [], max_distance_m: 1000,
+      transport: 'walking',
+    })
+    expect(payload).not.toHaveProperty('ready')
+    expect(options).toEqual({ count: 'exact' })
     expect(mocks.eqRoom).toHaveBeenCalledWith('room_id', 'room-1')
     expect(mocks.eqUser).toHaveBeenCalledWith('user_id', 'user-b')
   })
 
-  it('count 0（RLS 凍結）時還原表單並顯示凍結錯誤', async () => {
+  it('ready 點擊立即走專用 count:exact 寫入，不等待 debounce', async () => {
+    await clickReady()
+    expect(mocks.update).toHaveBeenCalledWith({ ready: true }, { count: 'exact' })
+    expect(mocks.eqRoom).toHaveBeenCalledWith('room_id', 'room-1')
+    expect(mocks.eqUser).toHaveBeenCalledWith('user_id', 'user-b')
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(401)
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('pending 條件寫入成功不會倒退 ready 專用寫入保存的值', async () => {
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me, isHost: false })
+    const budget = findInput(tree)
+    const ready = findButton(tree, '我準備好了')
+    if (!budget.props?.onChange || !ready.props?.onClick) throw new Error('找不到條件或準備輸入')
+
+    budget.props.onChange({ target: { value: '900' } })
+    await ready.props.onClick()
+    await vi.advanceTimersByTimeAsync(401)
+
+    expect((mocks.refs[0].current as MemberRow).ready).toBe(true)
+  })
+
+  it('ready 專用寫入 count 0 時還原 ready 並顯示凍結錯誤', async () => {
     mocks.eqUser.mockResolvedValue({ error: null, count: 0 })
     await clickReady()
-    // 斷最後一次呼叫：save() 先 setForm(next)，失敗才 setForm(savedRef.current)——
-    // 用 toHaveBeenCalledWith 會在 useEffect stub 改為執行時靜默變 vacuous
-    expect(mocks.stateSetters[0].mock.calls.at(-1)).toEqual([me])
+    const rollback = mocks.stateSetters[0].mock.calls.at(-1)?.[0]
+    expect(rollback).toBeTypeOf('function')
+    expect(rollback({ ...me, ready: true }).ready).toBe(false)
     expect(mocks.stateSetters[1]).toHaveBeenCalledWith('儲存失敗：房間可能已開始選餐，條件已凍結')
   })
 
@@ -135,6 +191,7 @@ describe('ConditionsForm 凍結（準備／搜尋中）', () => {
     mocks.stateIndex = 0
     mocks.stateSetters = []
     mocks.effects = []
+    mocks.refs = []
   })
 
   it('成員 ready 時所有條件輸入凍結、ready 鈕仍可點', async () => {

@@ -41,16 +41,32 @@ export default function ConditionsForm({ me, isHost, disabled = false }:
         dietary: next.dietary,
         max_distance_m: next.max_distance_m,
         transport: next.transport,
-        ready: next.ready,
       }, { count: 'exact' }).eq('room_id', me.room_id).eq('user_id', me.user_id)
       if (error || count === 0) {
         setForm(savedRef.current) // RLS 拒絕（如房間已離開 lobby）→ 還原，不讓 UI 與 DB 分歧
         setSaveError('儲存失敗：房間可能已開始選餐，條件已凍結')
       } else {
-        savedRef.current = next
+        savedRef.current = { ...next, ready: savedRef.current.ready }
         setSaveError('')
       }
     }, 400)
+  }
+
+  // ready 是獨立房態動作，不隨條件批次寫入——pending 條件寫入永遠不可能
+  // 夾帶 stale ready（PR #16 review 第二輪）。即時寫、失敗還原＋橫幅（count:exact 防 RLS 靜默）。
+  async function toggleReady() {
+    const next = !form.ready
+    setForm(f => ({ ...f, ready: next }))
+    const { error, count } = await supabase.from('room_members')
+      .update({ ready: next }, { count: 'exact' })
+      .eq('room_id', me.room_id).eq('user_id', me.user_id)
+    if (error || count === 0) {
+      setForm(f => ({ ...f, ready: !next }))
+      setSaveError('儲存失敗：房間可能已開始選餐，條件已凍結')
+    } else {
+      savedRef.current = { ...savedRef.current, ready: next }
+      setSaveError('')
+    }
   }
 
   function toggle(list: string[], v: string) {
@@ -137,7 +153,7 @@ export default function ConditionsForm({ me, isHost, disabled = false }:
           disabled={disabled}
           className={`btn w-full ${form.ready
             ? 'bg-ok text-white hover:bg-ok/90' : 'btn-quiet'}`}
-          onClick={() => save({ ready: !form.ready })}>
+          onClick={() => toggleReady()}>
           {form.ready && <Check className="h-5 w-5" />}
           {form.ready ? '已準備（點擊取消）' : '我準備好了'}
         </button>
