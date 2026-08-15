@@ -6,10 +6,14 @@ import { Alert, Check } from './icons'
 
 const TRANSPORTS = Object.entries(TRANSPORT_LABELS) as [MemberRow['transport'], string][]
 
-export default function ConditionsForm({ me, isHost }: { me: MemberRow; isHost: boolean }) {
+export default function ConditionsForm({ me, isHost, disabled = false }:
+  { me: MemberRow; isHost: boolean; disabled?: boolean }) {
   const [form, setForm] = useState(me)
   const [saveError, setSaveError] = useState('')
   const savedRef = useRef(me)   // 最後一次確認寫入成功的值（失敗時還原用）
+  // 凍結（CONTEXT.md「準備」）：房主端搜尋 in-flight（disabled prop）或成員已按準備。
+  // ready 鈕不受 frozen 影響——取消準備即解凍。
+  const frozen = disabled || (!isHost && form.ready)
   const pushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => {
     setForm(me)
@@ -62,6 +66,7 @@ export default function ConditionsForm({ me, isHost }: { me: MemberRow; isHost: 
           <span className="font-mono text-sm font-semibold text-brand">NT${form.budget_max}</span>
         </span>
         <input type="range" min={100} max={1600} step={100} className="h-6 w-full"
+          disabled={frozen}
           value={form.budget_max}
           onChange={e => save({ budget_max: +e.target.value })} />
       </label>
@@ -71,6 +76,7 @@ export default function ConditionsForm({ me, isHost }: { me: MemberRow; isHost: 
         <div className="mt-2 flex flex-wrap gap-2">
           {CUISINE_OPTIONS.map(([v, label]) => (
             <button key={v} type="button" aria-pressed={form.cuisines.includes(v)}
+              disabled={frozen}
               className={`chip ${form.cuisines.includes(v)
                 ? 'border-brand bg-brand text-white hover:bg-brand-strong' : ''}`}
               onClick={() => save({ cuisines: toggle(form.cuisines, v) })}>{label}</button>
@@ -84,6 +90,7 @@ export default function ConditionsForm({ me, isHost }: { me: MemberRow; isHost: 
         <div className="mt-2 flex flex-wrap gap-2">
           {DIETARY_OPTIONS.map(([v, label]) => (
             <button key={v} type="button" aria-pressed={form.dietary.includes(v)}
+              disabled={frozen}
               className={`chip ${form.dietary.includes(v)
                 ? 'border-danger bg-danger text-white hover:bg-danger' : ''}`}
               onClick={() => save({ dietary: toggle(form.dietary, v) })}>{label}</button>
@@ -99,6 +106,7 @@ export default function ConditionsForm({ me, isHost }: { me: MemberRow; isHost: 
           <span className="font-mono text-sm font-semibold text-brand">{form.max_distance_m} 公尺</span>
         </span>
         <input type="range" min={300} max={3000} step={100} className="h-6 w-full"
+          disabled={frozen}
           value={form.max_distance_m}
           onChange={e => save({ max_distance_m: +e.target.value })} />
       </label>
@@ -108,6 +116,7 @@ export default function ConditionsForm({ me, isHost }: { me: MemberRow; isHost: 
         <div className="mt-2 flex gap-2">
           {TRANSPORTS.map(([v, label]) => (
             <button key={v} type="button" aria-pressed={form.transport === v}
+              disabled={frozen}
               className={`chip flex-1 justify-center ${form.transport === v
                 ? 'border-fg bg-fg text-white hover:bg-fg' : ''}`}
               onClick={() => save({ transport: v })}>{label}</button>
@@ -117,6 +126,7 @@ export default function ConditionsForm({ me, isHost }: { me: MemberRow; isHost: 
 
       {!isHost && (
         <button type="button" aria-pressed={form.ready}
+          disabled={disabled}
           className={`btn w-full ${form.ready
             ? 'bg-ok text-white hover:bg-ok/90' : 'btn-quiet'}`}
           onClick={() => save({ ready: !form.ready })}>

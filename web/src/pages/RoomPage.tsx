@@ -157,6 +157,7 @@ export default function RoomPage() {
             {copied ? <Check className="h-4 w-4 text-ok" /> : <Copy className="h-4 w-4 text-fg-muted" />}
           </button>
           <span className="sr-only" aria-live="polite">{copied ? '邀請碼已複製' : ''}</span>
+          <Link to="/history" className="btn btn-quiet min-h-11 px-2 text-sm">足跡</Link>
           <span className="ml-auto whitespace-nowrap rounded-full bg-brand-soft px-3 py-1 text-xs font-semibold text-brand-strong">
             {{ lobby: '等待中', candidates: '候選已出爐', voting: '投票中', decided: '已定案' }[room.status]}
           </span>
@@ -247,7 +248,7 @@ export default function RoomPage() {
             <div className="grid grid-cols-3 gap-1 rounded-xl bg-brand-soft p-1">
               {EXPLORATION_OPTIONS.map(([key, label]) => (
                 <button key={key} type="button" aria-pressed={room.exploration === key}
-                  disabled={!isHost}
+                  disabled={!isHost || searching}
                   className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                     room.exploration === key ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                   } disabled:cursor-default`}
@@ -275,6 +276,7 @@ export default function RoomPage() {
               <div className="space-y-2">
                 <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
                   <button type="button" aria-pressed={room.meal_time === null && !editingCustom}
+                    disabled={searching}
                     className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                       room.meal_time === null && !editingCustom
                         ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
@@ -283,6 +285,7 @@ export default function RoomPage() {
                     馬上出發
                   </button>
                   <button type="button" aria-pressed={room.meal_time !== null || editingCustom}
+                    disabled={searching}
                     className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                       room.meal_time !== null || editingCustom
                         ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
@@ -297,6 +300,7 @@ export default function RoomPage() {
                 {(editingCustom || room.meal_time !== null) && (
                   <div className="flex items-center gap-2">
                     <select className="field flex-1" aria-label="用餐時間（時）"
+                      disabled={searching}
                       value={draftHH}
                       onChange={e => {
                         const hh = e.target.value
@@ -310,6 +314,7 @@ export default function RoomPage() {
                     </select>
                     <span className="text-fg-muted">:</span>
                     <select className="field flex-1" aria-label="用餐時間（分）"
+                      disabled={searching}
                       value={draftMM}
                       onChange={e => {
                         const mm = e.target.value
@@ -337,7 +342,7 @@ export default function RoomPage() {
             <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
               {([[false, '關閉'], [true, '開啟']] as const).map(([value, label]) => (
                 <button key={label} type="button" aria-pressed={room.cuisine_filter === value}
-                  disabled={!isHost}
+                  disabled={!isHost || searching}
                   className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                     room.cuisine_filter === value ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                   } disabled:cursor-default`}
@@ -353,7 +358,7 @@ export default function RoomPage() {
             </div>
           </section>
         )}
-        {room.status === 'lobby' && me && <ConditionsForm me={me} isHost={isHost} />}
+        {room.status === 'lobby' && me && <ConditionsForm me={me} isHost={isHost} disabled={searching} />}
         {room.status === 'lobby' && isHost && (
           <button className="btn btn-primary w-full" disabled={searching} aria-busy={searching}
             onClick={() => {

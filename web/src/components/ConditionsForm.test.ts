@@ -31,6 +31,8 @@ type ElementLike = {
   props?: { children?: unknown; onClick?: () => void | Promise<void> }
 }
 
+type InputLike = { type?: unknown; props?: { disabled?: boolean; children?: unknown } }
+
 function textContent(node: unknown): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node)
   if (Array.isArray(node)) return node.map(textContent).join('')
@@ -50,6 +52,18 @@ function findButton(node: unknown, label: string): ElementLike {
   const element = node as ElementLike
   if (element.type === 'button' && textContent(element.props?.children) === label) return element
   return findButton(element.props?.children, label)
+}
+
+function collectDisabledStates(node: unknown, out: boolean[] = []): boolean[] {
+  if (Array.isArray(node)) {
+    for (const child of node) collectDisabledStates(child, out)
+    return out
+  }
+  if (!node || typeof node !== 'object') return out
+  const el = node as InputLike
+  if (el.type === 'input' || el.type === 'button') out.push(el.props?.disabled === true)
+  collectDisabledStates(el.props?.children, out)
+  return out
 }
 
 const me: MemberRow = {
@@ -99,5 +113,39 @@ describe('ConditionsForm 條件寫入防線', () => {
     // 用 toHaveBeenCalledWith 會在 useEffect stub 改為執行時靜默變 vacuous
     expect(mocks.stateSetters[0].mock.calls.at(-1)).toEqual([me])
     expect(mocks.stateSetters[1]).toHaveBeenCalledWith('儲存失敗：房間可能已開始選餐，條件已凍結')
+  })
+})
+
+describe('ConditionsForm 凍結（準備／搜尋中）', () => {
+  beforeEach(() => {
+    mocks.stateIndex = 0
+    mocks.stateSetters = []
+  })
+
+  it('成員 ready 時所有條件輸入凍結、ready 鈕仍可點', async () => {
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me: { ...me, ready: true }, isHost: false })
+    const ready = findButton(tree, '已準備（點擊取消）')
+    expect(ready.type).toBe('button')
+    expect((ready as InputLike).props?.disabled).not.toBe(true)
+    // ready 鈕以外的 input/button 全部 disabled
+    const states = collectDisabledStates(tree)
+    const enabledCount = states.filter(s => !s).length
+    expect(enabledCount).toBe(1) // 只剩 ready 鈕
+  })
+
+  it('disabled prop（房主搜尋中）時全部輸入凍結', async () => {
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me, isHost: true, disabled: true })
+    const states = collectDisabledStates(tree)
+    expect(states.every(s => s)).toBe(true) // 房主無 ready 鈕，全凍
+  })
+
+  it('未準備且未搜尋時可編輯', async () => {
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me, isHost: false })
+    const states = collectDisabledStates(tree)
+    expect(states.some(s => !s)).toBe(true)
+    expect(states.filter(s => s)).toHaveLength(0)
   })
 })
