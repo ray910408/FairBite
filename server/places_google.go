@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -289,7 +290,7 @@ func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, 
 //   ▼
 // SearchNearby(lat, lng, radiusM, cuisines)
 //   ├─ searchNearby ────────────────────────────► 20 筆熱門（圓形 locationRestriction）
-//   │    └─ 失敗（重試×2 後）→ 整體 error → handler 走 30 天快取 fallback（text 結果全棄）
+//   │    └─ 失敗（重試×2 後）→ 取消在途 text → 整體 error → handler 走 30 天快取 fallback（text 結果全棄）
 //   ├─ ∥ textSearch("拉麵") ─────────────────────► ≤15 筆語意相關（pageSize 15，eng review 6）
 //   ├─ ∥ textSearch("火鍋") … K 支並行 ──────────►（locationBias 圓＋haversine 硬過濾 radiusM 外）
 //   │    ├─ meal gate：gIsMealPrimaryType fail-closed（拒者入 RejectedPlaceIDs）
@@ -306,6 +307,8 @@ func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, 
 //   → Evaluate（memberLikes = tags ∪ query_matches；cuisine_filter=true 時菜系為硬性條件 kind "cuisine"）
 //   → ReplaceCandidates（query_matches 隨 kept/excluded 列落 room_candidates）→ rescore/draw 讀同欄位回圈
 func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, radiusM int, cuisines []string) (PlacesSearchResult, error) {
+	textCtx, cancelText := context.WithCancel(ctx)
+	defer cancelText()
 	type textOut struct {
 		rs       []Restaurant
 		rejected []string
@@ -329,6 +332,7 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 			}
 			baseErr = err
 		}
+		cancelText()
 	}()
 	for i, c := range cuisines {
 		q, ok := CuisineSearchQueries[c]
@@ -339,12 +343,18 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 		go func(i int, cuisine, query string) {
 			defer wg.Done()
 			for attempt := 0; attempt < 2; attempt++ {
-				rs, rejected, err := g.textSearch(ctx, cuisine, query, lat, lng, radiusM)
+				if textCtx.Err() != nil {
+					return
+				}
+				rs, rejected, err := g.textSearch(textCtx, cuisine, query, lat, lng, radiusM)
 				if err == nil {
 					outs[i] = textOut{rs, rejected}
 					return
 				}
-				if attempt == 1 {
+				if textCtx.Err() != nil {
+					return
+				}
+				if attempt == 1 && !errors.Is(err, context.Canceled) {
 					// 單支定向檢索失敗只容忍不降級（spec §7）：nearby 池仍在，缺的只是該菜系的補召回
 					log.Printf("text search %q failed after retry: %v", cuisine, err)
 				}

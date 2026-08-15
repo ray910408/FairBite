@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -473,24 +474,46 @@ func TestGoogleSearchNearbyCuisineFanOut(t *testing.T) {
 }
 
 func TestGoogleSearchNearbyFailureFailsWholeSearch(t *testing.T) {
-	var nearbyCalls atomic.Int32
+	var nearbyCalls, textCalls atomic.Int32
+	textStarted := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/v1/places:searchNearby" {
-			nearbyCalls.Add(1)
+			if nearbyCalls.Add(1) == 1 {
+				select {
+				case <-textStarted:
+				case <-time.After(5 * time.Second):
+					t.Error("text search 未並行啟動")
+				}
+			}
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		_, _ = w.Write([]byte(`{"places":[]}`))
+		if textCalls.Add(1) == 1 {
+			close(textStarted)
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(30 * time.Second):
+			t.Error("text search 未收到 request context 取消")
+		}
 	}))
 	defer srv.Close()
 
 	p := NewGooglePlacesProvider("test-key", srv.URL)
+	started := time.Now()
 	if _, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000, []string{"ramen"}); err == nil {
 		t.Fatal("nearby 重試後仍失敗必須讓整體失敗")
 	}
+	if elapsed := time.Since(started); elapsed >= 5*time.Second {
+		t.Fatalf("nearby 確定失敗後應取消 text fan-out，elapsed=%v", elapsed)
+	}
 	if nearbyCalls.Load() != 2 {
 		t.Fatalf("nearby 應維持重試一次，calls=%d", nearbyCalls.Load())
+	}
+	if textCalls.Load() != 1 {
+		t.Fatalf("取消後 text 不應重試，calls=%d", textCalls.Load())
 	}
 }
 
