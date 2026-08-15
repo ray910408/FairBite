@@ -82,8 +82,12 @@ describe('ConditionsForm 條件寫入防線', () => {
     await vi.advanceTimersByTimeAsync(401)
   }
 
-  it('儲存鎖定 room_id 與 user_id 兩個條件', async () => {
+  it('儲存以 count:exact 寫入並鎖定 room_id 與 user_id 兩個條件', async () => {
     await clickReady()
+    expect(mocks.update).toHaveBeenCalledWith({
+      budget_max: 800, cuisines: [], dietary: [], max_distance_m: 1000,
+      transport: 'walking', ready: true,
+    }, { count: 'exact' })
     expect(mocks.eqRoom).toHaveBeenCalledWith('room_id', 'room-1')
     expect(mocks.eqUser).toHaveBeenCalledWith('user_id', 'user-b')
   })
