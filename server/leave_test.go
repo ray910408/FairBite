@@ -351,6 +351,10 @@ func TestLeaveDuringVotingDeletesVotesAndRescores(t *testing.T) {
 		values ($1, $2, $3, 'veto')`, roomID, memberB, restaurantID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `insert into votes (room_id, user_id, restaurant_id, kind)
+		values ($1, $2, $3, 'up')`, roomID, host, restaurantID); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := leaveOneRoom(ctx, pool, nil, roomID, memberB); err != nil {
 		t.Fatal(err)
@@ -363,6 +367,14 @@ func TestLeaveDuringVotingDeletesVotesAndRescores(t *testing.T) {
 	}
 	if voteCount != 0 {
 		t.Fatal("退房應刪除退出者的票")
+	}
+	var hostVotes int
+	if err := pool.QueryRow(ctx, `select count(*) from votes
+		where room_id = $1 and user_id = $2`, roomID, host).Scan(&hostVotes); err != nil {
+		t.Fatal(err)
+	}
+	if hostVotes != 1 {
+		t.Fatalf("退房只能刪退出者的票，host 的票應存活：got %d, want 1", hostVotes)
 	}
 	var status string
 	if err := pool.QueryRow(ctx, `select status from room_candidates

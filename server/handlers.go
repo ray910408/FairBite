@@ -245,6 +245,7 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 	vetoesRemaining, err := castVote(ctx, tx, room.ID, uid, req)
 	if err != nil {
 		switch {
+		// 僅在 loadMemberRoom 檢查後、投票交易取鎖前被退房的競態窗內可達；覆蓋率看不到，勿誤刪
 		case errors.Is(err, ErrNotMember):
 			jsonError(w, http.StatusForbidden, "你不是這個房間的成員")
 		case errors.Is(err, ErrNotCandidate):

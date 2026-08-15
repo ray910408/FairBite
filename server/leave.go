@@ -54,7 +54,7 @@ func handleLeave(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, wea
 //	POST /api/leave（每房一交易）
 //	     │
 //	     ▼
-//	select rooms ... for update ── ErrNoRows ──▶ commit（並發已刪房：冪等）
+//	select rooms ... for update ── ErrNoRows ──▶ return nil（deferred rollback 收尾；並發已刪房：冪等）
 //	     │
 //	     ├─ delete votes（退出者意見即刻作廢，ADR-0003 集中寫入）
 //	     ├─ delete room_members ── 0 列 ──▶ commit（並發已退：冪等）
