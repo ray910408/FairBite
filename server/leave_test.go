@@ -465,3 +465,64 @@ func TestConcurrentLeavesDeleteRoomExactlyOnce(t *testing.T) {
 		t.Fatal("並發雙退後房間應恰被刪除一次、零殘留")
 	}
 }
+
+// PR #16 review P1 回歸：search 的 Places 呼叫期間房主退房（繼任發生），
+// freeze 交易鎖內必須重驗 host_id 並拒絕前房主推進房間。
+type hostLeavingProvider struct {
+	pool   *pgxpool.Pool
+	roomID string
+	uid    string
+	inner  PlacesProvider
+}
+
+func (p hostLeavingProvider) Source() string { return "mock" }
+
+func (p hostLeavingProvider) SearchNearby(ctx context.Context, lat, lng float64, radiusM int, cuisines []string) (PlacesSearchResult, error) {
+	if err := leaveOneRoom(ctx, p.pool, nil, p.roomID, p.uid); err != nil {
+		return PlacesSearchResult{}, err
+	}
+	return p.inner.SearchNearby(ctx, lat, lng, radiusM, cuisines)
+}
+
+func TestSearchAfterHostLeaveMidFlightRejected(t *testing.T) {
+	pool, ctx := leaveTestPool(t)
+	const host = "77777777-abab-4bab-8bab-777777777777"
+	const memberB = "88888888-abab-4bab-8bab-888888888888"
+	const roomID = "99999999-abab-4bab-8bab-999999999999"
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `delete from rooms where id = $1`, roomID)
+		pool.Exec(context.Background(), `delete from auth.users where id in ($1,$2)`, host, memberB)
+	})
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email) values
+		($1,'midflight-host@test.dev'), ($2,'midflight-b@test.dev')`, host, memberB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into rooms (id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 25.0478, 121.5170)`, roomID, host); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into room_members (room_id, user_id, joined_at) values
+		($1, $2, now() - interval '1 minute'), ($1, $3, now())`, roomID, host, memberB); err != nil {
+		t.Fatal(err)
+	}
+	h := newTestAppWithProvider(t, pool,
+		hostLeavingProvider{pool: pool, roomID: roomID, uid: host, inner: NewMockProvider()})
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", host))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("繼任後前房主的 in-flight search 應 403：got %d body=%s", w.Code, w.Body.String())
+	}
+	var status, hostID string
+	if err := pool.QueryRow(ctx, `select status, host_id from rooms where id = $1`, roomID).
+		Scan(&status, &hostID); err != nil {
+		t.Fatal(err)
+	}
+	if status != "lobby" {
+		t.Fatalf("房間不得被前房主推進：status = %s, want lobby", status)
+	}
+	if hostID != memberB {
+		t.Fatalf("繼任結果不得被覆寫：host_id = %s, want %s", hostID, memberB)
+	}
+}

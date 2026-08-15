@@ -20,6 +20,14 @@ export default function ConditionsForm({ me, isHost, disabled = false }:
     savedRef.current = me
   }, [me.room_id, me.user_id])
 
+  // 同成員多分頁：ready 是權威房態（Realtime 收斂）——另一分頁按下準備後，
+  // 本分頁的凍結與後續寫入都要以最新 ready 為準，否則 stale ready:false 會
+  // 繞過凍結並隱性取消準備（PR #16 review）
+  useEffect(() => {
+    setForm(f => ({ ...f, ready: me.ready }))
+    savedRef.current = { ...savedRef.current, ready: me.ready }
+  }, [me.ready])
+
   // debounce 400ms：slider 拖曳每格都會觸發 onChange，直接連發 update 會逆序落庫
   function save(patch: Partial<MemberRow>) {
     const next = { ...form, ...patch }

@@ -4,6 +4,7 @@ import type { MemberRow } from '../lib/types'
 const mocks = vi.hoisted(() => ({
   stateIndex: 0,
   stateSetters: [] as ReturnType<typeof vi.fn>[],
+  effects: [] as Array<() => void | (() => void)>,
   from: vi.fn(),
   update: vi.fn(),
   eqRoom: vi.fn(),
@@ -20,7 +21,7 @@ vi.mock('react', async importOriginal => {
       return [initial, setter]
     },
     useRef: (initial: unknown) => ({ current: initial }),
-    useEffect: vi.fn(),
+    useEffect: (effect: () => void | (() => void)) => { mocks.effects.push(effect) },
   }
 })
 
@@ -76,6 +77,7 @@ describe('ConditionsForm 條件寫入防線', () => {
     vi.useFakeTimers()
     mocks.stateIndex = 0
     mocks.stateSetters = []
+    mocks.effects = []
     mocks.eqUser.mockReset().mockResolvedValue({ error: null, count: 1 })
     mocks.eqRoom.mockReset().mockReturnValue({ eq: mocks.eqUser })
     mocks.update.mockReset().mockReturnValue({ eq: mocks.eqRoom })
@@ -114,12 +116,25 @@ describe('ConditionsForm 條件寫入防線', () => {
     expect(mocks.stateSetters[0].mock.calls.at(-1)).toEqual([me])
     expect(mocks.stateSetters[1]).toHaveBeenCalledWith('儲存失敗：房間可能已開始選餐，條件已凍結')
   })
+
+  it('me.ready 變更的同步 effect 會把權威 ready 寫回 form（雙分頁凍結不被 stale 繞過）', async () => {
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    ConditionsForm({ me: { ...me, ready: true }, isHost: false })
+    for (const fn of mocks.effects) fn()
+    // setForm 收到 updater：以 stale form（ready:false）餵入，必須修正為權威 ready:true
+    const updaterCalls = mocks.stateSetters[0].mock.calls
+      .map(args => args[0]).filter(a => typeof a === 'function')
+    expect(updaterCalls.length).toBeGreaterThan(0)
+    const updated = updaterCalls.at(-1)!({ ...me, ready: false })
+    expect(updated.ready).toBe(true)
+  })
 })
 
 describe('ConditionsForm 凍結（準備／搜尋中）', () => {
   beforeEach(() => {
     mocks.stateIndex = 0
     mocks.stateSetters = []
+    mocks.effects = []
   })
 
   it('成員 ready 時所有條件輸入凍結、ready 鈕仍可點', async () => {

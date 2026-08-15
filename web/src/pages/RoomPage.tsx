@@ -157,8 +157,8 @@ export default function RoomPage() {
             {copied ? <Check className="h-4 w-4 text-ok" /> : <Copy className="h-4 w-4 text-fg-muted" />}
           </button>
           <span className="sr-only" aria-live="polite">{copied ? '邀請碼已複製' : ''}</span>
-          <Link to="/history" className="btn btn-quiet min-h-11 px-2 text-sm">足跡</Link>
-          <span className="ml-auto whitespace-nowrap rounded-full bg-brand-soft px-3 py-1 text-xs font-semibold text-brand-strong">
+          <Link to="/history" className="btn btn-quiet min-h-11 px-1.5 text-xs sm:px-2 sm:text-sm">足跡</Link>
+          <span className="ml-auto whitespace-nowrap rounded-full bg-brand-soft px-2 sm:px-3 py-1 text-xs font-semibold text-brand-strong">
             {{ lobby: '等待中', candidates: '候選已出爐', voting: '投票中', decided: '已定案' }[room.status]}
           </span>
         </div>

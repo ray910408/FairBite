@@ -141,6 +141,23 @@ func loadHostRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (R
 	return room, true
 }
 
+// ErrNotHost：host-gated 交易鎖內重驗失敗——呼叫者已非房主（退房繼任，ADR-0007）。
+var ErrNotHost = errors.New("caller is no longer the room host")
+
+// assertHostInTx：在已持有 rooms row lock 的交易內重驗 host_id。
+// loadHostRoom 的檢查在交易外，search 的 Places 呼叫是秒級窗口，
+// 繼任（leaveOneRoom）可在其間 commit——比照 castVote 的成員重驗（ErrNotMember）。
+func assertHostInTx(ctx context.Context, tx pgx.Tx, roomID, uid string) error {
+	var hostID string
+	if err := tx.QueryRow(ctx, `select host_id from rooms where id = $1`, roomID).Scan(&hostID); err != nil {
+		return err
+	}
+	if hostID != uid {
+		return ErrNotHost
+	}
+	return nil
+}
+
 // loadMemberRoom：任一成員可用的操作（vote）用這個；房主限定仍走 loadHostRoom
 func loadMemberRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (RoomRow, bool) {
 	roomID, ok := roomIDFromPath(w, r)
@@ -185,6 +202,14 @@ func handleStartVoting(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 	if err := TransitionRoom(ctx, tx, room.ID, "candidates", "voting"); err != nil {
 		if errors.Is(err, ErrConflict) {
 			jsonError(w, http.StatusConflict, "房間狀態已變更")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
+		if errors.Is(err, ErrNotHost) {
+			jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
 			return
 		}
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
@@ -518,6 +543,14 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		}
 		return
 	}
+	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
+		if errors.Is(err, ErrNotHost) {
+			jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
 	recency, err := LoadRecency(ctx, tx, memberIDs(members), restaurantIDs(found))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "讀取同席紀錄失敗")
@@ -598,6 +631,14 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 	if err := TransitionRoom(ctx, tx, room.ID, "voting", "decided"); err != nil {
 		if errors.Is(err, ErrConflict) {
 			jsonError(w, http.StatusConflict, "房間狀態已變更")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
+		if errors.Is(err, ErrNotHost) {
+			jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
 			return
 		}
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
