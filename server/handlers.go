@@ -73,6 +73,9 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, weather
 	api.HandleFunc("POST /api/rooms/{id}/draw", func(w http.ResponseWriter, r *http.Request) {
 		handleDraw(w, r, pool, weather)
 	})
+	api.HandleFunc("POST /api/leave", func(w http.ResponseWriter, r *http.Request) {
+		handleLeave(w, r, pool, weather)
+	})
 	mux.Handle("/api/", v.Middleware(rateLimit(rl, api)))
 	return cors(mux)
 }
@@ -242,6 +245,8 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 	vetoesRemaining, err := castVote(ctx, tx, room.ID, uid, req)
 	if err != nil {
 		switch {
+		case errors.Is(err, ErrNotMember):
+			jsonError(w, http.StatusForbidden, "你不是這個房間的成員")
 		case errors.Is(err, ErrNotCandidate):
 			jsonError(w, http.StatusUnprocessableEntity, "這家餐廳不在本房的候選名單中")
 		case errors.Is(err, ErrVetoQuotaExceeded):

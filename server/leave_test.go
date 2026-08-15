@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +27,191 @@ func leaveTestPool(t *testing.T) (*pgxpool.Pool, context.Context) {
 	}
 	t.Cleanup(func() { pool.Close() })
 	return pool, ctx
+}
+
+func TestLeaveEndpointRequiresAuth(t *testing.T) {
+	pool, _ := leaveTestPool(t)
+	h := newTestApp(t, pool)
+	r := httptest.NewRequest("POST", "/api/leave", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401 got %d", w.Code)
+	}
+}
+
+// 有 membership 的使用者打 /api/leave：多房（殘留舊房自癒情境）一次退光並回 200；
+// 再打一次仍 200（冪等）。雙房驗迴圈（eng review 5A）。
+func TestLeaveEndpointLeavesAllRooms(t *testing.T) {
+	pool, ctx := leaveTestPool(t)
+	const uid = "aaaaaaaa-cccc-4ccc-8ccc-aaaaaaaaaaaa"
+	const roomID = "bbbbbbbb-cccc-4ccc-8ccc-bbbbbbbbbbbb"
+	const staleRoomID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `delete from rooms where id in ($1, $2)`, roomID, staleRoomID)
+		pool.Exec(context.Background(), `delete from auth.users where id = $1`, uid)
+	})
+	if _, err := pool.Exec(ctx,
+		`insert into auth.users (id, email) values ($1, 'leave-api@test.dev')`, uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into rooms (id, host_id, status)
+		values ($1, $3, 'lobby'), ($2, $3, 'lobby')`, roomID, staleRoomID, uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into room_members (room_id, user_id)
+		values ($1, $3), ($2, $3)`, roomID, staleRoomID, uid); err != nil {
+		t.Fatal(err)
+	}
+	h := newTestApp(t, pool)
+	call := func() int {
+		r := httptest.NewRequest("POST", "/api/leave", nil)
+		r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", uid))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	if code := call(); code != http.StatusOK {
+		t.Fatalf("leave want 200 got %d", code)
+	}
+	var roomCount int
+	if err := pool.QueryRow(ctx, `select count(*) from rooms where id in ($1, $2)`, roomID, staleRoomID).Scan(&roomCount); err != nil {
+		t.Fatal(err)
+	}
+	if roomCount != 0 {
+		t.Fatal("兩間房（含殘留舊房）都應在一次呼叫退光刪除")
+	}
+	if code := call(); code != http.StatusOK {
+		t.Fatalf("無 membership 的重複呼叫應冪等 200，got %d", code)
+	}
+}
+
+// eng review 3A 回歸：membership 在 loadMemberRoom 檢查後被退房刪除 → 交易內
+// 權威重驗必須擋下，否則孤兒否決永久毒化轉盤（離席者無法收回）。
+func TestVoteAfterLeaveRejectedNoOrphanVote(t *testing.T) {
+	pool, ctx := leaveTestPool(t)
+	const host = "cccccccc-dddd-4ddd-8ddd-cccccccccccc"
+	const memberB = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	const roomID = "eeeeeeee-dddd-4ddd-8ddd-eeeeeeeeeeee"
+	const restaurantID = "ffffffff-dddd-4ddd-8ddd-ffffffffffff"
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `delete from rooms where id = $1`, roomID)
+		pool.Exec(context.Background(), `delete from restaurants where id = $1`, restaurantID)
+		pool.Exec(context.Background(), `delete from auth.users where id in ($1,$2)`, host, memberB)
+	})
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email) values
+		($1,'orphan-host@test.dev'), ($2,'orphan-b@test.dev')`, host, memberB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into rooms (id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'voting', 25.0478, 121.5170)`, roomID, host); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into room_members (room_id, user_id, joined_at) values
+		($1, $2, now() - interval '1 minute'), ($1, $3, now())`, roomID, host, memberB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into restaurants
+		(id, place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source)
+		values ($1, 'orphan-test-1', '孤兒票測試店', '["japanese"]', 1, 25.0478, 121.5171,
+			'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}',
+			'google')`, restaurantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into room_candidates
+		(room_id, restaurant_id, status, probability, exposure_counted)
+		values ($1, $2, 'kept', 1, false)`, roomID, restaurantID); err != nil {
+		t.Fatal(err)
+	}
+
+	// B 先退房，再以殘存 JWT 投否決——模擬「檢查後、寫票前退房」競態的落點狀態
+	if err := leaveOneRoom(ctx, pool, nil, roomID, memberB); err != nil {
+		t.Fatal(err)
+	}
+	h := newTestApp(t, pool)
+	body := strings.NewReader(`{"restaurant_id":"` + restaurantID + `","kind":"veto","op":"cast"}`)
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/vote", body)
+	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", memberB))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("已退房者投票應 403：got %d", w.Code)
+	}
+	var orphans int
+	if err := pool.QueryRow(ctx, `select count(*) from votes
+		where room_id = $1 and user_id = $2`, roomID, memberB).Scan(&orphans); err != nil {
+		t.Fatal(err)
+	}
+	if orphans != 0 {
+		t.Fatal("不得留下孤兒票")
+	}
+}
+
+// eng review 3A/D11：決定性重現競態——外層檢查通過時 B 還在，寫票交易開始前
+// B 已退房 commit。castVote 的交易內權威檢查必須回 ErrNotMember。
+func TestCastVoteAfterConcurrentLeaveReturnsErrNotMember(t *testing.T) {
+	pool, ctx := leaveTestPool(t)
+	const host = "12121212-eeee-4eee-8eee-121212121212"
+	const memberB = "34343434-eeee-4eee-8eee-343434343434"
+	const roomID = "56565656-eeee-4eee-8eee-565656565656"
+	const restaurantID = "78787878-eeee-4eee-8eee-787878787878"
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `delete from rooms where id = $1`, roomID)
+		pool.Exec(context.Background(), `delete from restaurants where id = $1`, restaurantID)
+		pool.Exec(context.Background(), `delete from auth.users where id in ($1,$2)`, host, memberB)
+	})
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email) values
+		($1,'race-host@test.dev'), ($2,'race-b@test.dev')`, host, memberB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into rooms (id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'voting', 25.0478, 121.5170)`, roomID, host); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into room_members (room_id, user_id, joined_at) values
+		($1, $2, now() - interval '1 minute'), ($1, $3, now())`, roomID, host, memberB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into restaurants
+		(id, place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source)
+		values ($1, 'race-test-1', '競態測試店', '["japanese"]', 1, 25.0478, 121.5171,
+			'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}',
+			'google')`, restaurantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into room_candidates
+		(room_id, restaurant_id, status, probability, exposure_counted)
+		values ($1, $2, 'kept', 1, false)`, roomID, restaurantID); err != nil {
+		t.Fatal(err)
+	}
+
+	// 外層檢查等值：此刻 B 仍是成員
+	var isMember bool
+	if err := pool.QueryRow(ctx, `select exists (select 1 from room_members
+		where room_id = $1 and user_id = $2)`, roomID, memberB).Scan(&isMember); err != nil {
+		t.Fatal(err)
+	}
+	if !isMember {
+		t.Fatal("前置：B 應為成員")
+	}
+	// 競態落點：B 的退房在寫票交易開始前 commit
+	if err := leaveOneRoom(ctx, pool, nil, roomID, memberB); err != nil {
+		t.Fatal(err)
+	}
+	// 寫票交易（比照 handleVote 的交易內順序）
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if err := TransitionRoom(ctx, tx, roomID, "voting", "voting"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = castVote(ctx, tx, roomID, memberB,
+		VoteCommand{RestaurantID: restaurantID, Kind: "veto", Op: "cast"})
+	if !errors.Is(err, ErrNotMember) {
+		t.Fatalf("交易內權威檢查應回 ErrNotMember：got %v", err)
+	}
 }
 
 // 三人房：房主先退（繼任給 joined_at 最早的 B）→ B 退（繼任 C）→ C 退（末位刪房）。
