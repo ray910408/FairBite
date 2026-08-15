@@ -620,6 +620,27 @@ func TestGoogleSearchNearbyTombstonesDiscardedClosedBranch(t *testing.T) {
 	}
 }
 
+func TestGoogleSearchNearbyTombstonesClosedBranchDiscardedWithoutReplacement(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/places:searchNearby" {
+			_, _ = w.Write([]byte(`{"places":[{"id":"open-far","businessStatus":"OPERATIONAL","primaryType":"restaurant","displayName":{"text":"一蘭 台北本店"},"types":["restaurant"],"location":{"latitude":25.0520,"longitude":121.5170}}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"places":[{"id":"closed-near","businessStatus":"CLOSED_PERMANENTLY","primaryType":"restaurant","displayName":{"text":"一蘭 信義店"},"types":["restaurant"],"location":{"latitude":25.0479,"longitude":121.5170}}]}`))
+	}))
+	defer srv.Close()
+
+	p := NewGooglePlacesProvider("test-key", srv.URL)
+	result, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000, []string{"ramen"})
+	if err != nil || len(result.Restaurants) != 1 || result.Restaurants[0].PlaceID != "open-far" {
+		t.Fatalf("營業中分店必須保留，got %+v err %v", result.Restaurants, err)
+	}
+	if !slices.Contains(result.DiscardedClosedPlaceIDs, "closed-near") {
+		t.Fatalf("未取代留存者的落選歇業分店應供 handler tombstone：%v", result.DiscardedClosedPlaceIDs)
+	}
+}
+
 func TestDedupeChainsFiltersTier1InheritedMatches(t *testing.T) {
 	got, _ := dedupeChains([]Restaurant{
 		{PlaceID: "dessert-near", Name: "連鎖品牌 台北店", PrimaryType: "dessert_shop", Lat: 25.0479, Lng: 121.5170},

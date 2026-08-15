@@ -351,28 +351,18 @@ func memberRadiusGrew(ctx context.Context, pool *pgxpool.Pool, roomID string, fe
 }
 
 func memberCuisinesDrifted(ctx context.Context, pool *pgxpool.Pool, roomID string, fetched []string) (bool, error) {
-	var (
-		filterEnabled bool
-		cuisineLists  []byte
-	)
-	err := pool.QueryRow(ctx, `select r.cuisine_filter,
-		coalesce(jsonb_agg(rm.cuisines order by rm.user_id) filter (where rm.user_id is not null), '[]'::jsonb)
-		from rooms r left join room_members rm on rm.room_id = r.id
-		where r.id = $1 group by r.cuisine_filter`, roomID).Scan(&filterEnabled, &cuisineLists)
-	if err != nil {
+	var filterEnabled bool
+	if err := pool.QueryRow(ctx, `select cuisine_filter from rooms where id = $1`, roomID).Scan(&filterEnabled); err != nil {
 		return false, err
 	}
 	if !filterEnabled {
 		return false, nil
 	}
-	var raw [][]string
-	if err := json.Unmarshal(cuisineLists, &raw); err != nil {
-		return false, fmt.Errorf("member cuisines: %w", err)
+	members, err := LoadMembers(ctx, pool, roomID)
+	if err != nil {
+		return false, err
 	}
-	members := make([]Member, len(raw))
-	for i := range raw {
-		members[i].Cuisines = raw[i]
-	}
+	// 期間全員退房：聯集變空 ≠ fetched 時刻意回 409（人走了條件確實變了，freeze 同樣會擋）；與 memberRadiusGrew 回 false 的不對稱是有意為之。
 	return !slices.Equal(cuisineUnion(members), fetched), nil
 }
 

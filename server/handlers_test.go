@@ -1449,6 +1449,86 @@ func TestSearchRejectedAndClosedPlacesTombstoneCache(t *testing.T) {
 	assertStaleAbsent(doSearch(newTestAppWithProvider(t, pool, failingProvider{}), fallbackRoomID), true)
 }
 
+func TestSearchDiscardedClosedPlaceTombstonesCache(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	const (
+		hostID           = "d1414141-4141-4141-8141-414141414141"
+		roomID           = "d2424242-4242-4242-8242-424242424242"
+		discardedPlaceID = "round14-handler-discarded-closed"
+		openPlaceID      = "round14-handler-open"
+	)
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
+		values ($1, 'discarded-closed-handler@test.dev') on conflict do nothing`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 24.1988, 121.6543)
+		on conflict (id) do update set status = 'lobby', center_lat = excluded.center_lat, center_lng = excluded.center_lng`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		values ($1, $2, 500, '[]', 2000, 'walking')
+		on conflict (room_id, user_id) do update set budget_max = excluded.budget_max,
+			cuisines = excluded.cuisines, max_distance_m = excluded.max_distance_m, transport = excluded.transport`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+		pool.Exec(ctx, `delete from public.restaurants where place_id in ($1, $2)`, discardedPlaceID, openPlaceID)
+		pool.Exec(ctx, `delete from auth.users where id = $1`, hostID)
+	})
+
+	discarded := []Restaurant{{
+		PlaceID: discardedPlaceID, Name: "連鎖去重落選歇業分店", PrimaryType: "restaurant", PriceLevel: 1,
+		Lat: 24.1988, Lng: 121.6543, Hours: daily([2]int{0, 1440}),
+	}}
+	txCache, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertRestaurants(ctx, txCache, discarded, "google"); err != nil {
+		_ = txCache.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := txCache.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := resultProvider{result: PlacesSearchResult{
+		Restaurants: []Restaurant{{
+			PlaceID: openPlaceID, Name: "仍營業餐廳", PrimaryType: "restaurant", PriceLevel: 1,
+			Lat: 24.1988, Lng: 121.6543, Hours: daily([2]int{0, 1440}),
+		}},
+		DiscardedClosedPlaceIDs: []string{discardedPlaceID},
+	}}
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
+	w := httptest.NewRecorder()
+	newTestAppWithProvider(t, pool, provider).ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("search: want 200 got %d body %s", w.Code, w.Body.String())
+	}
+	var fetchedAt time.Time
+	if err := pool.QueryRow(ctx, `select fetched_at from public.restaurants where place_id = $1`, discardedPlaceID).Scan(&fetchedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !fetchedAt.Before(time.Now().Add(-30 * 24 * time.Hour)) {
+		t.Fatalf("discarded closed restaurant fetched_at must be older than 30 days, got %s", fetchedAt)
+	}
+}
+
 func TestSearchFallbackAllExcludedIncludesDegraded(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
