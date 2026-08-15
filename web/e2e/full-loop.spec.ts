@@ -256,23 +256,28 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await expect(a.getByRole('link', { name: navigationName })).toBeVisible({ timeout: 30_000 })
     await expect(b.getByRole('link', { name: navigationName })).toBeVisible({ timeout: 30_000 })
 
+    // 店名先取（eng review C6）：B 段的 RLS 斷言需要它
+    const winnerName = (await a.locator('div.card').filter({ hasText: '今天就吃' })
+      .getByRole('heading').textContent())?.trim() ?? ''
+    expect(winnerName).not.toBe('')
+
     // P3 餐後評分觸點（OV#24 雙觸點自 Round 2 起擴為三處）：A 的寫入改在足跡頁
     // （StarRow 已共用，同一寫入路徑）；房內 RatingPrompt 改驗已評靜態回讀；
     // B 維持首頁「最近 1 筆未評」提示評 5 星。
+    // Round 4（ADR-0007）：B 回首頁即退房。eng review C6：settle 後 reload 再斷言
+    // 《店名》全文——prompt 查詢必然發生在退房 commit 之後，且 fallback「上一餐」
+    // 騙不過全文比對，這才是 0022 RLS 條款的 E2E 證據。
     await b.goto('/')
-    await expect(b.getByText(/滿意嗎？/)).toBeVisible()
+    await expect(b.getByRole('button', { name: '加入' })).toBeEnabled() // leave settle 才繼續
+    await b.reload()
+    await expect(b.getByText(`上次吃的《${winnerName}》滿意嗎？`)).toBeVisible()
     await b.getByRole('button', { name: '5 顆星' }).click()
     await expect(b.getByText(/滿意嗎？/)).toBeHidden()
     await b.reload()
     await expect(b.getByText(/滿意嗎？/)).toBeHidden()
 
-    // Round 2 足跡頁閉環：host 進 /history，剛定案的店在第一列且未評，
-    // 在清單上補 4 星 → 不 reload 本地補列即顯已評、彙總卡同步重算。
-    // 店名取自結果卡 <h2>——導航連結括號內是交通方式不是店名（outside voice #1）
-    const winnerName = (await a.locator('div.card').filter({ hasText: '今天就吃' })
-      .getByRole('heading').textContent())?.trim() ?? ''
-    expect(winnerName).not.toBe('')
-    await a.goto('/')
+    // Round 2 足跡頁閉環：Round 4 起 A 改走房內足跡入口（不經首頁、不觸發退房）。
+    const roomUrl = a.url()
     await a.getByRole('link', { name: '足跡' }).click()
     await expect(a.getByRole('heading', { name: '足跡' })).toBeVisible()
     const firstRow = a.getByRole('listitem').first()
@@ -284,11 +289,16 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     // hero 彙總卡：主數字「1 餐」驗 count:'exact' 接線；已評行驗本地補列重算
     await expect(a.getByText(/^1 餐$/)).toBeVisible()
     await expect(a.getByText('已評 1 筆 · 平均 4.0 ★')).toBeVisible()
-    // 房內 RatingPrompt 的已評靜態分支：回房驗回讀（history → home → room）
-    await a.goBack()
+    // 房內 RatingPrompt 的已評靜態分支：goBack 一次回房（history 由房內進入）
     await a.goBack()
     // 回房是真重載：轉盤重播 SPIN_MS+200≈4.2s 後 RatingPrompt 才回讀，預設 10s expect 預算吃掉近半——放寬（final review）
     await expect(a.getByText('已評分 4 顆星')).toBeVisible({ timeout: 15_000 })
+
+    // Round 4 退房全鏈：A（末位成員）回首頁 → 房被刪 → 重訪房間 URL 得 not-found。
+    await a.goto('/')
+    await expect(a.getByRole('button', { name: '建立房間' })).toBeEnabled() // leave settle
+    await a.goto(roomUrl)
+    await expect(a.getByText('找不到房間，或你不是成員')).toBeVisible()
   } finally {
     await ctxA.close()
     await ctxB.close()
@@ -360,6 +370,38 @@ test('全否決擋抽選（嚴格條件房）', async ({ browser }) => {
     await expect(a.getByText(allVetoBanner, { exact: true })).toHaveCount(0)
     await expect(b.getByText(allVetoBanner, { exact: true })).toHaveCount(0)
     await expect(a.getByRole('button', { name: '啟動轉盤' })).toBeEnabled()
+  } finally {
+    await ctxA.close()
+    await ctxB.close()
+  }
+})
+
+// Round 4（ADR-0007）：房主回首頁＝退房，joined_at 最早者繼任；
+// 驗留房者 UI 的 Realtime 膠水——搜尋鈕浮現、成員數縮減、ready 鈕消失（isHost 重算）。
+test('房主繼任（lobby 中房主回首頁）', async ({ browser }) => {
+  const ctxA = await browser.newContext({
+    geolocation: { latitude: 25.0478, longitude: 121.517 },
+    permissions: ['geolocation'],
+  })
+  const ctxB = await browser.newContext({ permissions: [] })
+  try {
+    const a = await ctxA.newPage()
+    const b = await ctxB.newPage()
+    await Promise.all([signup(a, 'suc-hostA'), signup(b, 'suc-memberB')])
+    await createAndJoinRoom(a, b)
+    // 繼任前：B 是普通成員——有 ready 鈕、無房主搜尋鈕
+    await expect(b.getByRole('button', { name: '我準備好了' })).toBeVisible()
+    await expect(b.getByRole('button', { name: '開始搜尋餐廳' })).toHaveCount(0)
+    // 房主回首頁＝退房
+    await a.goto('/')
+    await expect(a.getByRole('button', { name: '建立房間' })).toBeEnabled() // leave settle
+    // B 繼任：房主控制項浮現、成員數 2→1、ready 鈕消失（ConditionsForm isHost 分支）
+    await expect(b.getByRole('button', { name: '開始搜尋餐廳' })).toBeVisible({ timeout: 10_000 })
+    await expect(b.getByText('成員（1）')).toBeVisible()
+    await expect(b.getByRole('button', { name: '我準備好了' })).toHaveCount(0)
+    // 末位退房收尾（eng review C7）：不留永久房污染本地 DB，順帶再走一次末位刪房鏈
+    await b.goto('/')
+    await expect(b.getByRole('button', { name: '加入' })).toBeEnabled() // leave settle，房已刪
   } finally {
     await ctxA.close()
     await ctxB.close()

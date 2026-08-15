@@ -10,6 +10,7 @@ import (
 
 // castVote 錯誤模式：handler 據此對映 HTTP 狀態。
 var (
+	ErrNotMember         = errors.New("voter no longer a room member")
 	ErrNotCandidate      = errors.New("restaurant not in room candidates")
 	ErrVetoQuotaExceeded = errors.New("veto quota exceeded")
 )
@@ -26,6 +27,17 @@ type VoteCommand struct {
 // 冪等寫入/收回——並回傳該成員剩餘否決額度。
 // 前置：呼叫端已持有 room row lock 並驗過階段（TransitionRoom voting→voting）。
 func castVote(ctx context.Context, tx pgx.Tx, roomID, uid string, cmd VoteCommand) (vetoesRemaining int, err error) {
+	// 退房制（ADR-0007）後 membership 可能在 handler 的交易外檢查後消失：
+	// 命令本體交易內權威重驗，杜絕已離席者的孤兒票（孤兒否決無人能收回，轉盤永久毒化）
+	var isMember bool
+	if err := tx.QueryRow(ctx, `select exists (select 1 from room_members
+		where room_id = $1 and user_id = $2)`, roomID, uid).Scan(&isMember); err != nil {
+		return 0, fmt.Errorf("驗證成員資格: %w", err)
+	}
+	if !isMember {
+		return 0, ErrNotMember
+	}
+
 	var inRoom bool
 	if err := tx.QueryRow(ctx, `select exists (select 1 from room_candidates
 		where room_id = $1 and restaurant_id = $2)`, roomID, cmd.RestaurantID).Scan(&inRoom); err != nil {

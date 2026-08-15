@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 
-async function post(path: string, body?: unknown): Promise<Response> {
+async function post(path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
   const { data } = await supabase.auth.getSession()
   const token = data.session?.access_token ?? ''
   return fetch(`${import.meta.env.VITE_API_URL}${path}`, {
@@ -10,6 +10,7 @@ async function post(path: string, body?: unknown): Promise<Response> {
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
   })
 }
 
@@ -67,4 +68,25 @@ export async function voteRoom(roomId: string, restaurantId: string,
   kind: 'up' | 'veto', op: 'cast' | 'retract'): Promise<string | null> {
   return postAction(`/api/rooms/${roomId}/vote`, '投票失敗',
     { restaurant_id: restaurantId, kind, op })
+}
+
+// 回首頁＝離席（ADR-0007）：mount 時打一次，退掉自己的所有房（殘留舊房自癒）。
+// 失敗靜默——舊房留著，下次進首頁重試；不能擋首頁操作。
+// 5 秒 timeout（eng review 1A）：建房/加入鈕等本函式 settle 才解禁，Go 惸而不斷時
+// 不能讓只需 Supabase 的建房入口被懸掛的 fetch 鎖死。
+// single-flight（eng review D12）：StrictMode dev 會雙跑 mount effect，第二發若晚於
+// 新建房落地會誤刪新房——飛行中共用同一 promise，第二發不出網路。
+let leaveInFlight: Promise<void> | null = null
+
+export function leaveRooms(): Promise<void> {
+  leaveInFlight ??= (async () => {
+    try {
+      await post('/api/leave', undefined, AbortSignal.timeout(5000))
+    } catch {
+      // Go server 連不上／逾時：靜默，下次進首頁自癒
+    } finally {
+      leaveInFlight = null
+    }
+  })()
+  return leaveInFlight
 }

@@ -52,6 +52,8 @@ export default function HomePage() {
   const [suggestion, setSuggestion] = useState<string[]>([])
   const suggestionRequest = useRef(0)
   const suggestionsMounted = useRef(false)
+  // 回首頁＝離席（ADR-0007）：settle 前禁用建房/加入，避免晚到的 leave 誤刪新房
+  const [leavePending, setLeavePending] = useState(true)
 
   const handleDepartureChange = useCallback((p: DeparturePoint) => {
     setDeparture(p)
@@ -94,6 +96,10 @@ export default function HomePage() {
     void loadSuggestions()
     return cancelSuggestionLoads
   }, [cancelSuggestionLoads, loadSuggestions])
+
+  useEffect(() => {
+    void import('../lib/api').then(m => m.leaveRooms()).finally(() => setLeavePending(false))
+  }, [])
 
   async function persistRoom(pos: DeparturePoint) {
     const creatorUid = await getUid()
@@ -215,7 +221,7 @@ export default function HomePage() {
               </div>
             )}
           </div>
-          <button onClick={createRoom} disabled={busy || !departure} className="btn btn-primary w-full">
+          <button onClick={createRoom} disabled={busy || !departure || leavePending} className="btn btn-primary w-full">
             {busy && <Spinner className="h-5 w-5" />}
             {busy ? '建立中…' : '建立房間'}
           </button>
@@ -233,7 +239,7 @@ export default function HomePage() {
             <input className="field flex-1 font-mono text-lg tracking-[0.3em] uppercase"
               aria-label="邀請碼" placeholder="A1B2C3D4E5F6" autoCapitalize="characters"
               value={code} onChange={e => setCode(e.target.value)} required maxLength={12} />
-            <button className="btn btn-quiet px-5" type="submit" disabled={busy}>加入</button>
+            <button className="btn btn-quiet px-5" type="submit" disabled={busy || leavePending}>加入</button>
           </form>
           {joinError && (
             <p role="alert" className="banner bg-danger-soft text-danger">
