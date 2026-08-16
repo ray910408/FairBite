@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   from: vi.fn(),
   update: vi.fn(),
   eq: vi.fn(),
+  navigate: vi.fn(),
+  getUid: vi.fn(),
+  members: {} as { data?: unknown; error?: unknown },
 }))
 
 vi.mock('react', async importOriginal => {
@@ -29,9 +32,11 @@ vi.mock('react', async importOriginal => {
 vi.mock('react-router-dom', () => ({
   Link: 'a',
   useParams: () => ({ id: 'room-1' }),
+  useNavigate: () => mocks.navigate,
 }))
 
 vi.mock('../hooks/useRoom', () => ({ useRoom: mocks.useRoom }))
+vi.mock('../lib/uid', () => ({ getUid: mocks.getUid }))
 
 vi.mock('../lib/supabase', () => ({
   supabase: {
@@ -326,28 +331,27 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
   })
 })
 
-// QA：房間頁左上 logo 按下去靜默送出 leave（ADR-0007 回首頁＝離席），要先確認
+// QA：房間頁左上 logo 按下去靜默送出 leave（ADR-0007 回首頁＝離席），要先確認。
+// Codex review r4：文案改成點擊當下 fetchLeaveRooms() 重查，不再讀 useRoom 的 room／members
+//（前者在 rooms 查詢失敗時會停在過期快照，後者漏報殘留房籍）。
+// leaveNotice 本身的分歧規則由 lib/leaveNotice.test.ts 窮舉，這裡只驗 RoomPage 的接線。
 describe('回首頁離席確認', () => {
-  const LEAVE_STATE = 9 // useState 呼叫順序中的 leaveOpen；新 state 只能接在它後面
+  const LEAVE_DIALOG = 9 // useState 呼叫順序：leaveDialog；新 state 只能接在它後面
+  const LEAVE_CHECKING = 10
 
-  // 末位退房無條件刪房（server/leave.go）——文案依人數分歧，預設多人房
-  function mount(status: string, leaveOpen: boolean, memberCount = 2,
-    overrides: Record<string, unknown> = {}) {
+  const row = (id: string, code: string, status: string, hostId = 'someone-else') =>
+    ({ room_id: id, rooms: { code, status, host_id: hostId } })
+
+  function mount(dialog: unknown = null, overrides: Record<string, unknown> = {}) {
     mocks.stateIndex = 0
-    mocks.stateValues = [false, '', '', false, false, '', '', false, false, leaveOpen]
+    mocks.stateValues = [false, '', '', false, false, '', '', false, false, dialog]
     mocks.stateSetters = []
     mocks.useRoom.mockReset().mockReturnValue({
       room: {
-        id: 'room-1', code: 'ABC123', host_id: 'host', status,
+        id: 'room-1', code: 'ABC123', host_id: 'host', status: 'lobby',
         exploration: 'balanced', meal_time: null, cuisine_filter: false,
       },
-      members: Array.from({ length: memberCount }, (_, i) => ({
-        room_id: 'room-1', user_id: i === 0 ? 'host' : `user-${i}`, budget_max: 800,
-        cuisines: [], dietary: [], max_distance_m: 1000, transport: 'walking', ready: false,
-        profiles: { display_name: i === 0 ? '房主' : `成員${i}` },
-      })),
-      membersStale: false,
-      candidates: [], draw: null, myUserId: 'host', connected: true,
+      members: [], candidates: [], draw: null, myUserId: 'host', connected: true,
       notFound: false, loadError: false, refetch: vi.fn(),
       toggleVote: vi.fn(), myVote: () => null, ups: new Map(), vetoesRemaining: 2,
       ...overrides,
@@ -355,20 +359,121 @@ describe('回首頁離席確認', () => {
     return renderRoomPage()
   }
 
-  it('點 header 回首頁不導航，改開啟確認', async () => {
-    const tree = await mount('voting', false)
-    expect(textContent(tree)).not.toContain('離開房間？')
-    const link = findNode(tree, el => el.props?.['aria-label'] === '回首頁')
+  async function clickHome(tree: unknown) {
     const preventDefault = vi.fn()
-    const onClick = link?.props?.onClick as ((e: { preventDefault: () => void }) => void) | undefined
+    const onClick = findNode(tree, el => el.props?.['aria-label'] === '回首頁')?.props?.onClick as
+      ((e: { preventDefault: () => void }) => Promise<void>) | undefined
     if (!onClick) throw new Error('找不到 header 回首頁連結')
-    onClick({ preventDefault })
+    await onClick({ preventDefault })
+    return preventDefault
+  }
+
+  beforeEach(() => {
+    mocks.navigate.mockReset()
+    mocks.getUid.mockReset().mockResolvedValue('host')
+    mocks.members = { data: [], error: null }
+    mocks.from.mockReset().mockImplementation((table: string) => table === 'room_members'
+      ? { select: () => Promise.resolve(mocks.members) }
+      : { update: mocks.update })
+  })
+
+  it('點 header 回首頁不導航，改當場查房籍後開確認', async () => {
+    mocks.members = { data: [row('room-1', 'ABC123', 'voting')], error: null }
+    const tree = await mount()
+    expect(textContent(tree)).not.toContain('離開房間？')
+    const preventDefault = await clickHome(tree)
     expect(preventDefault).toHaveBeenCalled()
-    expect(mocks.stateSetters[LEAVE_STATE]).toHaveBeenCalledWith(true)
+    expect(mocks.from).toHaveBeenCalledWith('room_members')
+    expect(mocks.navigate).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[LEAVE_DIALOG]).toHaveBeenCalledWith({
+      kind: 'rooms',
+      rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 1, isHost: false }],
+    })
+    expect(mocks.stateSetters[LEAVE_CHECKING]).toHaveBeenCalledWith(true)
+    expect(mocks.stateSetters[LEAVE_CHECKING]).toHaveBeenCalledWith(false)
+  })
+
+  // useRoom.ts:46 只在 r.data 為真時 setRoom——rooms 查詢失敗／Realtime 斷線時 room
+  // 會停在過期物件。文案若讀它，lobby→voting 之後仍會承諾「可用邀請碼重新加入」
+  it('文案用查回來的 status，不用 useRoom 的過期 room 快照', async () => {
+    mocks.members = { data: [row('room-1', 'ABC123', 'voting'), row('room-1', 'ABC123', 'voting')], error: null }
+    const tree = await mount() // useRoom 仍宣稱 status = 'lobby'
+    await clickHome(tree)
+    const target = mocks.stateSetters[LEAVE_DIALOG].mock.calls[0][0] as { rooms: { status: string }[] }
+    expect(target.rooms[0].status).toBe('voting')
+    const rendered = textContent(await mount(target))
+    expect(rendered).toContain('你的投票會即刻作廢，候選盤面會重新計算')
+    expect(rendered).not.toContain('之後可用邀請碼重新加入') // lobby 才有的承諾
+  })
+
+  // POST /api/leave 是全退不挑房：殘留房籍（舊房 leave 逾時後又建新房）也會被退掉
+  it('殘留房籍一起列出，各有回房入口（leave 是全退）', async () => {
+    mocks.members = {
+      data: [row('room-1', 'ABC123', 'voting'), row('room-9', 'OLD999', 'lobby')],
+      error: null,
+    }
+    const tree = await mount()
+    await clickHome(tree)
+    const target = mocks.stateSetters[LEAVE_DIALOG].mock.calls[0][0]
+    const text = textContent(await mount(target))
+    expect(text).toContain('你目前在 2 個房間裡，回首頁會一次全部離開')
+    expect(text).toContain('房間 ABC123')
+    expect(text).toContain('房間 OLD999')
+    const rendered = await mount(target)
+    expect(findNode(rendered, el => el.type === 'a' && textContent(el) === '回到 OLD999')?.props?.to)
+      .toBe('/room/room-9')
+  })
+
+  it('房籍查詢失敗改用保守文案，不假裝知道後果', async () => {
+    mocks.members = { data: null, error: { message: 'boom' } }
+    const tree = await mount()
+    await clickHome(tree)
+    expect(mocks.stateSetters[LEAVE_DIALOG]).toHaveBeenCalledWith({ kind: 'unknown' })
+
+    const text = textContent(await mount({ kind: 'unknown' }))
+    expect(text).toContain('房間現況查不到')
+    expect(text).not.toContain('可用邀請碼重新加入')
+    expect(text).not.toContain('會直接被刪除')
+  })
+
+  it('查到房籍已消失：直接導航，不跳確認', async () => {
+    mocks.members = { data: [], error: null }
+    const tree = await mount()
+    await clickHome(tree)
+    expect(mocks.navigate).toHaveBeenCalledWith('/')
+    expect(mocks.stateSetters[LEAVE_DIALOG]).not.toHaveBeenCalled()
+  })
+
+  // aria-busy 擋不住點擊；兩次點擊之間房籍會變（多分頁是 ADR-0007 承認的情境）
+  it('晚到的舊「沒有房間」回應不得跳過剛開好的 dialog', async () => {
+    let releaseFirst!: () => void
+    const first = new Promise(resolve => {
+      releaseFirst = () => resolve({ data: [], error: null })
+    })
+    const second = Promise.resolve({ data: [row('room-9', 'NEW999', 'lobby')], error: null })
+    const queue: unknown[] = [first, second]
+    mocks.from.mockImplementation((table: string) => table === 'room_members'
+      ? { select: () => queue.shift() ?? second }
+      : { update: mocks.update })
+
+    const tree = await mount()
+    const firstClick = clickHome(tree)
+    const secondClick = clickHome(tree)
+    await secondClick
+    expect(mocks.stateSetters[LEAVE_DIALOG]).toHaveBeenCalledTimes(1)
+
+    releaseFirst()
+    await firstClick
+    expect(mocks.navigate).not.toHaveBeenCalled() // 舊回應沒有繞過 dialog 直接離席
+    expect(mocks.stateSetters[LEAVE_DIALOG]).toHaveBeenCalledTimes(1)
+    expect(mocks.stateSetters[LEAVE_CHECKING].mock.calls).toEqual([[true], [true], [false]])
   })
 
   it('確認開啟時是有名稱的 modal dialog，取消與 Esc 都留在房間', async () => {
-    const tree = await mount('voting', true)
+    const tree = await mount({
+      kind: 'rooms',
+      rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 2, isHost: false }],
+    })
     const dialog = findNode(tree, el => el.props?.role === 'dialog')
     expect(dialog?.props?.['aria-modal']).toBe('true')
     expect(dialog?.props?.['aria-labelledby']).toBe('leave-title')
@@ -376,107 +481,42 @@ describe('回首頁離席確認', () => {
     const cancel = findButton(tree, '取消')
     if (!cancel.props?.onClick) throw new Error('找不到取消按鈕')
     await cancel.props.onClick()
-    expect(mocks.stateSetters[LEAVE_STATE]).toHaveBeenCalledWith(false)
+    expect(mocks.stateSetters[LEAVE_DIALOG]).toHaveBeenCalledWith(null)
 
     const overlay = findNode(tree, el => typeof el.props?.onKeyDown === 'function')
     const onKeyDown = overlay!.props!.onKeyDown as (e: { key: string }) => void
-    mocks.stateSetters[LEAVE_STATE].mockClear()
+    mocks.stateSetters[LEAVE_DIALOG].mockClear()
     onKeyDown({ key: 'Enter' })
-    expect(mocks.stateSetters[LEAVE_STATE]).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[LEAVE_DIALOG]).not.toHaveBeenCalled()
     onKeyDown({ key: 'Escape' })
-    expect(mocks.stateSetters[LEAVE_STATE]).toHaveBeenCalledWith(false)
+    expect(mocks.stateSetters[LEAVE_DIALOG]).toHaveBeenCalledWith(null)
   })
 
-  it('確認鍵才是真正導航到首頁的連結', async () => {
-    const tree = await mount('voting', true)
+  it('確認鍵是真正導航的連結，且帶「已確認」旗標避免首頁再問一次', async () => {
+    const tree = await mount({
+      kind: 'rooms',
+      rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 2, isHost: false }],
+    })
     const confirm = findNode(tree, el => el.type === 'a' && textContent(el) === '離開房間')
     expect(confirm?.props?.to).toBe('/')
+    expect(confirm?.props?.state).toEqual({ leaveConfirmed: true })
     expect(confirm?.props?.onClick).toBeUndefined() // 未被攔截＝按下才真的離席
   })
 
-  it('decided 的後果文案與 lobby 不同', async () => {
-    const lobby = textContent(await mount('lobby', true))
-    expect(lobby).toContain('之後可用邀請碼重新加入')
-    expect(lobby).not.toContain('「足跡」查看')
+  // fixed 遮罩擋得住指標，對 tab 順序毫無作用：背景整塊要 inert，且 dialog 不能在裡面
+  it('dialog 開著時背景 inert，dialog 本身在 inert 子樹外', async () => {
+    const closed = findNode(await mount(null), el => el.props?.className === 'min-h-screen')
+    expect(closed?.props?.inert).toBe(false)
 
-    const decided = textContent(await mount('decided', true))
-    expect(decided).toContain('無法用邀請碼重新加入')
-    expect(decided).toContain('抽中的結果之後只能在「足跡」查看')
-    expect(decided).toContain('你若是最後一位成員，房間會直接被刪除')
-  })
-
-  // 末位退房的 delete from rooms 不看 status（server/leave.go:106-111）：
-  // 單人 lobby 房必被刪、邀請碼必失效，不得承諾可重加入
-  it('單人 lobby 不承諾可重加入，多人才承諾', async () => {
-    const alone = textContent(await mount('lobby', true, 1))
-    expect(alone).not.toContain('可用邀請碼重新加入')
-    expect(alone).toContain('你是房間裡唯一的人，離開後這個房間會直接刪除')
-    expect(alone).toContain('邀請碼 ABC123 會跟著失效')
-
-    const shared = textContent(await mount('lobby', true, 2))
-    expect(shared).toContain('之後可用邀請碼重新加入')
-    expect(shared).toContain('你若是最後一位成員，房間會直接被刪除')
-  })
-
-  // 成員查詢失敗時 useRoom 不覆寫 members（停在 []），房間卻照常 render——
-  // 0 只可能是「沒載成功」，不得當成單人講死話
-  it('成員沒載成功（members 空）時退回不可判定的條件句', async () => {
-    const alone = textContent(await mount('lobby', true, 0))
-    expect(alone).not.toContain('你是房間裡唯一的人')
-    expect(alone).not.toContain('邀請碼 ABC123 會跟著失效')
-    expect(alone).toContain('你若是最後一位成員，房間會直接被刪除')
-    expect(alone).toContain('只要房間還在（你不是最後一位），之後仍可用邀請碼重新加入')
-  })
-
-  it('單人房在 voting／decided 也用「確定會刪除」而非條件句', async () => {
-    for (const status of ['voting', 'decided']) {
-      const alone = textContent(await mount(status, true, 1))
-      expect(alone).toContain('你是房間裡唯一的人，離開後這個房間會直接刪除')
-      expect(alone).not.toContain('你若是最後一位成員')
-      expect(alone).not.toContain('可用邀請碼重新加入')
-    }
-  })
-
-  // 單人房刪完房就 return，走不到 rescoreRoom（server/leave.go）——不得承諾重算
-  it('單人 candidates／voting 不承諾重新分割或重新計算', async () => {
-    const candidates = textContent(await mount('candidates', true, 1))
-    expect(candidates).not.toContain('重新分割')
-    expect(candidates).not.toContain('退出重算')
-    expect(candidates).toContain('你是房間裡唯一的人，離開後這個房間會直接刪除')
-
-    const voting = textContent(await mount('voting', true, 1))
-    expect(voting).not.toContain('重新計算')
-    expect(voting).not.toContain('盤面')
-    expect(voting).toContain('你的票和整份候選名單會跟著刪除')
-  })
-
-  // 房主退出＝移交給最早加入者（ADR-0007、leave.go 的 update rooms set host_id）
-  it('多人房的房主看得到移交敘述，一般成員看不到', async () => {
-    const host = textContent(await mount('lobby', true, 2))
-    expect(host).toContain('你是房主：離開後房主身分會移交給其餘成員中最早加入的人')
-    expect(host).toContain('你重新加入也不會拿回房主權限')
-
-    const member = textContent(await mount('lobby', true, 2, { myUserId: 'user-1' }))
-    expect(member).not.toContain('移交')
-  })
-
-  it('單人房的房主不講移交（沒有人可以繼任）', async () => {
-    expect(textContent(await mount('lobby', true, 1))).not.toContain('移交')
-  })
-
-  // uid 還沒載回來時 isHost 會恆為 false，那是猜的——退回條件句
-  it('myUserId 未載回時用「你若是房主」的條件句', async () => {
-    const text = textContent(await mount('lobby', true, 2, { myUserId: '' }))
-    expect(text).toContain('你若是房主，房主身分會移交給')
-  })
-
-  // useRoom 成員查詢失敗時 members 停在舊值（可能是非空的過期快照，membersStale）——
-  // 期間有人加入／離開，拿它講「你是唯一的人／房間會被刪除」就是錯的
-  it('membersStale 時即使 members 非空也退回不可判定的條件句', async () => {
-    const stale = textContent(await mount('lobby', true, 1, { membersStale: true }))
-    expect(stale).not.toContain('你是房間裡唯一的人')
-    expect(stale).not.toContain('邀請碼 ABC123 會跟著失效')
-    expect(stale).toContain('你若是最後一位成員，房間會直接被刪除')
-    expect(stale).toContain('只要房間還在（你不是最後一位），之後仍可用邀請碼重新加入')
+    const tree = await mount({
+      kind: 'rooms',
+      rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 2, isHost: false }],
+    })
+    const background = findNode(tree, el => el.props?.className === 'min-h-screen')
+    expect(background?.props?.inert).toBe(true)
+    expect(findNode(background, el => el.props?.role === 'dialog')).toBeUndefined()
+    expect(findNode(tree, el => el.props?.role === 'dialog')).toBeDefined()
+    // 背景真的含著會被鍵盤觸發的控制項——斷言不是空的
+    expect(findNode(background, el => el.type === 'button')).toBeDefined()
   })
 })

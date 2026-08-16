@@ -16,10 +16,6 @@ export function useRoom(roomId: string) {
   const [connected, setConnected] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [loadError, setLoadError] = useState(false)
-  // 成員查詢自己的新鮮度：查失敗時 members 停在上一輪的值（可能是非空的舊快照），
-  // 退房文案不得拿它講人數。loadError 是 5 個查詢的聯集（下面的 siblingError），
-  // 投票／候選失敗也會亮，拿來當成員過期訊號會過度觸發。
-  const [membersStale, setMembersStale] = useState(false)
   const refetchGen = useRef(0)
 
   const refetch = useCallback(async () => {
@@ -44,7 +40,6 @@ export function useRoom(roomId: string) {
     setNotFound(state === 'not-found')
     setLoadError(state === 'error' || siblingError)
     if (r.data) setRoom(r.data as Room)
-    setMembersStale(!!m.error)
     if (!m.error) setMembers((m.data ?? []) as MemberRow[])
     if (!c.error) setCandidates((c.data ?? []) as CandidateRow[])
     if (!d.error) setDraw((d.data ?? null) as DrawRow | null)
@@ -113,6 +108,6 @@ export function useRoom(roomId: string) {
   const ups = upCounts(votes)
   const vetoesRemaining = VETO_QUOTA - myVetoCount(votes, myUserId)
 
-  return { room, members, membersStale, candidates, draw, myUserId, connected, notFound, loadError,
+  return { room, members, candidates, draw, myUserId, connected, notFound, loadError,
     refetch, toggleVote, myVote, ups, vetoesRemaining }
 }

@@ -192,6 +192,20 @@ describe('足跡頁回首頁離席確認', () => {
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith(null)
   })
 
+  // fixed 遮罩擋得住指標，對 tab 順序毫無作用：沒有 inert，鍵盤可以 tab 到背景的
+  // 「補評」chip 並按 Enter（Codex P2）
+  it('dialog 開著時背景 inert，dialog 本身在 inert 子樹外', async () => {
+    const closed = findNode(await render(), el => el.props?.className === 'min-h-screen')
+    expect(closed?.props?.inert).toBe(false)
+
+    const tree = await render(oneRoom)
+    const background = findNode(tree, el => el.props?.className === 'min-h-screen')
+    expect(background?.props?.inert).toBe(true)
+    expect(findNode(background, el => el.props?.role === 'dialog')).toBeUndefined()
+    expect(findNode(tree, el => el.props?.role === 'dialog')).toBeDefined()
+    expect(findNode(background, el => el.type === 'a')).toBeDefined() // 背景確實有可聚焦控制項
+  })
+
   it('單房 dialog 文案沿用 leaveNotice（voting 兩人）', async () => {
     const text = textContent(await render(oneRoom))
     expect(text).toContain('你目前還在房間 ABC123 裡')

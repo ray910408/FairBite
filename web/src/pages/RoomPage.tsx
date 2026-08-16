@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
 import { startVoting } from '../lib/api'
 import { isVetoDeadEnd } from '../lib/deadEnd'
 import { EXPLORATION_OPTIONS } from '../lib/labels'
-import { leaveNotice } from '../lib/leaveNotice'
 import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
 import { isGoogleSourced } from '../lib/placesSource'
+import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import { supabase } from '../lib/supabase'
 import type { Room } from '../lib/types'
 import ConditionsForm from '../components/ConditionsForm'
+import { LeaveConfirm, LeaveRoomsBody } from '../components/LeaveConfirm'
 import CandidateList from '../components/CandidateList'
 import Wheel from '../components/Wheel'
 import ResultCard from '../components/ResultCard'
@@ -46,7 +47,8 @@ function Stepper({ status }: { status: Room['status'] }) {
 
 export default function RoomPage() {
   const { id = '' } = useParams()
-  const { room, members, membersStale, candidates, draw, myUserId, connected, notFound, loadError,
+  const nav = useNavigate()
+  const { room, members, candidates, draw, myUserId, connected, notFound, loadError,
     refetch, toggleVote, myVote, ups, vetoesRemaining } = useRoom(id)
   const [spun, setSpun] = useState(false)
   const [actionError, setActionError] = useState('')
@@ -59,8 +61,12 @@ export default function RoomPage() {
   const [searching, setSearching] = useState(false)
   const [startingVoting, setStartingVoting] = useState(false)
   // 退房確認（ADR-0007：回首頁＝離席）——新 state 一律接在最後，RoomPage.test.ts 依呼叫順序 mock useState
-  const [leaveOpen, setLeaveOpen] = useState(false)
+  const [leaveDialog, setLeaveDialog] = useState<LeaveTarget | null>(null)
+  const [leaveChecking, setLeaveChecking] = useState(false)
   const leaveTriggerRef = useRef<HTMLAnchorElement>(null)
+  // 房籍查詢自己的世代（比照 HistoryPage）：aria-busy 擋不住點擊，兩次點擊之間房籍
+  // 還可能在別的分頁被改，只有最後一次點擊的回應能生效
+  const leaveGen = useRef(0)
   const mealTimeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const mealTimeChain = useRef(Promise.resolve())
   const searchInFlight = useRef(false)
@@ -147,24 +153,41 @@ export default function RoomPage() {
   }
 
   function closeLeave() {
-    setLeaveOpen(false)
+    setLeaveDialog(null)
     leaveTriggerRef.current?.focus() // 觸發元素不隨 dialog 卸載，直接還原焦點
   }
 
-  // 人數只有「這一輪成員查詢成功」才算數：查失敗時 members 會停在上一輪的舊值
-  //（可能是非空的過期快照，useRoom 的 membersStale），空陣列則代表從沒載成功
-  //（查詢成功時自己一定在列裡）——兩種都傳 null 讓文案退回條件句。
-  // myUserId 未載回（''）時 isHost 會恆為 false，那是猜的，一樣傳 null。
-  const memberCount = membersStale ? null : members.length || null
-  const leavePoints = leaveNotice(room.status, memberCount, room.code, myUserId ? isHost : null)
+  // 一律攔下來當場查（比照 HistoryPage），不讀本頁任何本地狀態：
+  // 1. useRoom 的 room 在 rooms 查詢失敗時會停在舊物件（useRoom.ts:46 只在 r.data 為真
+  //    時 setRoom，失敗只亮 loadError）——lobby→candidates 期間 refresh 失敗或 Realtime
+  //    斷線，拿過期 status 就會承諾「之後可用邀請碼重新加入」，而 join_room 早就不匹配。
+  // 2. POST /api/leave 是全退不挑房，殘留房籍（leave 逾時後又建新房）也會一起退掉，
+  //    只講當前這一間就是漏報。
+  // 代價是多一次查詢與非同步開啟（aria-busy 回饋）；不可逆動作上正確性優先於即時感。
+  async function askLeave(e: React.MouseEvent<HTMLAnchorElement>) {
+    e.preventDefault()
+    const request = ++leaveGen.current
+    setLeaveChecking(true)
+    const rooms = await fetchLeaveRooms()
+    if (request !== leaveGen.current) return // 更新的一次在跑，checking 由它負責關掉
+    setLeaveChecking(false)
+    if (rooms && rooms.length === 0) { // 房籍已消失（被踢／房已刪）：沒有後果可講
+      nav('/')
+      return
+    }
+    setLeaveDialog(rooms ? { kind: 'rooms', rooms } : { kind: 'unknown' })
+  }
 
   return (
-    <div className="min-h-screen">
+    <>
+      {/* dialog 開著時整塊背景 inert：fixed 遮罩擋得住指標（elementFromPoint 實測），
+          對 tab 順序毫無作用——沒有它鍵盤使用者可以 tab 到「開始搜尋餐廳」按 Enter（Codex P2） */}
+      <div className="min-h-screen" inert={!!leaveDialog}>
       <header className="sticky top-0 z-20 border-b border-border bg-canvas/85 backdrop-blur">
         <div className="mx-auto flex w-full max-w-lg items-center gap-3 p-3">
-          {/* 回首頁＝離席（ADR-0007），代價不可逆——攔下導覽先確認 */}
+          {/* 回首頁＝離席（ADR-0007），代價不可逆——攔下導覽先查再確認 */}
           <Link to="/" aria-label="回首頁" ref={leaveTriggerRef}
-            onClick={e => { e.preventDefault(); setLeaveOpen(true) }}
+            aria-busy={leaveChecking} onClick={askLeave}
             className="-ml-1.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl">
             <Logo className="h-8 w-8" />
           </Link>
@@ -460,28 +483,25 @@ export default function RoomPage() {
           </div>
         )}
       </main>
+      </div>
 
-      {leaveOpen && (
-        // Esc 掛在外層：開啟時焦點由 autoFocus 進到「取消」，keydown 由 dialog 內冒泡上來
-        <div className="fixed inset-0 z-30 flex items-center justify-center bg-fg/40 p-3"
-          onKeyDown={e => { if (e.key === 'Escape') closeLeave() }}>
-          <div role="dialog" aria-modal="true" aria-labelledby="leave-title"
-            className="card w-full max-w-sm animate-rise space-y-3">
-            <h2 id="leave-title" className="text-base font-semibold">離開房間？</h2>
-            <ul className="list-disc space-y-1 pl-5 text-sm text-fg-muted">
-              {leavePoints.map(p => <li key={p}>{p}</li>)}
-            </ul>
-            {/* 320px 直排、sm 以上並排——按鈕不壓縮成兩行字 */}
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <button type="button" autoFocus className="btn btn-quiet w-full sm:flex-1"
-                onClick={closeLeave}>
-                取消
-              </button>
-              <Link to="/" className="btn w-full bg-danger text-white sm:flex-1">離開房間</Link>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+      {leaveDialog && LeaveConfirm({
+        title: '離開房間？',
+        onClose: closeLeave,
+        actionsClassName: 'sm:flex-row', // 320px 直排、sm 以上並排——按鈕不壓縮成兩行字
+        actions: (
+          <>
+            <button type="button" autoFocus className="btn btn-quiet w-full sm:flex-1"
+              onClick={closeLeave}>
+              取消
+            </button>
+            {/* 使用者在這裡已經看過後果：帶旗標過去讓 HomePage mount 直接退房，不再問第二次 */}
+            <Link to="/" state={{ leaveConfirmed: true }}
+              className="btn w-full bg-danger text-white sm:flex-1">離開房間</Link>
+          </>
+        ),
+        children: LeaveRoomsBody({ target: leaveDialog }),
+      })}
+    </>
   )
 }
