@@ -92,8 +92,12 @@ export function Spinner({ className = 'h-6 w-6' }: P) {
   )
 }
 
-export const Star = ({ className = '' }: { className?: string }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+// filled=false 改畫描邊（空心）；預設 true，既有呼叫端輸出的屬性一字不變
+const starOutline = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinejoin: 'round' } as const
+
+export const Star = ({ className = '', filled = true }: { className?: string; filled?: boolean }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
+    {...(filled ? {} : starOutline)}>
     <path d="M12 2.5l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.3l-5.8 3.1 1.1-6.5L2.6 9.3l6.5-.9L12 2.5z" />
   </svg>
 )

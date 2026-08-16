@@ -7,13 +7,19 @@ import { Star } from './icons'
 export default function StarRow({ historyId, onRated }: { historyId: string; onRated: (n: number) => void }) {
   const [saveError, setSaveError] = useState('')
   const [busy, setBusy] = useState(false)
+  // 累計預覽：滑過／focus 第 N 顆時 1..N 一起亮（評分語意是 1..N，不是單選）。
+  // 必須宣告在上面兩個 useState 之後：測試用呼叫順序取 setSaveError / setBusy。
+  const [preview, setPreview] = useState(0)
   return (
     <>
-      <div className="flex justify-center gap-1">
+      <div className="flex justify-center gap-1"
+        onMouseLeave={() => setPreview(0)} onBlur={() => setPreview(0)}>
         {[1, 2, 3, 4, 5].map(n => (
           <button key={n} type="button" aria-label={`${n} 顆星`}
             disabled={busy}
-            className="flex h-11 w-11 items-center justify-center rounded-xl text-fg-muted hover:text-brand disabled:opacity-50"
+            className={`flex h-11 w-11 items-center justify-center rounded-xl disabled:opacity-50 ${
+              n <= preview ? 'text-brand' : 'text-fg-muted'}`}
+            onMouseEnter={() => setPreview(n)} onFocus={() => setPreview(n)}
             onClick={async () => {
               setSaveError('')
               setBusy(true)
@@ -28,7 +34,7 @@ export default function StarRow({ historyId, onRated }: { historyId: string; onR
                 setBusy(false)
               } else onRated(n)
             }}>
-            <Star className="h-7 w-7" />
+            <Star className="h-7 w-7" filled={n <= preview} />
           </button>
         ))}
       </div>
