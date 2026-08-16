@@ -5,17 +5,30 @@
 待辦與已知限制見 `TODOS.md`，上線部署步驟見 `docs/deploy.md`。（設計文件與 SDD ledger 在 `docs/superpowers/`，
 未納入版控，僅存在於本機工作目錄。）
 
+## 主要流程
+
+1. **建房** — 房主選出發點與用餐時間（預設「馬上出發」，也可指定今日某個時刻），拿到邀請碼。
+2. **加入** — 其他人用邀請碼進房。成員不攜帶座標，搜尋圓心一律是房主選的出發點。
+3. **條件與準備** — 各自填預算上限、料理偏好、飲食禁忌、距離偏好與交通方式，按「我準備好了」凍結自己的條件（可取消解凍）；房主免按。
+4. **搜尋** — 房主開始搜尋，全員條件即刻凍結。房主可開「菜系過濾」讓全員偏好聯集成為入池門檻，並用探索檔位（熟悉／平均／探索新店）調整新店與熟店的權重。候選帶著機率與逐因素解釋出現，被排除的店也列出原因。
+5. **投票** — 對候選按贊成或否決；否決有額度，投票期間可收回。
+6. **抽選** — 依候選機率加權隨機，留下 seed 與機率快照，所有人同步停在同一家。
+7. **評分與足跡** — 定案後可選填餐後評分（永遠可跳過）。「足跡」頁是自己所有同席紀錄的個人視圖：時間軸、補評分入口與統計洞察。
+8. **離席** — 從房間頁或足跡頁回首頁即離席，按下前會先確認。房主退房由最早加入者繼任，最後一人退房即刪房，同席紀錄不受影響。
+
+名詞定義見 `CONTEXT.md`，為什麼這樣設計見 `docs/adr/`。
+
 ## 架構
 
 ```mermaid
 flowchart TB
   subgraph W["瀏覽器 — web/（React + Vite）"]
-    UI["RoomPage / ConditionsForm / Wheel"]
+    UI["HomePage / RoomPage / HistoryPage<br/>ConditionsForm / Wheel"]
   end
 
   subgraph G["Go API — server/（:8787）"]
     MW["cors → JWKS 驗證 → per-user 限流"]
-    H["handlers<br/>search / start-voting / vote / draw"]
+    H["handlers<br/>search / start-voting / vote / draw / leave"]
     E["engine<br/>硬性排除 + 權重因素 → 機率"]
     D["draw<br/>留 seed 的加權隨機"]
     P["PlacesProvider"]
@@ -23,6 +36,7 @@ flowchart TB
 
   subgraph S["Supabase Postgres（RLS）"]
     T["rooms / room_members / room_candidates<br/>votes / draws"]
+    HI["dining_history — 同席紀錄（跨房間、跟人不跟房）"]
     C["restaurants — 30 天快取"]
   end
 
@@ -30,7 +44,7 @@ flowchart TB
 
   UI -->|"PostgREST：create_room / join_room RPC、寫條件、讀候選"| T
   T -->|"Realtime postgres_changes（room-房號頻道）"| UI
-  UI -->|"POST /api/rooms/:id/…"| MW
+  UI -->|"POST /api/rooms/:id/… 與 /api/leave"| MW
   MW --> H
   H --> E --> D
   H --> P
@@ -39,13 +53,16 @@ flowchart TB
   GP -->|"失敗 → 降級改用快取 + 前端橫幅"| C
   C --> H
   H -->|"pgxpool（服務身分，不受 RLS 限制）"| T
+  UI -->|"PostgREST：足跡頁讀自己的紀錄、餐後評分寫回"| HI
+  H -->|"抽選定案寫入；重算時讀（公平／曝光／滿足度）"| HI
 ```
 
 兩條路徑的分工是這套系統唯一需要記住的規則：**唯讀與個人資料直打 Supabase，
 會改變房間狀態的動作一律走 Go API**。前者（建房、加入、填自己的條件、讀候選與
 票數）由 RLS 逐列把關，改動經 Realtime 即時推播給同房其他人；後者（搜尋、開始
-投票、投票、抽選）需要凍結成員條件、跑過濾與加權、留下可重播的 seed，這些跨列
-的一致性只有伺服器端交易做得到，因此 handlers 以 pgxpool 服務身分寫入。
+投票、投票、抽選、退房）需要凍結成員條件、跑過濾與加權、留下可重播的 seed，或
+在同一交易內刪票、移交房主、末位刪房並重算機率，這些跨列的一致性只有伺服器端
+交易做得到，因此 handlers 以 pgxpool 服務身分寫入。
 
 搜尋結果先落進 `restaurants` 快取（Google 條款上限 30 天）；Google 呼叫失敗時
 handlers 改用快取並在回應標記 `degraded`，前端顯示降級橫幅。已歇業的店家
