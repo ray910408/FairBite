@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
+import { leaveNotice } from '../lib/leaveNotice'
 import { buildMealTimeISO } from '../lib/mealTime'
 import { suggestCuisines, type HistoryRow } from '../lib/prefsLearning'
 import { loadLastDeparture, saveLastDeparture, type DeparturePoint } from '../lib/departure'
+import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import { getUid } from '../lib/uid'
 import { Alert, Logo, LogOut, Spinner } from '../components/icons'
+import { LeaveConfirm } from '../components/LeaveConfirm'
 import LocationPicker from '../components/LocationPicker'
 import { RecentRatingPrompt } from '../components/RatingPrompt'
 
@@ -54,6 +57,13 @@ export default function HomePage() {
   const suggestionsMounted = useRef(false)
   // 回首頁＝離席（ADR-0007）：settle 前禁用建房/加入，避免晚到的 leave 誤刪新房
   const [leavePending, setLeavePending] = useState(true)
+  // 離席確認的對象（ADR-0007 2026-08-16 修訂）——新 state 一律接在最後，
+  // HomePage.test.ts 依 useState 呼叫順序 mock
+  const [leaveTarget, setLeaveTarget] = useState<LeaveTarget | null>(null)
+  const location = useLocation()
+  // 每次 mount 只做一次離席決策：消耗旗標的 replace 會讓 location 變、下面的 effect
+  // 重跑，沒有這道閘就會在 doLeave() 還在飛的時候又走一次查房籍→開 dialog
+  const leaveDecided = useRef(false)
 
   const handleDepartureChange = useCallback((p: DeparturePoint) => {
     setDeparture(p)
@@ -97,9 +107,38 @@ export default function HomePage() {
     return cancelSuggestionLoads
   }, [cancelSuggestionLoads, loadSuggestions])
 
-  useEffect(() => {
+  // 退房是所有路徑的共同終點：leavePending 直到 settle 才解除，期間建房/加入維持禁用
+  const doLeave = useCallback(() => {
     void import('../lib/api').then(m => m.leaveRooms()).finally(() => setLeavePending(false))
   }, [])
+
+  // mount 是所有繞過路徑的共同咽喉（瀏覽器上一頁、手機返回手勢、直接輸網址、
+  // 關分頁後重開）——在終點攔一次就全覆蓋，比在每個「回首頁」連結上打地鼠可靠
+  //（ADR-0007 2026-08-16 修訂，PR #17 Codex review 裁定）。
+  // 三條分支：查到房間先問（不退）／查到空就沒房可退（不打 /api/leave）／
+  // 查詢失敗一律不退，開保守 dialog 讓使用者自己決定——靜默退房是不可逆的。
+  useEffect(() => {
+    if (leaveDecided.current) return
+    leaveDecided.current = true
+    // RoomPage／HistoryPage 的離席確認會帶 leaveConfirmed 過來：使用者剛看過完整後果，
+    // 再問一次就是同一份 dialog 連跳兩張。但旗標是掛在 history entry 上的，重整會還原、
+    // 上一頁回到同一筆 entry 也會還原——不當場消耗掉，「退房→建新房→上一頁」就會靜默
+    // 退掉新房，正好從這裡替本攔截要防的繞過開後門。replace 掉才是真的只用一次。
+    if ((location.state as { leaveConfirmed?: boolean } | null)?.leaveConfirmed === true) {
+      nav(location.pathname, { replace: true, state: null })
+      doLeave()
+      return
+    }
+    void fetchLeaveRooms().then(rooms => {
+      if (rooms && rooms.length === 0) setLeavePending(false) // room_members 就是權威
+      else setLeaveTarget(rooms ? { kind: 'rooms', rooms } : { kind: 'unknown' })
+    })
+  }, [location, nav, doLeave])
+
+  function confirmLeave() {
+    setLeaveTarget(null)
+    doLeave()
+  }
 
   async function persistRoom(pos: DeparturePoint) {
     const creatorUid = await getUid()
@@ -164,7 +203,10 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen">
+    <>
+      {/* dialog 開著時整塊背景 inert：fixed 遮罩擋得住指標，對 tab 順序毫無作用——
+          沒有它鍵盤使用者可以 tab 到「建立房間」按 Enter，繞過還沒決定的退房（Codex P2） */}
+      <div className="min-h-screen" inert={!!leaveTarget}>
       <header className="mx-auto flex w-full max-w-md items-center justify-between p-4">
         <div className="flex items-center gap-2">
           <Logo className="h-8 w-8" />
@@ -172,7 +214,13 @@ export default function HomePage() {
         </div>
         <div className="flex items-center gap-2">
           <Link to="/history" className="btn btn-quiet min-h-11 px-3 text-sm">足跡</Link>
-          <button className="btn btn-quiet min-h-11 px-3 text-sm" onClick={() => supabase.auth.signOut()}>
+          {/* 登出走同一道 leavePending 閘門（比照建房/加入）：查房籍還在飛、或確認 dialog
+              開著時登出，App.tsx 的 auth listener 會卸載本頁，doLeave() 永遠不會執行，
+              伺服器端房籍留著——該使用者變成幽靈成員，條件與票繼續約束房間盤面。
+              閘門不會鎖死：fetchLeaveRooms 有 5 秒逾時，逾時也會開出 dialog，
+              兩顆按鈕都會讓 leavePending settle（roomMembership.test.ts 釘住那條出口） */}
+          <button className="btn btn-quiet min-h-11 px-3 text-sm" disabled={leavePending}
+            onClick={() => supabase.auth.signOut()}>
             <LogOut className="h-4 w-4" />
             登出
           </button>
@@ -288,6 +336,66 @@ export default function HomePage() {
           </p>
         )}
       </main>
-    </div>
+      </div>
+
+      {leaveTarget && (() => {
+        // leave 是全退（POST /api/leave 不挑房），所以每個房籍都要講
+        const rooms = leaveTarget.kind === 'rooms' ? leaveTarget.rooms : []
+        const multi = rooms.length > 1
+        // 「回到房間」是 button 不是 Link：React 的 autoFocus 只對表單控制項生效，
+        // 焦點必須落在安全那顆，不能落在「離開房間」上。
+        // 不給 onClose（Esc）：留在首頁又不決定會讓建房/加入永遠禁用，不是合法終態。
+        return LeaveConfirm({
+          title: '你還在房間裡',
+          actions: (
+            <>
+              {rooms.length === 1 && (
+                <button type="button" autoFocus className="btn btn-primary w-full"
+                  onClick={() => nav(`/room/${rooms[0].id}`)}>回到房間</button>
+              )}
+              {leaveTarget.kind === 'unknown' && (
+                <button type="button" autoFocus className="btn btn-quiet w-full"
+                  onClick={() => window.location.reload()}>重新整理再試</button>
+              )}
+              <button type="button" className="btn w-full bg-danger text-white"
+                onClick={confirmLeave}>離開房間</button>
+            </>
+          ),
+          children: (
+            <>
+              {leaveTarget.kind === 'unknown' && (
+                <p className="text-sm text-fg-muted">
+                  你可能還在房間裡，但房間現況查不到（連線可能不穩），離開後的影響無法確認
+                  ——不確定就先重新整理再試，確定要走再按離開。
+                </p>
+              )}
+              {rooms.length === 1 && (
+                <p className="text-sm text-fg-muted">
+                  你回到首頁了，但你還在房間 {rooms[0].code} 裡。離開後果如下：
+                </p>
+              )}
+              {multi && (
+                <p className="text-sm text-fg-muted">
+                  你回到首頁了，但你還在 {rooms.length} 個房間裡，離開會一次全部離開：
+                </p>
+              )}
+              {rooms.map((r, i) => (
+                <div key={r.id} className={multi ? 'space-y-2 rounded-xl border border-border p-3' : ''}>
+                  {multi && <p className="text-sm font-semibold">房間 {r.code}</p>}
+                  <ul className="list-disc space-y-1 pl-5 text-sm text-fg-muted">
+                    {leaveNotice(r.status, r.memberCount, r.code, r.isHost).map(p => <li key={p}>{p}</li>)}
+                  </ul>
+                  {/* 多房時回房入口掛在各房區塊內，不替使用者猜要回哪一間（比照 HistoryPage） */}
+                  {multi && (
+                    <button type="button" autoFocus={i === 0} className="btn btn-quiet w-full"
+                      onClick={() => nav(`/room/${r.id}`)}>回到 {r.code}</button>
+                  )}
+                </div>
+              ))}
+            </>
+          ),
+        })
+      })()}
+    </>
   )
 }

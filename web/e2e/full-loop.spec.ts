@@ -70,6 +70,25 @@ async function createAndJoinRoom(a: Page, b: Page) {
   await expect(b.getByText(expected)).toBeVisible() // meal_time 經 Realtime 同步到加入方
 }
 
+// Round 5（ADR-0007 2026-08-16 修訂）：回首頁不再靜默退房——HomePage mount 查到房籍
+// 就跳確認，按下「離開房間」才真的退。「加入」只由 leavePending 閘門控制（「建立房間」
+// 還要有出發點，加入方沒有），拿它當 settle 訊號對兩邊都成立。
+async function leaveViaHome(page: Page) {
+  await page.goto('/')
+  await page.getByRole('button', { name: '離開房間' }).click()
+  await expect(page.getByRole('button', { name: '加入', exact: true })).toBeEnabled()
+}
+
+// 焦點含納的唯一真實驗證點（inert 只有真瀏覽器實作，jsdom 沒有）：
+// 回傳「背景那顆按鈕能不能拿到焦點」——dialog 開著時必須是 false
+// 用 CSS locator 而非 getByRole：inert 子樹會從 a11y 樹消失，用 role 找會找不到而逾時
+function canFocusBackground(page: Page, label: string) {
+  return page.locator('button').filter({ hasText: label }).first().evaluate(btn => {
+    btn.focus()
+    return btn.ownerDocument.activeElement === btn
+  })
+}
+
 async function setConditions(page: Page, budget: number) {
   await page.getByRole('slider', { name: /每人預算上限/ }).fill(String(budget))
   await expect(page.getByText(`NT$${budget}`, { exact: true })).toBeVisible()
@@ -267,8 +286,7 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     // Round 4（ADR-0007）：B 回首頁即退房。eng review C6：settle 後 reload 再斷言
     // 《店名》全文——prompt 查詢必然發生在退房 commit 之後，且 fallback「上一餐」
     // 騙不過全文比對，這才是 0022 RLS 條款的 E2E 證據。
-    await b.goto('/')
-    await expect(b.getByRole('button', { name: '加入' })).toBeEnabled() // leave settle 才繼續
+    await leaveViaHome(b) // 確認後才退房、settle 才繼續
     await b.reload()
     await expect(b.getByText(`上次吃的《${winnerName}》滿意嗎？`)).toBeVisible()
     await b.getByRole('button', { name: '5 顆星' }).click()
@@ -295,8 +313,7 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await expect(a.getByText('已評分 4 顆星')).toBeVisible({ timeout: 15_000 })
 
     // Round 4 退房全鏈：A（末位成員）回首頁 → 房被刪 → 重訪房間 URL 得 not-found。
-    await a.goto('/')
-    await expect(a.getByRole('button', { name: '建立房間' })).toBeEnabled() // leave settle
+    await leaveViaHome(a)
     await a.goto(roomUrl)
     await expect(a.getByText('找不到房間，或你不是成員')).toBeVisible()
   } finally {
@@ -392,16 +409,24 @@ test('房主繼任（lobby 中房主回首頁）', async ({ browser }) => {
     // 繼任前：B 是普通成員——有 ready 鈕、無房主搜尋鈕
     await expect(b.getByRole('button', { name: '我準備好了' })).toBeVisible()
     await expect(b.getByRole('button', { name: '開始搜尋餐廳' })).toHaveCount(0)
-    // 房主回首頁＝退房
-    await a.goto('/')
-    await expect(a.getByRole('button', { name: '建立房間' })).toBeEnabled() // leave settle
+    // Round 5（Codex P2）：dialog 開著時背景整塊 inert——fixed 遮罩只擋得住指標，
+    // 擋不住 tab 順序。開啟前後各量一次，證明斷言不是恆為 false 的空話。
+    expect(await canFocusBackground(a, '開始搜尋餐廳')).toBe(true)
+    await a.getByRole('link', { name: '回首頁' }).click()
+    await expect(a.getByRole('dialog')).toBeVisible() // 房籍重查是非同步的，等它開
+    expect(await canFocusBackground(a, '開始搜尋餐廳')).toBe(false)
+    await a.getByRole('button', { name: '取消' }).click()
+    await expect(a.getByRole('dialog')).toHaveCount(0)
+    expect(await canFocusBackground(a, '開始搜尋餐廳')).toBe(true)
+
+    // 房主回首頁＝退房（Round 5 起須確認）
+    await leaveViaHome(a)
     // B 繼任：房主控制項浮現、成員數 2→1、ready 鈕消失（ConditionsForm isHost 分支）
     await expect(b.getByRole('button', { name: '開始搜尋餐廳' })).toBeVisible({ timeout: 10_000 })
     await expect(b.getByText('成員（1）')).toBeVisible()
     await expect(b.getByRole('button', { name: '我準備好了' })).toHaveCount(0)
     // 末位退房收尾（eng review C7）：不留永久房污染本地 DB，順帶再走一次末位刪房鏈
-    await b.goto('/')
-    await expect(b.getByRole('button', { name: '加入' })).toBeEnabled() // leave settle，房已刪
+    await leaveViaHome(b) // settle 後房已刪
   } finally {
     await ctxA.close()
     await ctxB.close()

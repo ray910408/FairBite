@@ -116,3 +116,35 @@ feat/phase-1 全分支 final review 的 DEFER-P2 批次。前三項優先（安�
 16. ~~搜尋鈕無 in-flight guard（可連按）~~ — 已解決：`RoomPage.tsx` 的 `searchInFlight` ref 擋連按（7e322c4），伺服器端另有 per-room single-flight（`TestSearchSingleFlightPerRoom`），E2E 斷言快速連點只送一次 request。
 17. ~~首次掛載期的暫時性讀取失敗會閃「找不到房間」頁 — 應三態化（loading / notFound / ok）~~ — 已解決：`useRoom.ts` 回傳 `notFound`，`RoomPage.tsx:53` 僅在 `notFound` 為真時顯示該頁。
 18. `Wheel` 的 `!s` 分支是 dead-end（實務不可達）。
+
+## /qa-only 線上站 QA + PR #17 review 殘留（2026-08-16）
+
+QA 對象 https://ray910408.github.io/FairBite/#/auth（headless，test 帳號）。ISSUE 編號對應 `.gstack/qa-reports/qa-report-fairbite-2026-08-16.md`（該目錄被 .gitignore 蓋住，只在本機）。PR #17 已修 ISSUE-001（回首頁離席確認）與 ISSUE-003（星排視覺）。
+
+- **ISSUE-002（High，未修）預設條件產生退化結果集** — 全預設（NT$300 上限／800m／步行）在台北 101 搜尋，15 家排除 14 家、全部理由都是「超過 NT$300」，只剩 1 家候選、抽中機率 100%。轉盤只有一個選項等於產品主張不成立，且 App 沒有任何「候選過少、建議放寬條件」的提示就讓使用者走到投票與轉盤。需要產品決策：調預設值、依商圈動態調整、或加候選過少的引導。
+
+- **ISSUE-005（Low）足跡頁把 3/5 星畫成 3 顆滿星** — `HistoryPage.tsx` 的清單列只渲染 N 顆實心星、沒有空心星做 5 星刻度，3 分讀起來像滿分。摘要區的「平均 3.0 ★」正確，只有列表圖示缺刻度。`icons.tsx` 的 `Star` 已有 `filled` prop（PR #17 加的），補刻度是小改。
+
+- **ISSUE-006（Low，間歇）冷啟動首次登入 `dining_history?rating=lte.2` 回 401** — 全新瀏覽器 process 首次登入時觀察到一次（該次首頁 HTML 載入 7489ms），相鄰的同表查詢是 200。像是這支請求在 token 掛上去前就送出的競態；畫面無提示，只有 console 一行 401，影響是「避開不喜歡的菜系」訊號被靜默丟掉。清 localStorage 重登／登出重登／重整各測一次都無法重現。
+
+- **ISSUE-007（Low）邀請碼錯誤橫幅不會消失** — 「房間不存在或已開始」在首頁一直停留到換路由，中間展開地圖、搜尋地點、切用餐時間、觸發另一則驗證訊息期間都還在，跟當下操作已無關。
+
+- **ISSUE-008（Low）邀請碼欄位無長度／格式驗證** — 實際碼是 12 碼，輸入 6 碼仍會送出 `rpc/join_room`。前端可先擋掉省一次往返。
+
+- **ISSUE-009（Low）登入切註冊分頁會帶走密碼值** — Email 帶過去合理，密碼帶過去容易讓使用者在沒察覺下用一組錯的密碼建帳號。錯誤訊息本身有正確清掉。
+
+### PR #17 明確延後的項目
+
+- **`useRoom` 的 `room` 過期快照本體未修** — `useRoom.ts` 只在 `r.data` 為真時 `setRoom`，`rooms` 查詢失敗會保留舊物件、只亮 `loadError`。離席路徑已改成開 dialog 當場重查、不再讀它，但其他拿 `room.status` 做判斷的地方仍讀得到過期值。目前那些都是伺服器端會驗的寫入（會回明確錯誤而非靜默損壞），風險低但洞還在。若日後有本地端的不可逆判斷要讀 `room.status`，先補 `roomStale` 或改重查。
+
+- **離席 dialog 沒有完整 focus trap** — 已用 `inert` 讓背景不可聚焦／不可觸發，但 Tab 到瀏覽器網址列再回來會落在 dialog 外。完整 top-layer 語意要改用原生 `<dialog showModal>`，代價是重做遮罩與動畫。
+
+- **`room_members` 查詢沒有 `ORDER BY`** — 多房籍時 dialog 的房間顯示順序跟著 PostgREST 回傳順序走（同房的列仍由 `Map` 正確合併，只有多房的排列不保證）。要固定順序加一個 `.order('room_id')`。
+
+- **`leaveConfirmed` 旗標路徑無 E2E** — 單元測試已覆蓋「消耗旗標」與「回到同一筆 entry 不重用」，但沒有真瀏覽器走查（需新增一條「房內按確認→首頁」）。
+
+- **E2E 本輪未實跑** — PR #17 動過 `full-loop.spec.ts` 四處以上（`leaveViaHome` helper、RoomPage dialog 改非同步開啟需等 visible、`inert` 焦點斷言），而 `inert` 只有真瀏覽器有實作。merge 前需跑一次 `npm --prefix web run e2e`。
+
+- **離席 dialog 的房籍清單在跨分頁競態下會過期**（PR #17 Codex review 2026-08-16，評估後不修）— dialog 開著時另一個分頁建房／加入，清單不會包含新房籍，但按下確認送出的 `/api/leave` 是以執行當下的房籍為準、全退，於是新房被靜默退掉且後果從沒顯示過。修法是「破壞性點擊當下重查，集合有變就要求再確認一次」。
+  不修的理由：ADR-0007 Consequences 已裁定「多分頁開首頁會跳出離席確認；個人規模接受，不另做分頁互斥」，這條要求的正是分頁互斥。且它不是本 PR 造成的回歸——改動前是 mount 直接靜默全退、連 dialog 都沒有，現在只是清單可能過期，嚴格來說是變好而非變差。
+  若日後改變「個人規模」的假設（多人常態同時開多分頁），連同 ADR 第 24 行一起重新裁定。

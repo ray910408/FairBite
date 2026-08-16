@@ -108,6 +108,6 @@ export function useRoom(roomId: string) {
   const ups = upCounts(votes)
   const vetoesRemaining = VETO_QUOTA - myVetoCount(votes, myUserId)
 
-  return { room, members, candidates, draw, myUserId, connected, notFound, loadError, refetch,
-    toggleVote, myVote, ups, vetoesRemaining }
+  return { room, members, candidates, draw, myUserId, connected, notFound, loadError,
+    refetch, toggleVote, myVote, ups, vetoesRemaining }
 }
