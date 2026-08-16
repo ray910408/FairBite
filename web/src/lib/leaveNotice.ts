@@ -29,6 +29,13 @@ export function leaveNotice(
       '房間已經開始，離開後無法用邀請碼重新加入，只能另開新房',
       '房間已定案，抽中的結果之後只能在「足跡」查看']
   }
+  // candidates 階段還沒有票（贊成／否決鈕只在 voting 出現，RoomPage 的 CandidateList
+  // 只有 voting 才拿到 voting prop）；離席在這裡是條件退出重算（ADR-0007、leave.go 的 rescore）
+  if (status === 'candidates') {
+    return ['你的條件與偏好會退出重算，候選名單會重新分割',
+      deletePoint,
+      '房間已經開始，離開後無法用邀請碼重新加入，只能另開新房']
+  }
   return ['你的投票會即刻作廢，候選盤面會重新計算',
     deletePoint,
     '房間已經開始，離開後無法用邀請碼重新加入，只能另開新房']

@@ -17,6 +17,14 @@ describe('leaveNotice', () => {
     expect(points.join('\n')).toContain(`之後${REJOIN}`)
   })
 
+  // candidates 階段不可能有票（贊成／否決鈕只在 voting 出現），講「投票作廢」是假的
+  it('candidates：講條件退出重算，完全不提投票', () => {
+    const points = leaveNotice('candidates', 3, 'ABC123')
+    expect(points.join('\n')).not.toContain('投票')
+    expect(points[0]).toBe('你的條件與偏好會退出重算，候選名單會重新分割')
+    expect(points.join('\n')).toContain('無法用邀請碼重新加入')
+  })
+
   it('voting：票即刻作廢並重算，且沒有重加入的路', () => {
     const points = leaveNotice('voting', 3, 'ABC123')
     expect(points[0]).toBe('你的投票會即刻作廢，候選盤面會重新計算')
