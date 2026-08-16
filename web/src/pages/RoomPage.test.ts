@@ -331,7 +331,8 @@ describe('回首頁離席確認', () => {
   const LEAVE_STATE = 9 // useState 呼叫順序中的 leaveOpen；新 state 只能接在它後面
 
   // 末位退房無條件刪房（server/leave.go）——文案依人數分歧，預設多人房
-  function mount(status: string, leaveOpen: boolean, memberCount = 2) {
+  function mount(status: string, leaveOpen: boolean, memberCount = 2,
+    overrides: Record<string, unknown> = {}) {
     mocks.stateIndex = 0
     mocks.stateValues = [false, '', '', false, false, '', '', false, false, leaveOpen]
     mocks.stateSetters = []
@@ -345,9 +346,11 @@ describe('回首頁離席確認', () => {
         cuisines: [], dietary: [], max_distance_m: 1000, transport: 'walking', ready: false,
         profiles: { display_name: i === 0 ? '房主' : `成員${i}` },
       })),
+      membersStale: false,
       candidates: [], draw: null, myUserId: 'host', connected: true,
       notFound: false, loadError: false, refetch: vi.fn(),
       toggleVote: vi.fn(), myVote: () => null, ups: new Map(), vetoesRemaining: 2,
+      ...overrides,
     })
     return renderRoomPage()
   }
@@ -432,5 +435,48 @@ describe('回首頁離席確認', () => {
       expect(alone).not.toContain('你若是最後一位成員')
       expect(alone).not.toContain('可用邀請碼重新加入')
     }
+  })
+
+  // 單人房刪完房就 return，走不到 rescoreRoom（server/leave.go）——不得承諾重算
+  it('單人 candidates／voting 不承諾重新分割或重新計算', async () => {
+    const candidates = textContent(await mount('candidates', true, 1))
+    expect(candidates).not.toContain('重新分割')
+    expect(candidates).not.toContain('退出重算')
+    expect(candidates).toContain('你是房間裡唯一的人，離開後這個房間會直接刪除')
+
+    const voting = textContent(await mount('voting', true, 1))
+    expect(voting).not.toContain('重新計算')
+    expect(voting).not.toContain('盤面')
+    expect(voting).toContain('你的票和整份候選名單會跟著刪除')
+  })
+
+  // 房主退出＝移交給最早加入者（ADR-0007、leave.go 的 update rooms set host_id）
+  it('多人房的房主看得到移交敘述，一般成員看不到', async () => {
+    const host = textContent(await mount('lobby', true, 2))
+    expect(host).toContain('你是房主：離開後房主身分會移交給其餘成員中最早加入的人')
+    expect(host).toContain('你重新加入也不會拿回房主權限')
+
+    const member = textContent(await mount('lobby', true, 2, { myUserId: 'user-1' }))
+    expect(member).not.toContain('移交')
+  })
+
+  it('單人房的房主不講移交（沒有人可以繼任）', async () => {
+    expect(textContent(await mount('lobby', true, 1))).not.toContain('移交')
+  })
+
+  // uid 還沒載回來時 isHost 會恆為 false，那是猜的——退回條件句
+  it('myUserId 未載回時用「你若是房主」的條件句', async () => {
+    const text = textContent(await mount('lobby', true, 2, { myUserId: '' }))
+    expect(text).toContain('你若是房主，房主身分會移交給')
+  })
+
+  // useRoom 成員查詢失敗時 members 停在舊值（可能是非空的過期快照，membersStale）——
+  // 期間有人加入／離開，拿它講「你是唯一的人／房間會被刪除」就是錯的
+  it('membersStale 時即使 members 非空也退回不可判定的條件句', async () => {
+    const stale = textContent(await mount('lobby', true, 1, { membersStale: true }))
+    expect(stale).not.toContain('你是房間裡唯一的人')
+    expect(stale).not.toContain('邀請碼 ABC123 會跟著失效')
+    expect(stale).toContain('你若是最後一位成員，房間會直接被刪除')
+    expect(stale).toContain('只要房間還在（你不是最後一位），之後仍可用邀請碼重新加入')
   })
 })

@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { formatDay, groupByMonth, knownCuisineLabels, summarize, trendRatings, type FootprintRow } from '../lib/footprint'
 import { leaveNotice } from '../lib/leaveNotice'
 import type { Room } from '../lib/types'
+import { getUid } from '../lib/uid'
 import { Logo, Spinner, Star } from '../components/icons'
 import StarRow from '../components/StarRow'
 import TrendChart from '../components/TrendChart'
@@ -16,27 +17,36 @@ type LoadState =
   | { phase: 'ready'; rows: FootprintRow[]; total: number }
 
 // 足跡頁也是「房內可達頁」：回首頁＝離席（ADR-0007），離開前要問
-type LeaveRoom = { id: string; code: string; status: Room['status']; memberCount: number }
+// isHost = null：拿不到 uid，不確定是不是房主（leaveNotice 會退回條件句，不猜）
+type LeaveRoom = {
+  id: string; code: string; status: Room['status']; memberCount: number; isHost: boolean | null
+}
 // 查詢失敗時寧可講保守的空話，也不拿過期資料講可能已不成立的後果
 type LeaveDialog = { kind: 'rooms'; rooms: LeaveRoom[] } | { kind: 'unknown' }
 
 // 一次查回「我所屬房間」的全部成員列（members_select RLS = is_room_member(room_id)），
-// 依 room_id 分組各自算人數——leave 是全退，每個房都要算。null = 查詢失敗（不可判定）
+// 依 room_id 分組各自算人數——leave 是全退，每個房都要算。null = 查詢失敗（不可判定）。
+// host_id 一起帶回來比對 uid：房主退出會移交（leave.go），文案必須講。
 async function fetchLeaveRooms(): Promise<LeaveRoom[] | null> {
   try {
-    const { data, error } = await supabase.from('room_members').select('room_id, rooms(code, status)')
+    const [{ data, error }, uid] = await Promise.all([
+      supabase.from('room_members').select('room_id, rooms(code, status, host_id)'),
+      getUid().catch(() => null), // uid 掛掉只讓房主敘述退回條件句，不該連整份後果都放棄
+    ])
     if (error) return null
     // rooms 是 to-one 嵌入（room_members.room_id FK），實際回物件；supabase-js 推不出
     // 基數而給成陣列，比照本檔 dining_history 的嵌入走 unknown 轉型
     const rows = (data ?? []) as unknown as
-      { room_id: string; rooms: { code: string; status: Room['status'] } | null }[]
+      { room_id: string; rooms: { code: string; status: Room['status']; host_id: string } | null }[]
     const byRoom = new Map<string, LeaveRoom>()
     for (const r of rows) {
       if (!r.rooms) continue
       const hit = byRoom.get(r.room_id)
       if (hit) hit.memberCount++
-      else byRoom.set(r.room_id,
-        { id: r.room_id, code: r.rooms.code, status: r.rooms.status, memberCount: 1 })
+      else byRoom.set(r.room_id, {
+        id: r.room_id, code: r.rooms.code, status: r.rooms.status, memberCount: 1,
+        isHost: uid ? r.rooms.host_id === uid : null,
+      })
     }
     return [...byRoom.values()]
   } catch {
@@ -53,6 +63,9 @@ export default function HistoryPage() {
   const expandedLiRef = useRef<HTMLLIElement | null>(null)
   const leaveTriggerRef = useRef<HTMLAnchorElement | null>(null)
   const requestGen = useRef(0)
+  // 房籍查詢自己的世代（與 load 分開：兩者互不作廢，否則按一次「重試」就會讓
+  // in-flight 的離席查詢靜默消失，使用者按「回首頁」等於沒反應）
+  const leaveGen = useRef(0)
   const nav = useNavigate()
 
   const load = useCallback(async () => {
@@ -84,8 +97,13 @@ export default function HistoryPage() {
   async function askLeave(e: React.MouseEvent<HTMLAnchorElement>) {
     e.preventDefault()
     leaveTriggerRef.current = e.currentTarget // 兩個入口共用一個 dialog，記住是誰開的
+    // 舊回應作廢（load 同款模式）：aria-busy 擋不住點擊，兩次點擊之間房籍還可能在別的
+    // 分頁被改。第一次查到「沒房」若晚於第二次回來，就會 nav('/') 跳過剛開好的 dialog，
+    // 把新房籍靜默退掉——只有最後一次點擊的回應能生效。
+    const request = ++leaveGen.current
     setLeaveChecking(true)
     const rooms = await fetchLeaveRooms()
+    if (request !== leaveGen.current) return // 更新的一次在跑，checking 由它負責關掉
     setLeaveChecking(false)
     if (rooms && rooms.length === 0) { // 真的沒房可離：沒有後果可講，照原本的導覽走
       nav('/')
@@ -284,37 +302,41 @@ export default function HistoryPage() {
           // Esc 掛外層：焦點由 autoFocus 進到「取消」，keydown 從 dialog 內冒泡上來
           <div className="fixed inset-0 z-30 flex items-center justify-center bg-fg/40 p-3"
             onKeyDown={e => { if (e.key === 'Escape') closeLeave() }}>
+            {/* 多房籍在矮視窗（320x568）會長到超出畫面，垂直置中則上下一起溢出、
+                「取消」構不到：卡片限高在視窗內，只讓中段捲動，標題與按鈕永遠在位 */}
             <div role="dialog" aria-modal="true" aria-labelledby="leave-title"
-              className="card w-full max-w-sm animate-rise space-y-3">
-              <h2 id="leave-title" className="text-base font-semibold">回首頁會離開房間</h2>
-              {leaveDialog.kind === 'unknown' && (
-                <p className="text-sm text-fg-muted">
-                  你還在房間裡，回首頁就會離開。房間現況查不到（連線可能不穩），
-                  離開後的影響無法確認——不確定就先取消，稍後再試。
-                </p>
-              )}
-              {rooms.length === 1 && (
-                <p className="text-sm text-fg-muted">你目前還在房間 {rooms[0].code} 裡：</p>
-              )}
-              {multi && (
-                <p className="text-sm text-fg-muted">
-                  你目前在 {rooms.length} 個房間裡，回首頁會一次全部離開：
-                </p>
-              )}
-              {rooms.map(r => (
-                <div key={r.id} className={multi ? 'space-y-2 rounded-xl border border-border p-3' : ''}>
-                  {multi && <p className="text-sm font-semibold">房間 {r.code}</p>}
-                  <ul className="list-disc space-y-1 pl-5 text-sm text-fg-muted">
-                    {leaveNotice(r.status, r.memberCount, r.code).map(p => <li key={p}>{p}</li>)}
-                  </ul>
-                  {multi && (
-                    <Link to={`/room/${r.id}`} className="btn btn-quiet w-full">回到 {r.code}</Link>
-                  )}
-                </div>
-              ))}
+              className="card flex max-h-full w-full max-w-sm animate-rise flex-col space-y-3">
+              <h2 id="leave-title" className="shrink-0 text-base font-semibold">回首頁會離開房間</h2>
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+                {leaveDialog.kind === 'unknown' && (
+                  <p className="text-sm text-fg-muted">
+                    你還在房間裡，回首頁就會離開。房間現況查不到（連線可能不穩），
+                    離開後的影響無法確認——不確定就先取消，稍後再試。
+                  </p>
+                )}
+                {rooms.length === 1 && (
+                  <p className="text-sm text-fg-muted">你目前還在房間 {rooms[0].code} 裡：</p>
+                )}
+                {multi && (
+                  <p className="text-sm text-fg-muted">
+                    你目前在 {rooms.length} 個房間裡，回首頁會一次全部離開：
+                  </p>
+                )}
+                {rooms.map(r => (
+                  <div key={r.id} className={multi ? 'space-y-2 rounded-xl border border-border p-3' : ''}>
+                    {multi && <p className="text-sm font-semibold">房間 {r.code}</p>}
+                    <ul className="list-disc space-y-1 pl-5 text-sm text-fg-muted">
+                      {leaveNotice(r.status, r.memberCount, r.code, r.isHost).map(p => <li key={p}>{p}</li>)}
+                    </ul>
+                    {multi && (
+                      <Link to={`/room/${r.id}`} className="btn btn-quiet w-full">回到 {r.code}</Link>
+                    )}
+                  </div>
+                ))}
+              </div>
               {/* 按鈕在 320px 一律直排。「回到房間」補上 ADR-0007 說的不經首頁入口；
                   多房時改掛在各房區塊內，不替使用者猜要回哪一間 */}
-              <div className="flex flex-col gap-2">
+              <div className="flex shrink-0 flex-col gap-2">
                 {rooms.length === 1 && (
                   <Link to={`/room/${rooms[0].id}`} className="btn btn-primary w-full">回到房間</Link>
                 )}

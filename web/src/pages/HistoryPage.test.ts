@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   from: vi.fn(),
   navigate: vi.fn(),
   members: {} as { data?: unknown; error?: unknown },
+  getUid: vi.fn(),
 }))
 
 vi.mock('react', async importOriginal => {
@@ -32,6 +33,7 @@ vi.mock('react', async importOriginal => {
 
 vi.mock('react-router-dom', () => ({ Link: 'a', useNavigate: () => mocks.navigate }))
 vi.mock('../lib/supabase', () => ({ supabase: { from: mocks.from } }))
+vi.mock('../lib/uid', () => ({ getUid: mocks.getUid }))
 
 type NodeLike = { type?: unknown; props?: Record<string, unknown> }
 
@@ -62,8 +64,9 @@ const byText = (type: string, label: string) =>
 type FakeEvent = { preventDefault: () => void; currentTarget: unknown }
 const asHandler = (v: unknown) => v as ((e: FakeEvent) => Promise<void>) | undefined
 
-const room = (id: string, code: string, status: string) =>
-  ({ room_id: id, rooms: { code, status } })
+// host_id 預設別人：房主移交敘述有自己的測試，其餘案例不受它干擾
+const room = (id: string, code: string, status: string, hostId = 'someone-else') =>
+  ({ room_id: id, rooms: { code, status, host_id: hostId } })
 
 // state 索引：0 state / 1 expandedId / 2 leaveDialog / 3 leaveChecking
 const DIALOG = 2
@@ -89,6 +92,7 @@ async function clickHome(tree: unknown, label = '回首頁') {
 beforeEach(() => {
   mocks.navigate.mockReset()
   mocks.members = { data: [], error: null }
+  mocks.getUid.mockReset().mockResolvedValue('me')
   mocks.from.mockReset().mockImplementation((table: string) => ({
     select: () => table === 'room_members'
       ? Promise.resolve(mocks.members)
@@ -108,7 +112,7 @@ describe('足跡頁回首頁離席確認', () => {
     expect(mocks.navigate).not.toHaveBeenCalled()
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
-      rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 1 }],
+      rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 1, isHost: false }],
     })
   })
 
@@ -122,7 +126,7 @@ describe('足跡頁回首頁離席確認', () => {
     await clickHome(tree)
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
-      rooms: [{ id: 'room-1', code: 'ABC123', status: 'candidates', memberCount: 2 }],
+      rooms: [{ id: 'room-1', code: 'ABC123', status: 'candidates', memberCount: 2, isHost: false }],
     })
     expect(mocks.stateSetters[CHECKING]).toHaveBeenCalledWith(true)
     expect(mocks.stateSetters[CHECKING]).toHaveBeenCalledWith(false)
@@ -161,7 +165,7 @@ describe('足跡頁回首頁離席確認', () => {
 
   const oneRoom = {
     kind: 'rooms',
-    rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 2 }],
+    rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 2, isHost: false }],
   }
 
   it('dialog 有名稱、有回到房間的入口，取消與 Esc 留在足跡頁', async () => {
@@ -200,8 +204,8 @@ describe('足跡頁回首頁離席確認', () => {
     const tree = await render({
       kind: 'rooms',
       rooms: [
-        { id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1 },
-        { id: 'room-2', code: 'BBB222', status: 'decided', memberCount: 3 },
+        { id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1, isHost: true },
+        { id: 'room-2', code: 'BBB222', status: 'decided', memberCount: 3, isHost: true },
       ],
     })
     const text = textContent(tree)
@@ -210,10 +214,37 @@ describe('足跡頁回首頁離席確認', () => {
     expect(text).toContain('房間 BBB222')
     expect(text).toContain('邀請碼 AAA111 會跟著失效') // lobby 單人
     expect(text).toContain('抽中的結果之後只能在「足跡」查看') // decided 多人
+    // 房主移交只講在有人可以繼任的那一間（AAA111 單人房是直接刪房）
+    expect(text.split('房主身分會移交給').length - 1).toBe(1)
     expect(findNode(tree, byText('a', '回到 AAA111'))?.props?.to).toBe('/room/room-1')
     expect(findNode(tree, byText('a', '回到 BBB222'))?.props?.to).toBe('/room/room-2')
     // 不替使用者猜要回哪一間
     expect(findNode(tree, byText('a', '回到房間'))).toBeUndefined()
+  })
+
+  // 多房籍在矮視窗（320x568）會長到超出畫面；垂直置中時上下一起溢出，
+  // 「取消」和「仍要回首頁」會變成點不到
+  it('dialog 限高在視窗內，只有中段捲動，控制項不會被捲走', async () => {
+    const tree = await render({
+      kind: 'rooms',
+      rooms: ['AAA111', 'BBB222', 'CCC333'].map((code, i) =>
+        ({ id: `room-${i}`, code, status: 'voting', memberCount: 3, isHost: true })),
+    })
+    const dialog = findNode(tree, el => el.props?.role === 'dialog')
+    const dialogClass = String(dialog?.props?.className ?? '')
+    expect(dialogClass).toContain('max-h-full') // 卡片不得長過視窗
+    expect(dialogClass).toContain('flex-col')
+
+    const scroller = findNode(dialog,
+      el => String(el.props?.className ?? '').includes('overflow-y-auto'))
+    expect(scroller).toBeDefined()
+    expect(String(scroller?.props?.className)).toContain('min-h-0') // 沒有它 flex 不肯縮
+    expect(textContent(scroller)).toContain('房間 CCC333') // 房間清單在捲動區裡
+    // 控制項在捲動區外：內容再長也構得到
+    expect(findNode(scroller, byText('button', '取消'))).toBeUndefined()
+    expect(findNode(scroller, byText('a', '仍要回首頁'))).toBeUndefined()
+    expect(findNode(tree, byText('button', '取消'))).toBeDefined()
+    expect(findNode(tree, byText('a', '仍要回首頁'))?.props?.to).toBe('/')
   })
 })
 
@@ -228,7 +259,7 @@ describe('足跡頁房籍查詢', () => {
     expect(mocks.navigate).not.toHaveBeenCalled()
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
-      rooms: [{ id: 'room-9', code: 'NEW999', status: 'lobby', memberCount: 1 }],
+      rooms: [{ id: 'room-9', code: 'NEW999', status: 'lobby', memberCount: 1, isHost: false }],
     })
   })
 
@@ -253,9 +284,84 @@ describe('足跡頁房籍查詢', () => {
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
       rooms: [
-        { id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1 },
-        { id: 'room-2', code: 'BBB222', status: 'decided', memberCount: 2 },
+        { id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1, isHost: false },
+        { id: 'room-2', code: 'BBB222', status: 'decided', memberCount: 2, isHost: false },
       ],
     })
+  })
+
+  // 房主退出會移交（ADR-0007、leave.go）：host_id 要一起查回來跟自己的 uid 比對
+  it('查回 host_id 比對 uid，房主房標成 isHost', async () => {
+    mocks.members = {
+      data: [room('room-1', 'AAA111', 'lobby', 'me'), room('room-2', 'BBB222', 'lobby')],
+      error: null,
+    }
+    const tree = await render()
+    await clickHome(tree)
+    expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
+      kind: 'rooms',
+      rooms: [
+        { id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1, isHost: true },
+        { id: 'room-2', code: 'BBB222', status: 'lobby', memberCount: 1, isHost: false },
+      ],
+    })
+  })
+
+  // 拿不到 uid 就不知道自己是不是房主——不猜，交給 leaveNotice 用條件句
+  it('取不到 uid 時 isHost = null（不猜）', async () => {
+    mocks.getUid.mockResolvedValue(null)
+    mocks.members = { data: [room('room-1', 'AAA111', 'lobby', 'me')], error: null }
+    const tree = await render()
+    await clickHome(tree)
+    expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
+      kind: 'rooms',
+      rooms: [{ id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1, isHost: null }],
+    })
+  })
+
+  it('getUid 拋錯只讓 isHost 退回 null，不整份放棄成 unknown', async () => {
+    mocks.getUid.mockRejectedValue(new Error('no session'))
+    mocks.members = { data: [room('room-1', 'AAA111', 'lobby', 'me')], error: null }
+    const tree = await render()
+    await clickHome(tree)
+    expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
+      kind: 'rooms',
+      rooms: [{ id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1, isHost: null }],
+    })
+  })
+})
+
+// aria-busy 擋不住點擊：兩次點擊之間房籍會變（多分頁是 ADR-0007 承認的情境），
+// 第一次的舊回應若晚到就會蓋掉第二次的結果
+describe('足跡頁離席查詢的世代守衛', () => {
+  it('晚到的舊「沒有房間」回應不得跳過剛開好的 dialog', async () => {
+    let releaseFirst!: () => void
+    const first = new Promise(resolve => {
+      releaseFirst = () => resolve({ data: [], error: null }) // 第一次點擊時真的沒房
+    })
+    // 第二次點擊：另一個分頁剛加入房，這次的查詢先回來
+    const second = Promise.resolve({ data: [room('room-9', 'NEW999', 'lobby')], error: null })
+    const queue: unknown[] = [first, second]
+    mocks.from.mockImplementation((table: string) => ({
+      select: () => table === 'room_members'
+        ? (queue.shift() ?? second)
+        : { order: () => ({ limit: () => Promise.resolve({ data: [], error: null, count: 0 }) }) },
+    }))
+
+    const tree = await render()
+    const firstClick = clickHome(tree)
+    const secondClick = clickHome(tree)
+    await secondClick
+    expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
+      kind: 'rooms',
+      rooms: [{ id: 'room-9', code: 'NEW999', status: 'lobby', memberCount: 1, isHost: false }],
+    })
+
+    releaseFirst() // 舊回應姍姍來遲
+    await firstClick
+    expect(mocks.navigate).not.toHaveBeenCalled() // 沒有繞過 dialog 直接退房
+    expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledTimes(1)
+    // 兩次點擊各開一次 busy，只有最後一次的回應負責關掉
+    expect(mocks.stateSetters[CHECKING].mock.calls).toEqual([[true], [true], [false]])
   })
 })

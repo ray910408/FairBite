@@ -46,8 +46,8 @@ function Stepper({ status }: { status: Room['status'] }) {
 
 export default function RoomPage() {
   const { id = '' } = useParams()
-  const { room, members, candidates, draw, myUserId, connected, notFound, loadError, refetch,
-    toggleVote, myVote, ups, vetoesRemaining } = useRoom(id)
+  const { room, members, membersStale, candidates, draw, myUserId, connected, notFound, loadError,
+    refetch, toggleVote, myVote, ups, vetoesRemaining } = useRoom(id)
   const [spun, setSpun] = useState(false)
   const [actionError, setActionError] = useState('')
   const [actionWarning, setActionWarning] = useState('')
@@ -151,9 +151,12 @@ export default function RoomPage() {
     leaveTriggerRef.current?.focus() // 觸發元素不隨 dialog 卸載，直接還原焦點
   }
 
-  // members 載入失敗時 useRoom 不覆寫、停在初始 []（useRoom.ts 的 if (!m.error)），房間卻照常
-  // render——查詢成功時自己一定在列裡，所以 0 只可能是「沒載成功」，傳 null 讓文案退回條件句
-  const leavePoints = leaveNotice(room.status, members.length || null, room.code)
+  // 人數只有「這一輪成員查詢成功」才算數：查失敗時 members 會停在上一輪的舊值
+  //（可能是非空的過期快照，useRoom 的 membersStale），空陣列則代表從沒載成功
+  //（查詢成功時自己一定在列裡）——兩種都傳 null 讓文案退回條件句。
+  // myUserId 未載回（''）時 isHost 會恆為 false，那是猜的，一樣傳 null。
+  const memberCount = membersStale ? null : members.length || null
+  const leavePoints = leaveNotice(room.status, memberCount, room.code, myUserId ? isHost : null)
 
   return (
     <div className="min-h-screen">
