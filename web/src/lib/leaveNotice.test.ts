@@ -1,0 +1,39 @@
+import { describe, expect, it } from 'vitest'
+import { leaveNotice } from './leaveNotice'
+
+const REJOIN = '可用邀請碼重新加入' // 只有「還有別人的 lobby 房」能這樣承諾
+
+describe('leaveNotice', () => {
+  it('lobby 單人：房間必被刪、邀請碼必失效，不承諾可重加入', () => {
+    const points = leaveNotice('lobby', 1, 'ABC123')
+    expect(points.join('\n')).not.toContain(REJOIN)
+    expect(points[0]).toBe('你是房間裡唯一的人，離開後這個房間會直接刪除')
+    expect(points[1]).toContain('邀請碼 ABC123 會跟著失效')
+  })
+
+  it('lobby 多人：刪房是條件句，且承諾之後可用邀請碼重新加入', () => {
+    const points = leaveNotice('lobby', 3, 'ABC123')
+    expect(points).toContain('你若是最後一位成員，房間會直接被刪除')
+    expect(points.join('\n')).toContain(`之後${REJOIN}`)
+  })
+
+  it('voting：票即刻作廢並重算，且沒有重加入的路', () => {
+    const points = leaveNotice('voting', 3, 'ABC123')
+    expect(points[0]).toBe('你的投票會即刻作廢，候選盤面會重新計算')
+    expect(points.join('\n')).toContain('無法用邀請碼重新加入')
+    expect(points.join('\n')).not.toContain(`之後${REJOIN}`)
+  })
+
+  it('decided：多一句抽中結果只能在足跡查看', () => {
+    const points = leaveNotice('decided', 3, 'ABC123')
+    expect(points).toContain('房間已定案，抽中的結果之後只能在「足跡」查看')
+    expect(points.join('\n')).not.toContain(`之後${REJOIN}`)
+  })
+
+  // 載入時序可能短暫回 0 列：落到保守側（不承諾），不得反過來給錯的承諾
+  it('memberCount 0 視同單人', () => {
+    expect(leaveNotice('lobby', 0, 'ABC123').join('\n')).not.toContain(REJOIN)
+    expect(leaveNotice('decided', 0, 'ABC123')[1])
+      .toBe('你是房間裡唯一的人，離開後這個房間會直接刪除')
+  })
+})

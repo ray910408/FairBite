@@ -4,6 +4,7 @@ import { useRoom } from '../hooks/useRoom'
 import { startVoting } from '../lib/api'
 import { isVetoDeadEnd } from '../lib/deadEnd'
 import { EXPLORATION_OPTIONS } from '../lib/labels'
+import { leaveNotice } from '../lib/leaveNotice'
 import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
 import { isGoogleSourced } from '../lib/placesSource'
 import { supabase } from '../lib/supabase'
@@ -57,6 +58,9 @@ export default function RoomPage() {
   // ref 管互斥（同步）、state 管 loading 畫面（非同步）——分工見 e2e 快速連點斷言
   const [searching, setSearching] = useState(false)
   const [startingVoting, setStartingVoting] = useState(false)
+  // 退房確認（ADR-0007：回首頁＝離席）——新 state 一律接在最後，RoomPage.test.ts 依呼叫順序 mock useState
+  const [leaveOpen, setLeaveOpen] = useState(false)
+  const leaveTriggerRef = useRef<HTMLAnchorElement>(null)
   const mealTimeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const mealTimeChain = useRef(Promise.resolve())
   const searchInFlight = useRef(false)
@@ -142,11 +146,20 @@ export default function RoomPage() {
     if (msg) setActionError(msg) // D4：伺服器訊息直達（額度用盡/不在投票階段都有明確下一步）
   }
 
+  function closeLeave() {
+    setLeaveOpen(false)
+    leaveTriggerRef.current?.focus() // 觸發元素不隨 dialog 卸載，直接還原焦點
+  }
+
+  const leavePoints = leaveNotice(room.status, members.length, room.code)
+
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-20 border-b border-border bg-canvas/85 backdrop-blur">
         <div className="mx-auto flex w-full max-w-lg items-center gap-3 p-3">
-          <Link to="/" aria-label="回首頁"
+          {/* 回首頁＝離席（ADR-0007），代價不可逆——攔下導覽先確認 */}
+          <Link to="/" aria-label="回首頁" ref={leaveTriggerRef}
+            onClick={e => { e.preventDefault(); setLeaveOpen(true) }}
             className="-ml-1.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl">
             <Logo className="h-8 w-8" />
           </Link>
@@ -442,6 +455,28 @@ export default function RoomPage() {
           </div>
         )}
       </main>
+
+      {leaveOpen && (
+        // Esc 掛在外層：開啟時焦點由 autoFocus 進到「取消」，keydown 由 dialog 內冒泡上來
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-fg/40 p-3"
+          onKeyDown={e => { if (e.key === 'Escape') closeLeave() }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="leave-title"
+            className="card w-full max-w-sm animate-rise space-y-3">
+            <h2 id="leave-title" className="text-base font-semibold">離開房間？</h2>
+            <ul className="list-disc space-y-1 pl-5 text-sm text-fg-muted">
+              {leavePoints.map(p => <li key={p}>{p}</li>)}
+            </ul>
+            {/* 320px 直排、sm 以上並排——按鈕不壓縮成兩行字 */}
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button type="button" autoFocus className="btn btn-quiet w-full sm:flex-1"
+                onClick={closeLeave}>
+                取消
+              </button>
+              <Link to="/" className="btn w-full bg-danger text-white sm:flex-1">離開房間</Link>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

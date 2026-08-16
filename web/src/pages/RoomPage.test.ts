@@ -77,6 +77,23 @@ function findButton(node: unknown, label: string): ElementLike {
   return findButton(element.props?.children, label)
 }
 
+type NodeLike = { type?: unknown; props?: Record<string, unknown> }
+
+// findButton 只認 <button>；退房確認要抓 <a>／dialog 容器，用述詞找第一個符合的節點
+function findNode(node: unknown, pred: (el: NodeLike) => boolean): NodeLike | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findNode(child, pred)
+      if (found) return found
+    }
+    return undefined
+  }
+  if (!node || typeof node !== 'object') return undefined
+  const element = node as NodeLike
+  if (pred(element)) return element
+  return findNode(element.props?.children, pred)
+}
+
 async function renderRoomPage() {
   const { default: RoomPage } = await import('./RoomPage')
   return RoomPage()
@@ -306,5 +323,104 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     const tree = await renderRoomPage()
     const btn = findButton(tree, '處理中…') as { props?: { disabled?: boolean } }
     expect(btn.props?.disabled).toBe(true)
+  })
+})
+
+// QA：房間頁左上 logo 按下去靜默送出 leave（ADR-0007 回首頁＝離席），要先確認
+describe('回首頁離席確認', () => {
+  const LEAVE_STATE = 9 // useState 呼叫順序中的 leaveOpen；新 state 只能接在它後面
+
+  // 末位退房無條件刪房（server/leave.go）——文案依人數分歧，預設多人房
+  function mount(status: string, leaveOpen: boolean, memberCount = 2) {
+    mocks.stateIndex = 0
+    mocks.stateValues = [false, '', '', false, false, '', '', false, false, leaveOpen]
+    mocks.stateSetters = []
+    mocks.useRoom.mockReset().mockReturnValue({
+      room: {
+        id: 'room-1', code: 'ABC123', host_id: 'host', status,
+        exploration: 'balanced', meal_time: null, cuisine_filter: false,
+      },
+      members: Array.from({ length: memberCount }, (_, i) => ({
+        room_id: 'room-1', user_id: i === 0 ? 'host' : `user-${i}`, budget_max: 800,
+        cuisines: [], dietary: [], max_distance_m: 1000, transport: 'walking', ready: false,
+        profiles: { display_name: i === 0 ? '房主' : `成員${i}` },
+      })),
+      candidates: [], draw: null, myUserId: 'host', connected: true,
+      notFound: false, loadError: false, refetch: vi.fn(),
+      toggleVote: vi.fn(), myVote: () => null, ups: new Map(), vetoesRemaining: 2,
+    })
+    return renderRoomPage()
+  }
+
+  it('點 header 回首頁不導航，改開啟確認', async () => {
+    const tree = await mount('voting', false)
+    expect(textContent(tree)).not.toContain('離開房間？')
+    const link = findNode(tree, el => el.props?.['aria-label'] === '回首頁')
+    const preventDefault = vi.fn()
+    const onClick = link?.props?.onClick as ((e: { preventDefault: () => void }) => void) | undefined
+    if (!onClick) throw new Error('找不到 header 回首頁連結')
+    onClick({ preventDefault })
+    expect(preventDefault).toHaveBeenCalled()
+    expect(mocks.stateSetters[LEAVE_STATE]).toHaveBeenCalledWith(true)
+  })
+
+  it('確認開啟時是有名稱的 modal dialog，取消與 Esc 都留在房間', async () => {
+    const tree = await mount('voting', true)
+    const dialog = findNode(tree, el => el.props?.role === 'dialog')
+    expect(dialog?.props?.['aria-modal']).toBe('true')
+    expect(dialog?.props?.['aria-labelledby']).toBe('leave-title')
+
+    const cancel = findButton(tree, '取消')
+    if (!cancel.props?.onClick) throw new Error('找不到取消按鈕')
+    await cancel.props.onClick()
+    expect(mocks.stateSetters[LEAVE_STATE]).toHaveBeenCalledWith(false)
+
+    const overlay = findNode(tree, el => typeof el.props?.onKeyDown === 'function')
+    const onKeyDown = overlay!.props!.onKeyDown as (e: { key: string }) => void
+    mocks.stateSetters[LEAVE_STATE].mockClear()
+    onKeyDown({ key: 'Enter' })
+    expect(mocks.stateSetters[LEAVE_STATE]).not.toHaveBeenCalled()
+    onKeyDown({ key: 'Escape' })
+    expect(mocks.stateSetters[LEAVE_STATE]).toHaveBeenCalledWith(false)
+  })
+
+  it('確認鍵才是真正導航到首頁的連結', async () => {
+    const tree = await mount('voting', true)
+    const confirm = findNode(tree, el => el.type === 'a' && textContent(el) === '離開房間')
+    expect(confirm?.props?.to).toBe('/')
+    expect(confirm?.props?.onClick).toBeUndefined() // 未被攔截＝按下才真的離席
+  })
+
+  it('decided 的後果文案與 lobby 不同', async () => {
+    const lobby = textContent(await mount('lobby', true))
+    expect(lobby).toContain('之後可用邀請碼重新加入')
+    expect(lobby).not.toContain('「足跡」查看')
+
+    const decided = textContent(await mount('decided', true))
+    expect(decided).toContain('無法用邀請碼重新加入')
+    expect(decided).toContain('抽中的結果之後只能在「足跡」查看')
+    expect(decided).toContain('你若是最後一位成員，房間會直接被刪除')
+  })
+
+  // 末位退房的 delete from rooms 不看 status（server/leave.go:106-111）：
+  // 單人 lobby 房必被刪、邀請碼必失效，不得承諾可重加入
+  it('單人 lobby 不承諾可重加入，多人才承諾', async () => {
+    const alone = textContent(await mount('lobby', true, 1))
+    expect(alone).not.toContain('可用邀請碼重新加入')
+    expect(alone).toContain('你是房間裡唯一的人，離開後這個房間會直接刪除')
+    expect(alone).toContain('邀請碼 ABC123 會跟著失效')
+
+    const shared = textContent(await mount('lobby', true, 2))
+    expect(shared).toContain('之後可用邀請碼重新加入')
+    expect(shared).toContain('你若是最後一位成員，房間會直接被刪除')
+  })
+
+  it('單人房在 voting／decided 也用「確定會刪除」而非條件句', async () => {
+    for (const status of ['voting', 'decided']) {
+      const alone = textContent(await mount(status, true, 1))
+      expect(alone).toContain('你是房間裡唯一的人，離開後這個房間會直接刪除')
+      expect(alone).not.toContain('你若是最後一位成員')
+      expect(alone).not.toContain('可用邀請碼重新加入')
+    }
   })
 })

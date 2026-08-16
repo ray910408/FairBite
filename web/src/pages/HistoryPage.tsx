@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { formatDay, groupByMonth, knownCuisineLabels, summarize, trendRatings, type FootprintRow } from '../lib/footprint'
+import { leaveNotice } from '../lib/leaveNotice'
+import type { Room } from '../lib/types'
 import { Logo, Spinner, Star } from '../components/icons'
 import StarRow from '../components/StarRow'
 import TrendChart from '../components/TrendChart'
@@ -13,11 +15,17 @@ type LoadState =
   | { phase: 'error' }
   | { phase: 'ready'; rows: FootprintRow[]; total: number }
 
+// 足跡頁也是「房內可達頁」：回首頁＝離席（ADR-0007），離開前要問
+type LeaveTarget = { id: string; code: string; status: Room['status']; memberCount: number }
+
 export default function HistoryPage() {
   const [state, setState] = useState<LoadState>({ phase: 'loading' })
   // 未評列補評 chip 的展開狀態（一次一列，design review D4）
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [leaveTarget, setLeaveTarget] = useState<LeaveTarget | null>(null)
+  const [leaveOpen, setLeaveOpen] = useState(false)
   const expandedLiRef = useRef<HTMLLIElement | null>(null)
+  const leaveTriggerRef = useRef<HTMLAnchorElement | null>(null)
   const requestGen = useRef(0)
 
   const load = useCallback(async () => {
@@ -42,6 +50,37 @@ export default function HistoryPage() {
     void load()
     return () => { requestGen.current++ } // unmount 作廢 in-flight 回應
   }, [load])
+
+  // 目前所屬房間以查詢為準，不靠 router state：關分頁後直接開 /history 時房還在、
+  // 但 state 是空的，那正是最需要提醒的一次。members_select 的 RLS 是
+  // is_room_member(room_id)，所以這一查回的就是「我所屬房間」的全部成員列，順便得到人數。
+  // 查不到／查錯一律當作不在房間放行——附加查詢不該把回首頁鎖死。
+  useEffect(() => {
+    let live = true
+    void supabase.from('room_members').select('room_id, rooms(code, status)').then(({ data, error }) => {
+      // rooms 是 to-one 嵌入（room_members.room_id FK），實際回物件；
+      // supabase-js 推不出基數而給成陣列，比照本檔 dining_history 的嵌入走 unknown 轉型
+      const rows = (data ?? []) as unknown as
+        { room_id: string; rooms: { code: string; status: Room['status'] } | null }[]
+      if (!live || error || !rows.length || !rows[0].rooms) return
+      setLeaveTarget({
+        id: rows[0].room_id, code: rows[0].rooms.code, status: rows[0].rooms.status,
+        memberCount: rows.filter(r => r.room_id === rows[0].room_id).length,
+      })
+    }, () => {})
+    return () => { live = false }
+  }, [])
+
+  function askLeave(e: React.MouseEvent<HTMLAnchorElement>) {
+    e.preventDefault()
+    leaveTriggerRef.current = e.currentTarget // 兩個入口共用一個 dialog，記住是誰開的
+    setLeaveOpen(true)
+  }
+
+  function closeLeave() {
+    setLeaveOpen(false)
+    leaveTriggerRef.current?.focus()
+  }
 
   const onRated = useCallback((id: string, n: number) => {
     setState(prev => prev.phase === 'ready'
@@ -69,7 +108,9 @@ export default function HistoryPage() {
             <Logo className="h-8 w-8" />
             <span className="text-lg font-bold">今天吃什麼</span>
           </div>
-          <Link to="/" className="btn btn-quiet min-h-11 px-3 text-sm">回首頁</Link>
+          {/* 在房間裡就先確認（ADR-0007）；不在房間時 onClick 為 undefined＝一般導覽 */}
+          <Link to="/" className="btn btn-quiet min-h-11 px-3 text-sm"
+            onClick={leaveTarget ? askLeave : undefined}>回首頁</Link>
         </div>
       </header>
 
@@ -96,7 +137,8 @@ export default function HistoryPage() {
             <Logo className="mx-auto h-12 w-12 opacity-60" />
             <p className="text-sm font-semibold">還沒有足跡</p>
             <p className="text-sm text-fg-muted">開一場聚餐決策，定案後這裡就會留下紀錄。</p>
-            <Link to="/" className="btn btn-primary min-h-11 px-4 text-sm">回首頁開一場</Link>
+            <Link to="/" className="btn btn-primary min-h-11 px-4 text-sm"
+              onClick={leaveTarget ? askLeave : undefined}>回首頁開一場</Link>
           </section>
         )}
 
@@ -215,6 +257,30 @@ export default function HistoryPage() {
           </>
         )}
       </main>
+
+      {leaveOpen && leaveTarget && (
+        // Esc 掛外層：焦點由 autoFocus 進到「取消」，keydown 從 dialog 內冒泡上來
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-fg/40 p-3"
+          onKeyDown={e => { if (e.key === 'Escape') closeLeave() }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="leave-title"
+            className="card w-full max-w-sm animate-rise space-y-3">
+            <h2 id="leave-title" className="text-base font-semibold">回首頁會離開房間</h2>
+            <p className="text-sm text-fg-muted">你目前還在房間 {leaveTarget.code} 裡：</p>
+            <ul className="list-disc space-y-1 pl-5 text-sm text-fg-muted">
+              {leaveNotice(leaveTarget.status, leaveTarget.memberCount, leaveTarget.code)
+                .map(p => <li key={p}>{p}</li>)}
+            </ul>
+            {/* 三顆按鈕在 320px 一律直排。「回到房間」補上 ADR-0007 說的不經首頁入口 */}
+            <div className="flex flex-col gap-2">
+              <Link to={`/room/${leaveTarget.id}`} className="btn btn-primary w-full">回到房間</Link>
+              <button type="button" autoFocus className="btn btn-quiet w-full" onClick={closeLeave}>
+                取消
+              </button>
+              <Link to="/" className="btn w-full bg-danger text-white">仍要回首頁</Link>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
