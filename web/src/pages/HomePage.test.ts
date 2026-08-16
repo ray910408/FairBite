@@ -4,6 +4,10 @@ const mocks = vi.hoisted(() => ({
   stateIndex: 0,
   stateValues: [] as unknown[],
   stateSetters: [] as ReturnType<typeof vi.fn>[],
+  // ref 依呼叫順序保存，跨 render 沿用、換 mount 才清空——「同一次 mount 只做一次
+  // 離席決策」的守衛就靠 ref，每次 render 發新物件會讓它永遠測不到
+  refIndex: 0,
+  refs: [] as { current: unknown }[],
   effects: [] as Array<() => void | (() => void)>,
   getUid: vi.fn(),
   rpc: vi.fn(),
@@ -26,7 +30,7 @@ vi.mock('react', async importOriginal => {
       mocks.stateSetters[index] = setter
       return [value, setter]
     },
-    useRef: (initial: unknown) => ({ current: initial }),
+    useRef: (initial: unknown) => (mocks.refs[mocks.refIndex++] ??= { current: initial }),
     useEffect: (effect: () => void | (() => void)) => { mocks.effects.push(effect) },
     useCallback: (fn: unknown) => fn,
   }
@@ -35,7 +39,9 @@ vi.mock('react', async importOriginal => {
 vi.mock('react-router-dom', () => ({
   Link: 'a',
   useNavigate: () => mocks.navigate,
-  useLocation: () => ({ state: mocks.locationState }),
+  // state 掛在 history entry 上（不是掛在一次導覽上）：重整與上一頁都會把它還原，
+  // 所以這裡拿 mocks.locationState 當那筆 entry，replace 才有東西可以蓋掉
+  useLocation: () => ({ pathname: '/', state: mocks.locationState }),
 }))
 
 vi.mock('../lib/supabase', () => ({
@@ -123,6 +129,8 @@ async function clickCreateRoom() {
 describe('HomePage persistRoom', () => {
   beforeEach(() => {
     mocks.stateIndex = 0
+    mocks.refIndex = 0
+    mocks.refs = []
     mocks.stateValues = [
       '', '', '', '', { lat: 25.0478, lng: 121.517, label: '台北車站' },
       'now', '', '', false, '', {}, [],
@@ -171,6 +179,8 @@ describe('HomePage persistRoom', () => {
 describe('HomePage 錯誤就地顯示（QA ISSUE-003）', () => {
   beforeEach(() => {
     mocks.stateIndex = 0
+    mocks.refIndex = 0
+    mocks.refs = []
     mocks.getUid.mockReset().mockResolvedValue('creator')
     mocks.rpc.mockReset()
     mocks.from.mockReset()
@@ -219,6 +229,8 @@ function stubSuggestionQueries() {
 describe('HomePage 退房閘門', () => {
   beforeEach(() => {
     mocks.stateIndex = 0
+    mocks.refIndex = 0
+    mocks.refs = []
     mocks.stateValues = []
     mocks.stateSetters = []
     mocks.effects = []
@@ -253,6 +265,8 @@ describe('HomePage 退房閘門', () => {
 describe('HomePage mount 離席確認', () => {
   beforeEach(() => {
     mocks.stateIndex = 0
+    mocks.refIndex = 0
+    mocks.refs = []
     mocks.stateValues = []
     mocks.stateSetters = []
     mocks.effects = []
@@ -260,6 +274,12 @@ describe('HomePage mount 離席確認', () => {
     mocks.leaveRooms.mockReset().mockResolvedValue(undefined)
     mocks.fetchLeaveRooms.mockReset().mockResolvedValue([])
     mocks.locationState = null
+    // nav(pathname, { replace: true, state: null }) 的真實效果就是把那筆 entry 的
+    // state 蓋掉——照這樣模擬，之後回到同一筆 entry 才會真的讀不到旗標
+    mocks.navigate.mockReset().mockImplementation(
+      (_to: string, opts?: { replace?: boolean; state?: unknown }) => {
+        if (opts?.replace) mocks.locationState = opts.state ?? null
+      })
     stubSuggestionQueries()
   })
 
@@ -267,6 +287,15 @@ describe('HomePage mount 離席確認', () => {
     const { default: HomePage } = await import('./HomePage')
     HomePage()
     for (const fn of mocks.effects) fn()
+  }
+
+  function remount() { // 上一頁回到同一筆 entry：新的 mount，但 entry 還是那一筆
+    mocks.stateIndex = 0
+    mocks.refIndex = 0
+    mocks.refs = []
+    mocks.stateSetters = []
+    mocks.effects = []
+    return runMount()
   }
 
   it('查到房間不自動退房，改開離席確認', async () => {
@@ -297,21 +326,62 @@ describe('HomePage mount 離席確認', () => {
     expect(mocks.stateSetters[PENDING]).not.toHaveBeenCalled()
   })
 
-  // RoomPage／HistoryPage 的離席確認已經把同一份後果講完了，首頁再問一次＝連跳兩張
-  it('房內已確認過（帶 leaveConfirmed）就直接退房，不再查也不再問', async () => {
+  // RoomPage／HistoryPage 的離席確認已經把同一份後果講完了，首頁再問一次＝連跳兩張。
+  // 但旗標掛在 history entry 上（重整與上一頁都會還原），用完必須當場 replace 掉。
+  it('房內已確認過（帶 leaveConfirmed）就直接退房，不再查也不再問，並當場消耗旗標', async () => {
     mocks.locationState = { leaveConfirmed: true }
     mocks.fetchLeaveRooms.mockResolvedValue([inRoom])
     await runMount()
     await vi.waitFor(() => expect(mocks.leaveRooms).toHaveBeenCalledTimes(1))
+    expect(mocks.navigate).toHaveBeenCalledWith('/', { replace: true, state: null })
+    expect(mocks.locationState).toBeNull() // entry 上已經沒有旗標
     expect(mocks.fetchLeaveRooms).not.toHaveBeenCalled()
     expect(mocks.stateSetters[TARGET]).not.toHaveBeenCalled()
     await vi.waitFor(() => expect(mocks.stateSetters[PENDING]).toHaveBeenCalledWith(false))
+  })
+
+  // 這條是本輪 review 的核心：旗標若沒被消耗，「退房 → 在首頁建新房 → 上一頁」
+  // 會讀回同一筆 entry 的旗標，直接靜默退掉新房——正是 mount 攔截要防的那個繞過
+  it('旗標消耗後回到同一筆 entry：不再直接退房，改走查房籍→開 dialog', async () => {
+    mocks.locationState = { leaveConfirmed: true }
+    mocks.fetchLeaveRooms.mockResolvedValue([inRoom])
+    await runMount() // 房內確認過的那一次：直接退房並消耗旗標
+    await vi.waitFor(() => expect(mocks.leaveRooms).toHaveBeenCalledTimes(1))
+
+    mocks.leaveRooms.mockClear()
+    mocks.fetchLeaveRooms.mockClear()
+    await remount() // 上一頁回到同一筆 entry
+    await vi.waitFor(() =>
+      expect(mocks.stateSetters[TARGET]).toHaveBeenCalledWith({ kind: 'rooms', rooms: [inRoom] }))
+    expect(mocks.fetchLeaveRooms).toHaveBeenCalled()
+    expect(mocks.leaveRooms).not.toHaveBeenCalled() // 新建的房沒有被靜默退掉
+  })
+
+  // 消耗旗標的 replace 會讓 location 換新物件、effect 相依變動而重跑；此時 state 已是
+  // null，沒有 ref 守衛就會掉進 else 分支去查房籍，在 doLeave() 還在飛的時候開一張 dialog。
+  // 同一次 mount 的重繪：refs 不清空（remount 才清），才測得到那道守衛。
+  it('消耗旗標造成的 effect 重跑不會再走查房籍那條路', async () => {
+    mocks.locationState = { leaveConfirmed: true }
+    mocks.fetchLeaveRooms.mockResolvedValue([inRoom])
+    await runMount()
+    expect(mocks.locationState).toBeNull() // 旗標已消耗
+
+    mocks.stateIndex = 0
+    mocks.refIndex = 0
+    mocks.stateSetters = []
+    mocks.effects = []
+    await runMount() // 同一次 mount 的重繪 + effect 重跑
+
+    await vi.waitFor(() => expect(mocks.leaveRooms).toHaveBeenCalledTimes(1))
+    expect(mocks.fetchLeaveRooms).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[TARGET]).not.toHaveBeenCalled()
   })
 })
 
 describe('HomePage 離席確認 dialog', () => {
   beforeEach(() => {
     mocks.stateSetters = []
+    mocks.refs = []
     mocks.effects = []
     mocks.navigate.mockReset()
     mocks.getUid.mockReset().mockResolvedValue('user-1')
@@ -323,6 +393,7 @@ describe('HomePage 離席確認 dialog', () => {
 
   async function render(target: unknown) {
     mocks.stateIndex = 0
+    mocks.refIndex = 0
     mocks.stateValues = []
     mocks.stateValues[4] = { lat: 25.0478, lng: 121.517 }
     mocks.stateValues[TARGET] = target

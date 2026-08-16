@@ -60,10 +60,10 @@ export default function HomePage() {
   // 離席確認的對象（ADR-0007 2026-08-16 修訂）——新 state 一律接在最後，
   // HomePage.test.ts 依 useState 呼叫順序 mock
   const [leaveTarget, setLeaveTarget] = useState<LeaveTarget | null>(null)
-  // RoomPage／HistoryPage 的離席確認會帶這個旗標過來：使用者剛看過完整後果，
-  // 再問一次就是同一份 dialog 連跳兩張。只在該次導覽有效（重整／上一頁都會是 null）
-  const leaveConfirmed =
-    (useLocation().state as { leaveConfirmed?: boolean } | null)?.leaveConfirmed === true
+  const location = useLocation()
+  // 每次 mount 只做一次離席決策：消耗旗標的 replace 會讓 location 變、下面的 effect
+  // 重跑，沒有這道閘就會在 doLeave() 還在飛的時候又走一次查房籍→開 dialog
+  const leaveDecided = useRef(false)
 
   const handleDepartureChange = useCallback((p: DeparturePoint) => {
     setDeparture(p)
@@ -118,12 +118,22 @@ export default function HomePage() {
   // 三條分支：查到房間先問（不退）／查到空就沒房可退（不打 /api/leave）／
   // 查詢失敗一律不退，開保守 dialog 讓使用者自己決定——靜默退房是不可逆的。
   useEffect(() => {
-    if (leaveConfirmed) { doLeave(); return } // 房內已經確認過，不問第二次
+    if (leaveDecided.current) return
+    leaveDecided.current = true
+    // RoomPage／HistoryPage 的離席確認會帶 leaveConfirmed 過來：使用者剛看過完整後果，
+    // 再問一次就是同一份 dialog 連跳兩張。但旗標是掛在 history entry 上的，重整會還原、
+    // 上一頁回到同一筆 entry 也會還原——不當場消耗掉，「退房→建新房→上一頁」就會靜默
+    // 退掉新房，正好從這裡替本攔截要防的繞過開後門。replace 掉才是真的只用一次。
+    if ((location.state as { leaveConfirmed?: boolean } | null)?.leaveConfirmed === true) {
+      nav(location.pathname, { replace: true, state: null })
+      doLeave()
+      return
+    }
     void fetchLeaveRooms().then(rooms => {
       if (rooms && rooms.length === 0) setLeavePending(false) // room_members 就是權威
       else setLeaveTarget(rooms ? { kind: 'rooms', rooms } : { kind: 'unknown' })
     })
-  }, [leaveConfirmed, doLeave])
+  }, [location, nav, doLeave])
 
   function confirmLeave() {
     setLeaveTarget(null)
@@ -339,7 +349,7 @@ export default function HomePage() {
               )}
               {leaveTarget.kind === 'unknown' && (
                 <button type="button" autoFocus className="btn btn-quiet w-full"
-                  onClick={() => location.reload()}>重新整理再試</button>
+                  onClick={() => window.location.reload()}>重新整理再試</button>
               )}
               <button type="button" className="btn w-full bg-danger text-white"
                 onClick={confirmLeave}>離開房間</button>
