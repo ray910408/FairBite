@@ -65,14 +65,13 @@ const asHandler = (v: unknown) => v as ((e: FakeEvent) => Promise<void>) | undef
 const room = (id: string, code: string, status: string) =>
   ({ room_id: id, rooms: { code, status } })
 
-// state 索引：0 state / 1 expandedId / 2 membership / 3 leaveDialog / 4 leaveChecking
-const MEMBERSHIP = 2
-const DIALOG = 3
-const CHECKING = 4
+// state 索引：0 state / 1 expandedId / 2 leaveDialog / 3 leaveChecking
+const DIALOG = 2
+const CHECKING = 3
 
-async function render(membership: string, dialog: unknown = undefined, total = 0) {
+async function render(dialog: unknown = undefined, total = 0) {
   mocks.stateIndex = 0
-  mocks.stateValues = [{ phase: 'ready', rows: [], total }, null, membership, dialog]
+  mocks.stateValues = [{ phase: 'ready', rows: [], total }, null, dialog]
   mocks.stateSetters = []
   mocks.effects = []
   const { default: HistoryPage } = await import('./HistoryPage')
@@ -98,20 +97,14 @@ beforeEach(() => {
 })
 
 describe('足跡頁回首頁離席確認', () => {
-  it('不在房間：回首頁是一般導覽，不攔也不查', async () => {
-    const tree = await render('none')
-    const preventDefault = await clickHome(tree)
-    expect(preventDefault).not.toHaveBeenCalled()
-    expect(mocks.stateSetters[DIALOG]).not.toHaveBeenCalled()
-    expect(mocks.from).not.toHaveBeenCalledWith('room_members')
-  })
-
-  // P1-A：mount 查詢 settle 前的空窗——這段時間點下去一樣會離席，不得放行
-  it('查詢還沒 settle（checking）就點回首頁：照樣攔住並確認', async () => {
+  // 沒有任何房籍快照可依賴：點擊當下一律先查（進頁時沒房、之後在別的分頁建房是
+  // ADR-0007 自己承認的情境，快照放行就會靜默退掉那個新房）
+  it('點回首頁一律先攔下來查，查到房就確認', async () => {
     mocks.members = { data: [room('room-1', 'ABC123', 'voting')], error: null }
-    const tree = await render('checking')
+    const tree = await render()
     const preventDefault = await clickHome(tree)
     expect(preventDefault).toHaveBeenCalled()
+    expect(mocks.from).toHaveBeenCalledWith('room_members')
     expect(mocks.navigate).not.toHaveBeenCalled()
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
@@ -119,13 +112,13 @@ describe('足跡頁回首頁離席確認', () => {
     })
   })
 
-  // P1-B：本頁久留是預期用法，狀態會在使用者眼前變；文案只能來自開啟當下的重查
-  it('開啟時重查，用新鮮的 status 而非 mount 快照', async () => {
+  // 文案只能來自點擊當下的查詢：本頁久留是預期用法，status／人數會在使用者眼前變
+  it('用點擊當下查到的 status 與人數', async () => {
     mocks.members = {
       data: [room('room-1', 'ABC123', 'candidates'), room('room-1', 'ABC123', 'candidates')],
       error: null,
     }
-    const tree = await render('in-room')
+    const tree = await render()
     await clickHome(tree)
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
@@ -135,13 +128,13 @@ describe('足跡頁回首頁離席確認', () => {
     expect(mocks.stateSetters[CHECKING]).toHaveBeenCalledWith(false)
   })
 
-  it('重查失敗改用保守文案，不拿過期快照講後果', async () => {
+  it('查詢失敗改用保守文案，不假裝知道後果', async () => {
     mocks.members = { data: null, error: { message: 'boom' } }
-    const tree = await render('in-room')
+    const tree = await render()
     await clickHome(tree)
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({ kind: 'unknown' })
 
-    const rendered = await render('in-room', { kind: 'unknown' })
+    const rendered = await render({ kind: 'unknown' })
     const text = textContent(rendered)
     expect(text).toContain('房間現況查不到')
     expect(text).not.toContain('可用邀請碼重新加入')
@@ -150,18 +143,17 @@ describe('足跡頁回首頁離席確認', () => {
     expect(findNode(rendered, byText('a', '仍要回首頁'))?.props?.to).toBe('/')
   })
 
-  it('重查發現已經不在任何房間：直接導航，不跳確認', async () => {
+  it('查到真的沒房可離：直接導航，不跳確認', async () => {
     mocks.members = { data: [], error: null }
-    const tree = await render('in-room')
+    const tree = await render()
     await clickHome(tree)
     expect(mocks.navigate).toHaveBeenCalledWith('/')
     expect(mocks.stateSetters[DIALOG]).not.toHaveBeenCalled()
-    expect(mocks.stateSetters[MEMBERSHIP]).toHaveBeenCalledWith('none')
   })
 
   it('空狀態的「回首頁開一場」同樣被攔', async () => {
     mocks.members = { data: [room('room-1', 'ABC123', 'voting')], error: null }
-    const tree = await render('in-room')
+    const tree = await render()
     const preventDefault = await clickHome(tree, '回首頁開一場')
     expect(preventDefault).toHaveBeenCalled()
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalled()
@@ -173,7 +165,7 @@ describe('足跡頁回首頁離席確認', () => {
   }
 
   it('dialog 有名稱、有回到房間的入口，取消與 Esc 留在足跡頁', async () => {
-    const tree = await render('in-room', oneRoom)
+    const tree = await render(oneRoom)
     const dialog = findNode(tree, el => el.props?.role === 'dialog')
     expect(dialog?.props?.['aria-modal']).toBe('true')
     expect(dialog?.props?.['aria-labelledby']).toBe('leave-title')
@@ -197,7 +189,7 @@ describe('足跡頁回首頁離席確認', () => {
   })
 
   it('單房 dialog 文案沿用 leaveNotice（voting 兩人）', async () => {
-    const text = textContent(await render('in-room', oneRoom))
+    const text = textContent(await render(oneRoom))
     expect(text).toContain('你目前還在房間 ABC123 裡')
     expect(text).toContain('你的投票會即刻作廢，候選盤面會重新計算')
     expect(text).toContain('你若是最後一位成員，房間會直接被刪除')
@@ -205,7 +197,7 @@ describe('足跡頁回首頁離席確認', () => {
 
   // P2-A：leave 是全退，兩個房籍都要講（舊房 leave 逾時後又建新房就會這樣）
   it('多房籍：兩個房的邀請碼與各自後果都列出，並各有回房入口', async () => {
-    const tree = await render('in-room', {
+    const tree = await render({
       kind: 'rooms',
       rooms: [
         { id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1 },
@@ -225,28 +217,26 @@ describe('足跡頁回首頁離席確認', () => {
   })
 })
 
-describe('足跡頁 mount 房籍查詢', () => {
-  async function runMountEffects(rows: unknown, error: unknown = null) {
-    mocks.members = { data: rows, error }
-    await render('checking')
+describe('足跡頁房籍查詢', () => {
+  // 多分頁：這個分頁進來時沒房，之後在別的分頁建了房——沒有快照可放行，一律當場查
+  it('進頁時沒房、點擊時已在房間：照樣攔住並確認', async () => {
+    mocks.members = { data: [], error: null }
+    const tree = await render()
+    mocks.members = { data: [room('room-9', 'NEW999', 'lobby')], error: null } // 另一分頁建了房
+    const preventDefault = await clickHome(tree)
+    expect(preventDefault).toHaveBeenCalled()
+    expect(mocks.navigate).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
+      kind: 'rooms',
+      rooms: [{ id: 'room-9', code: 'NEW999', status: 'lobby', memberCount: 1 }],
+    })
+  })
+
+  it('mount 不查房籍（沒有會過期的快照）', async () => {
+    await render()
     for (const fn of mocks.effects) fn()
-    await vi.waitFor(() => expect(mocks.stateSetters[MEMBERSHIP]).toHaveBeenCalled())
-  }
-
-  it('查到房間 → in-room（之後點回首頁會攔）', async () => {
-    await runMountEffects([room('room-1', 'ABC123', 'voting')])
-    expect(mocks.stateSetters[MEMBERSHIP]).toHaveBeenCalledWith('in-room')
-  })
-
-  it('查無房間 → none（放行）', async () => {
-    await runMountEffects([])
-    expect(mocks.stateSetters[MEMBERSHIP]).toHaveBeenCalledWith('none')
-  })
-
-  // fail-safe：附加查詢掛掉不得把回首頁鎖死
-  it('查詢失敗 → none（放行）', async () => {
-    await runMountEffects(null, { message: 'boom' })
-    expect(mocks.stateSetters[MEMBERSHIP]).toHaveBeenCalledWith('none')
+    await vi.waitFor(() => expect(mocks.from).toHaveBeenCalledWith('dining_history'))
+    expect(mocks.from).not.toHaveBeenCalledWith('room_members')
   })
 
   it('多房籍：依 room_id 分組各自算人數', async () => {
@@ -258,7 +248,7 @@ describe('足跡頁 mount 房籍查詢', () => {
       ],
       error: null,
     }
-    const tree = await render('in-room')
+    const tree = await render()
     await clickHome(tree)
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',

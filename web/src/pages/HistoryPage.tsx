@@ -17,10 +17,7 @@ type LoadState =
 
 // 足跡頁也是「房內可達頁」：回首頁＝離席（ADR-0007），離開前要問
 type LeaveRoom = { id: string; code: string; status: Room['status']; memberCount: number }
-// checking 與 none 必須分開：兩者都「沒有房間可講」，但前者不得放行（查詢 settle 前
-// 點回首頁一樣會離席），後者才是真的沒房可離
-type Membership = 'checking' | 'none' | 'in-room'
-// 重查失敗時寧可講保守的空話，也不拿 mount 當下的過期快照講可能已不成立的後果
+// 查詢失敗時寧可講保守的空話，也不拿過期資料講可能已不成立的後果
 type LeaveDialog = { kind: 'rooms'; rooms: LeaveRoom[] } | { kind: 'unknown' }
 
 // 一次查回「我所屬房間」的全部成員列（members_select RLS = is_room_member(room_id)），
@@ -51,7 +48,6 @@ export default function HistoryPage() {
   const [state, setState] = useState<LoadState>({ phase: 'loading' })
   // 未評列補評 chip 的展開狀態（一次一列，design review D4）
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [membership, setMembership] = useState<Membership>('checking')
   const [leaveDialog, setLeaveDialog] = useState<LeaveDialog | null>(null)
   const [leaveChecking, setLeaveChecking] = useState(false)
   const expandedLiRef = useRef<HTMLLIElement | null>(null)
@@ -82,32 +78,19 @@ export default function HistoryPage() {
     return () => { requestGen.current++ } // unmount 作廢 in-flight 回應
   }, [load])
 
-  // 是否在房間以查詢為準，不靠 router state：關分頁後直接開 /history 時房還在、
-  // 但 state 是空的，那正是最需要提醒的一次。
-  // 查不到／查錯進 none 照常放行——附加查詢不該把回首頁鎖死；還在飛（checking）則照攔。
-  useEffect(() => {
-    let live = true
-    void fetchLeaveRooms().then(rooms => {
-      if (live) setMembership(rooms?.length ? 'in-room' : 'none')
-    })
-    return () => { live = false }
-  }, [])
-
-  // 開啟當下重查：本頁久留是預期用法，房間 status／人數會在你看著的時候改變，
-  // mount 快照拿來寫不可逆後果會給出過期的承諾
+  // 一律攔下來當場查，不留任何房籍快照：本頁久留是預期用法，而且房籍會在別的分頁被改
+  //（多分頁是 ADR-0007 自己承認的情境）。「進頁時沒房」不能拿來放行——那筆快照到點擊
+  // 當下可能已經過期，賭錯的代價是靜默退掉別的分頁剛建的房。代價是每次多一次查詢。
   async function askLeave(e: React.MouseEvent<HTMLAnchorElement>) {
-    if (membership === 'none') return // 沒房可離：維持一般導覽
     e.preventDefault()
     leaveTriggerRef.current = e.currentTarget // 兩個入口共用一個 dialog，記住是誰開的
     setLeaveChecking(true)
     const rooms = await fetchLeaveRooms()
     setLeaveChecking(false)
-    if (rooms && rooms.length === 0) { // 期間已經退光了：沒有後果可講，照原本的導覽走
-      setMembership('none')
+    if (rooms && rooms.length === 0) { // 真的沒房可離：沒有後果可講，照原本的導覽走
       nav('/')
       return
     }
-    if (rooms) setMembership('in-room')
     setLeaveDialog(rooms ? { kind: 'rooms', rooms } : { kind: 'unknown' })
   }
 
@@ -142,7 +125,7 @@ export default function HistoryPage() {
             <Logo className="h-8 w-8" />
             <span className="text-lg font-bold">今天吃什麼</span>
           </div>
-          {/* 在房間（或還沒查完）就先確認（ADR-0007）；none 才直接導覽 */}
+          {/* 一律攔下當場查（ADR-0007）；查到真的沒房才放行導覽 */}
           <Link to="/" className="btn btn-quiet min-h-11 px-3 text-sm"
             aria-busy={leaveChecking} onClick={askLeave}>回首頁</Link>
         </div>

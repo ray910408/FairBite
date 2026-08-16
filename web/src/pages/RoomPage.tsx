@@ -151,7 +151,9 @@ export default function RoomPage() {
     leaveTriggerRef.current?.focus() // 觸發元素不隨 dialog 卸載，直接還原焦點
   }
 
-  const leavePoints = leaveNotice(room.status, members.length, room.code)
+  // members 載入失敗時 useRoom 不覆寫、停在初始 []（useRoom.ts 的 if (!m.error)），房間卻照常
+  // render——查詢成功時自己一定在列裡，所以 0 只可能是「沒載成功」，傳 null 讓文案退回條件句
+  const leavePoints = leaveNotice(room.status, members.length || null, room.code)
 
   return (
     <div className="min-h-screen">

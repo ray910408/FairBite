@@ -7,10 +7,14 @@ import type { Room } from './types'
 // 1. 末位退房的 delete from rooms 不看 status（server/leave.go）——單人房「會被刪除」
 //    是確定事件，邀請碼一定跟著失效，不能承諾之後可重加入。
 // 2. join_room 只匹配 status = 'lobby'（migration 0003/0006）——lobby 之後一律不可重加入。
+//
+// memberCount = null 代表「人數不可判定」（呼叫端沒把成員載成功）。此時兩個方向都不能
+// 給無條件承諾：不能說「你是唯一的人」（可能有別人），也不能說「之後可重加入」
+//（你可能真的是最後一個，房會被刪、碼會失效）；只能用兩種人數下都成立的條件句。
 export function leaveNotice(
-  status: Room['status'], memberCount: number, code: string,
+  status: Room['status'], memberCount: number | null, code: string,
 ): string[] {
-  const solo = memberCount <= 1
+  const solo = memberCount !== null && memberCount <= 1
   const deletePoint = solo
     ? '你是房間裡唯一的人，離開後這個房間會直接刪除'
     : '你若是最後一位成員，房間會直接被刪除'
@@ -21,7 +25,9 @@ export function leaveNotice(
         '你設定的條件也會一起消失']
       : ['你設定的條件會作廢，不再影響這場決策',
         deletePoint,
-        '目前還在等待中，之後可用邀請碼重新加入；房主一開始搜尋就不能再加入']
+        memberCount === null
+          ? '目前還在等待中：只要房間還在（你不是最後一位），之後仍可用邀請碼重新加入；房主一開始搜尋就不能再加入'
+          : '目前還在等待中，之後可用邀請碼重新加入；房主一開始搜尋就不能再加入']
   }
   if (status === 'decided') {
     return ['你的投票會作廢',

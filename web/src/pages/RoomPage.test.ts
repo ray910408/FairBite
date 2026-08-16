@@ -415,6 +415,16 @@ describe('回首頁離席確認', () => {
     expect(shared).toContain('你若是最後一位成員，房間會直接被刪除')
   })
 
+  // 成員查詢失敗時 useRoom 不覆寫 members（停在 []），房間卻照常 render——
+  // 0 只可能是「沒載成功」，不得當成單人講死話
+  it('成員沒載成功（members 空）時退回不可判定的條件句', async () => {
+    const alone = textContent(await mount('lobby', true, 0))
+    expect(alone).not.toContain('你是房間裡唯一的人')
+    expect(alone).not.toContain('邀請碼 ABC123 會跟著失效')
+    expect(alone).toContain('你若是最後一位成員，房間會直接被刪除')
+    expect(alone).toContain('只要房間還在（你不是最後一位），之後仍可用邀請碼重新加入')
+  })
+
   it('單人房在 voting／decided 也用「確定會刪除」而非條件句', async () => {
     for (const status of ['voting', 'decided']) {
       const alone = textContent(await mount(status, true, 1))

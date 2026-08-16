@@ -38,10 +38,18 @@ describe('leaveNotice', () => {
     expect(points.join('\n')).not.toContain(`之後${REJOIN}`)
   })
 
-  // 載入時序可能短暫回 0 列：落到保守側（不承諾），不得反過來給錯的承諾
-  it('memberCount 0 視同單人', () => {
-    expect(leaveNotice('lobby', 0, 'ABC123').join('\n')).not.toContain(REJOIN)
-    expect(leaveNotice('decided', 0, 'ABC123')[1])
-      .toBe('你是房間裡唯一的人，離開後這個房間會直接刪除')
+  // memberCount = null（成員沒載成功，人數不可判定）：兩個方向都不能給無條件承諾
+  it('null：不說「唯一的人」，也不給無條件的重加入承諾', () => {
+    const lobby = leaveNotice('lobby', null, 'ABC123')
+    expect(lobby.join('\n')).not.toContain('你是房間裡唯一的人')
+    expect(lobby).toContain('你若是最後一位成員，房間會直接被刪除') // 兩種人數下都成立
+    expect(lobby.join('\n')).not.toContain(`之後${REJOIN}`) // 無條件版不得出現
+    expect(lobby.join('\n')).toContain(`只要房間還在（你不是最後一位），之後仍${REJOIN}`)
+
+    for (const status of ['candidates', 'voting', 'decided'] as const) {
+      const points = leaveNotice(status, null, 'ABC123')
+      expect(points.join('\n')).not.toContain('你是房間裡唯一的人')
+      expect(points).toContain('你若是最後一位成員，房間會直接被刪除')
+    }
   })
 })
