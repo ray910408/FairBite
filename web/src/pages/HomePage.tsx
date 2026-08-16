@@ -214,7 +214,13 @@ export default function HomePage() {
         </div>
         <div className="flex items-center gap-2">
           <Link to="/history" className="btn btn-quiet min-h-11 px-3 text-sm">足跡</Link>
-          <button className="btn btn-quiet min-h-11 px-3 text-sm" onClick={() => supabase.auth.signOut()}>
+          {/* 登出走同一道 leavePending 閘門（比照建房/加入）：查房籍還在飛、或確認 dialog
+              開著時登出，App.tsx 的 auth listener 會卸載本頁，doLeave() 永遠不會執行，
+              伺服器端房籍留著——該使用者變成幽靈成員，條件與票繼續約束房間盤面。
+              閘門不會鎖死：fetchLeaveRooms 有 5 秒逾時，逾時也會開出 dialog，
+              兩顆按鈕都會讓 leavePending settle（roomMembership.test.ts 釘住那條出口） */}
+          <button className="btn btn-quiet min-h-11 px-3 text-sm" disabled={leavePending}
+            onClick={() => supabase.auth.signOut()}>
             <LogOut className="h-4 w-4" />
             登出
           </button>

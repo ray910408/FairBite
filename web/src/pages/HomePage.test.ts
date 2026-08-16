@@ -261,6 +261,72 @@ describe('HomePage 退房閘門', () => {
   })
 })
 
+// 登出沒有閘門就是幽靈成員的來源：查房籍還在飛、或確認 dialog 開著時登出，App.tsx 的
+// auth listener 會卸載 HomePage，doLeave() 永遠不會執行，伺服器端房籍留著——那個人的
+// 條件與票繼續約束房間盤面。原本 mount 是無條件立刻送 leaveRooms()，窗口只有毫秒級；
+// 改成「先查再問」之後窗口被拉長到「等一個人做決定」。
+describe('HomePage 登出閘門', () => {
+  beforeEach(() => {
+    mocks.refs = []
+    mocks.effects = []
+    mocks.navigate.mockReset()
+    mocks.getUid.mockReset().mockResolvedValue('user-1')
+    mocks.leaveRooms.mockReset().mockResolvedValue(undefined)
+    mocks.fetchLeaveRooms.mockReset().mockResolvedValue([])
+    mocks.locationState = null
+    stubSuggestionQueries()
+  })
+
+  async function render(pending: unknown, target: unknown = null) {
+    mocks.stateIndex = 0
+    mocks.refIndex = 0
+    mocks.refs = []
+    mocks.stateValues = []
+    mocks.stateValues[4] = { lat: 25.0478, lng: 121.517 }
+    mocks.stateValues[PENDING] = pending
+    mocks.stateValues[TARGET] = target
+    mocks.stateSetters = []
+    mocks.effects = []
+    const { default: HomePage } = await import('./HomePage')
+    return HomePage()
+  }
+
+  it('查房籍未 settle 前登出禁用（此時登出＝伺服器端留下幽靈房籍）', async () => {
+    expect(findButtonAnywhere(await render(true), '登出').props.disabled).toBe(true)
+  })
+
+  it('離席確認 dialog 開著時登出仍禁用（使用者還沒決定要不要退房）', async () => {
+    const tree = await render(true, { kind: 'rooms', rooms: [inRoom] })
+    expect(findButtonAnywhere(tree, '登出').props.disabled).toBe(true)
+  })
+
+  it('leave settle 後登出解禁', async () => {
+    expect(findButtonAnywhere(await render(false), '登出').props.disabled).toBe(false)
+  })
+
+  // 這條是本輪最容易被弄壞的地方：把登出掛上 leavePending 之後，任何讓 leavePending
+  // 永遠停在 true 的路徑都會把使用者鎖死在首頁（比幽靈房籍更糟）。懸掛的連線就是那條
+  // 路徑——fetchLeaveRooms 的 5 秒逾時把它併進「查詢失敗」（roomMembership.test.ts
+  // 釘住逾時本身），這裡把逾時之後的後半段走完：dialog 一定出得來，按下去一定解禁。
+  it('查詢逾時（回 null）：保守 dialog 出得來，按離開房間後登出鍵回到可用', async () => {
+    mocks.fetchLeaveRooms.mockResolvedValue(null) // 逾時與查詢失敗同一條路徑
+    const mounted = await render(true)
+    for (const fn of mocks.effects) fn()
+    await vi.waitFor(() =>
+      expect(mocks.stateSetters[TARGET]).toHaveBeenCalledWith({ kind: 'unknown' }))
+    expect(findButtonAnywhere(mounted, '登出').props.disabled).toBe(true) // 決定前仍鎖著
+
+    const withDialog = await render(true, { kind: 'unknown' })
+    const leave = findButton(withDialog, '離開房間')
+    if (!leave.props?.onClick) throw new Error('找不到離開房間按鈕')
+    await leave.props.onClick()
+    await vi.waitFor(() => expect(mocks.stateSetters[PENDING]).toHaveBeenCalledWith(false))
+
+    // 閘門解除後的那次繪製：登出鍵確實回到可用——沒有永久禁用這條路
+    expect(findButtonAnywhere(await render(false), '登出').props.disabled).toBe(false)
+  })
+})
+
 // ADR-0007（2026-08-16 修訂）：mount 是所有繞過路徑的咽喉，但不再靜默退房
 describe('HomePage mount 離席確認', () => {
   beforeEach(() => {

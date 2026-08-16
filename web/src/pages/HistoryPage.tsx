@@ -76,7 +76,10 @@ export default function HistoryPage() {
 
   function closeLeave() {
     setLeaveDialog(null)
-    leaveTriggerRef.current?.focus()
+    // 背景整塊帶著 inert：setLeaveDialog 不同步 flush，同一輪呼叫 focus() 時觸發元素
+    // 仍在 inert 子樹內，瀏覽器直接忽略、焦點掉回 body。排到移除 inert 的那次 commit
+    // 之後才還原（比照下面 onRated 的同款 rAF）。
+    requestAnimationFrame(() => leaveTriggerRef.current?.focus())
   }
 
   const onRated = useCallback((id: string, n: number) => {

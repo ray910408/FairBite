@@ -154,7 +154,10 @@ export default function RoomPage() {
 
   function closeLeave() {
     setLeaveDialog(null)
-    leaveTriggerRef.current?.focus() // 觸發元素不隨 dialog 卸載，直接還原焦點
+    // 觸發元素不隨 dialog 卸載，但背景整塊帶著 inert：setLeaveDialog 不同步 flush，
+    // 同一輪呼叫 focus() 時觸發元素仍在 inert 子樹內，瀏覽器直接忽略、焦點掉回 body。
+    // 排到移除 inert 的那次 commit 之後才還原（比照 HistoryPage 的 onRated）。
+    requestAnimationFrame(() => leaveTriggerRef.current?.focus())
   }
 
   // 一律攔下來當場查（比照 HistoryPage），不讀本頁任何本地狀態：

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // 足跡頁的「回首頁」同樣＝離席（ADR-0007，HomePage mount 無條件 leaveRooms），
 // 但只有「人還在房裡」時才該攔。風格比照 HomePage.test.ts：直接把 component 當函式呼叫。
@@ -88,6 +88,11 @@ async function clickHome(tree: unknown, label = '回首頁') {
   await onClick({ preventDefault, currentTarget: { focus: vi.fn() } })
   return preventDefault
 }
+
+// 關閉 dialog 後的焦點還原走 rAF（背景整塊 inert，要等移除它的那次 commit 才聚焦得到），
+// onRated 的收合也是——node 測試環境沒有這個瀏覽器全域，補一個等價的排程器
+beforeEach(() => vi.stubGlobal('requestAnimationFrame', (cb: () => void) => setTimeout(cb, 0)))
+afterEach(() => vi.unstubAllGlobals())
 
 beforeEach(() => {
   mocks.navigate.mockReset()
@@ -190,6 +195,42 @@ describe('足跡頁回首頁離席確認', () => {
     expect(mocks.stateSetters[DIALOG]).not.toHaveBeenCalled()
     onKeyDown({ key: 'Escape' })
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith(null)
+  })
+
+  // PR #17 回歸：背景整塊帶著 inert，而 setLeaveDialog(null) 不同步 flush——同一輪呼叫
+  // focus() 時觸發元素還在 inert 子樹內，瀏覽器直接忽略，焦點掉回 document.body。
+  // 斷言的是「延後」這件事本身：關閉當下不得呼叫 focus()，要等 rAF 那一拍才還原。
+  it('關閉後的焦點還原排到 rAF，不在還帶著 inert 的同一輪呼叫', async () => {
+    const raf = vi.fn((_cb: () => void) => 0)
+    vi.stubGlobal('requestAnimationFrame', raf)
+    try {
+      const tree = await render(oneRoom)
+      const focus = vi.fn()
+      // 觸發元素由 askLeave 當場記下（兩個回首頁入口共用一個 dialog）
+      const onClick = asHandler(findNode(tree, byText('a', '回首頁'))?.props?.onClick)
+      if (!onClick) throw new Error('找不到回首頁連結')
+      await onClick({ preventDefault: vi.fn(), currentTarget: { focus } })
+
+      raf.mockClear()
+      const cancel = findNode(tree, byText('button', '取消'))
+      ;(cancel!.props!.onClick as () => void)()
+      expect(focus).not.toHaveBeenCalled() // 這一輪背景還是 inert，現在 focus() 只會被忽略
+      expect(raf).toHaveBeenCalledTimes(1)
+      raf.mock.calls[0][0]()
+      expect(focus).toHaveBeenCalledTimes(1) // 下一幀 inert 已移除，這次才真的聚焦得到
+
+      raf.mockClear()
+      focus.mockClear()
+      const onKeyDown = findNode(tree, el => typeof el.props?.onKeyDown === 'function')!
+        .props!.onKeyDown as (e: { key: string }) => void
+      onKeyDown({ key: 'Escape' })
+      expect(focus).not.toHaveBeenCalled()
+      expect(raf).toHaveBeenCalledTimes(1)
+      raf.mock.calls[0][0]()
+      expect(focus).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   // fixed 遮罩擋得住指標，對 tab 順序毫無作用：沒有 inert，鍵盤可以 tab 到背景的

@@ -104,6 +104,11 @@ async function renderRoomPage() {
   return RoomPage()
 }
 
+// 關閉 dialog 後的焦點還原走 rAF（背景整塊 inert，要等移除它的那次 commit 才聚焦得到）
+// ——node 測試環境沒有這個瀏覽器全域，補一個等價的排程器
+beforeEach(() => vi.stubGlobal('requestAnimationFrame', (cb: () => void) => setTimeout(cb, 0)))
+afterEach(() => vi.unstubAllGlobals())
+
 describe('RoomPage meal_time draft intent', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -490,6 +495,47 @@ describe('回首頁離席確認', () => {
     expect(mocks.stateSetters[LEAVE_DIALOG]).not.toHaveBeenCalled()
     onKeyDown({ key: 'Escape' })
     expect(mocks.stateSetters[LEAVE_DIALOG]).toHaveBeenCalledWith(null)
+  })
+
+  // PR #17 回歸：背景整塊帶著 inert（fixed 遮罩對 tab 順序沒用，只好整塊 inert），
+  // 而 setLeaveDialog(null) 不同步 flush——同一輪呼叫 focus() 時觸發元素還在 inert
+  // 子樹內，瀏覽器直接忽略，焦點掉回 document.body。所以斷言的是「延後」這件事本身：
+  // 關閉當下不得呼叫 focus()，要等 rAF 那一拍（inert 已隨 commit 移除）才還原。
+  it('關閉後的焦點還原排到 rAF，不在還帶著 inert 的同一輪呼叫', async () => {
+    const raf = vi.fn((_cb: () => void) => 0)
+    vi.stubGlobal('requestAnimationFrame', raf)
+    try {
+      const tree = await mount({
+        kind: 'rooms',
+        rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 2, isHost: false }],
+      })
+      const focus = vi.fn()
+      const triggerRef = findNode(tree, el => el.props?.['aria-label'] === '回首頁')
+        ?.props?.ref as { current: unknown } | undefined
+      if (!triggerRef) throw new Error('header 回首頁連結沒有掛 ref')
+      triggerRef.current = { focus }
+
+      const cancel = findButton(tree, '取消')
+      if (!cancel.props?.onClick) throw new Error('找不到取消按鈕')
+      await cancel.props.onClick()
+      expect(focus).not.toHaveBeenCalled() // 這一輪背景還是 inert，現在 focus() 只會被忽略
+      expect(raf).toHaveBeenCalledTimes(1)
+      raf.mock.calls[0][0]()
+      expect(focus).toHaveBeenCalledTimes(1) // 下一幀 inert 已移除，這次才真的聚焦得到
+
+      // Esc 走同一條 closeLeave（實測就是 Esc 關閉後 activeElement 掉回 body）
+      raf.mockClear()
+      focus.mockClear()
+      const onKeyDown = findNode(tree, el => typeof el.props?.onKeyDown === 'function')!
+        .props!.onKeyDown as (e: { key: string }) => void
+      onKeyDown({ key: 'Escape' })
+      expect(focus).not.toHaveBeenCalled()
+      expect(raf).toHaveBeenCalledTimes(1)
+      raf.mock.calls[0][0]()
+      expect(focus).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('確認鍵是真正導航的連結，且帶「已確認」旗標避免首頁再問一次', async () => {
