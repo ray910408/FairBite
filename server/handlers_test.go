@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -147,17 +148,30 @@ type conditionUpdateProvider struct {
 }
 
 type cuisineUpdateProvider struct {
-	pool        *pgxpool.Pool
-	roomID      string
-	userID      string
-	restaurants []Restaurant
+	pool          *pgxpool.Pool
+	roomID        string
+	userID        string
+	restaurants   []Restaurant
+	addVegetarian bool
+	// removeVegetarian：檢索期間取消嚴格禁忌。envelope 變成超集，不該回 409。
+	removeVegetarian bool
 }
 
 func (cuisineUpdateProvider) Source() string { return "mock" }
 
 func (p cuisineUpdateProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int, _ []string) (PlacesSearchResult, error) {
-	if _, err := p.pool.Exec(ctx, `update room_members set cuisines = '["korean"]'
-		where room_id = $1 and user_id = $2`, p.roomID, p.userID); err != nil {
+	column := "cuisines"
+	value := `["korean"]`
+	if p.addVegetarian {
+		column = "dietary"
+		value = `["vegetarian"]`
+	}
+	if p.removeVegetarian {
+		column = "dietary"
+		value = `[]`
+	}
+	if _, err := p.pool.Exec(ctx, `update room_members set `+column+` = $3
+		where room_id = $1 and user_id = $2`, p.roomID, p.userID, value); err != nil {
 		return PlacesSearchResult{}, err
 	}
 	return PlacesSearchResult{Restaurants: append([]Restaurant(nil), p.restaurants...)}, nil
@@ -494,21 +508,35 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		filterEnabled bool
-		empty         bool
-		wantStatus    int
+		addVegetarian bool
+		// removeVegetarian 的兩列釘住方向性：取消嚴格禁忌讓 envelope 變成安全的超集，
+		// 不是 under-fetch，回 409 只會白丟一次已付費的搜尋（PR #18 codex review）。
+		// 兩條路徑各一列——有結果走 freeze.go 的閘門，零結果走 handlers 的 pre-freeze 檢查。
+		removeVegetarian bool
+		empty            bool
+		wantStatus       int
 	}{
 		{name: "過濾開啟", filterEnabled: true, wantStatus: http.StatusConflict},
 		{name: "過濾關閉", filterEnabled: false, wantStatus: http.StatusOK},
 		{name: "過濾開啟且零結果", filterEnabled: true, empty: true, wantStatus: http.StatusConflict},
 		{name: "過濾關閉且零結果", filterEnabled: false, empty: true, wantStatus: http.StatusUnprocessableEntity},
+		{name: "過濾關閉且勾素食", addVegetarian: true, wantStatus: http.StatusConflict},
+		{name: "過濾關閉且勾素食且零結果", addVegetarian: true, empty: true, wantStatus: http.StatusConflict},
+		{name: "過濾關閉且取消素食", removeVegetarian: true, wantStatus: http.StatusOK},
+		{name: "過濾關閉且取消素食且零結果", removeVegetarian: true, empty: true, wantStatus: http.StatusUnprocessableEntity},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := pool.Exec(ctx,
 				`update public.rooms set status = 'lobby', cuisine_filter = $2 where id = $1`, roomID, tc.filterEnabled); err != nil {
 				t.Fatal(err)
 			}
+			startDietary := `[]`
+			if tc.removeVegetarian {
+				startDietary = `["vegetarian"]`
+			}
 			if _, err := pool.Exec(ctx,
-				`update public.room_members set cuisines = '["ramen"]' where room_id = $1 and user_id = $2`, roomID, hostID); err != nil {
+				`update public.room_members set cuisines = '["ramen"]', dietary = $3 where room_id = $1 and user_id = $2`,
+				roomID, hostID, startDietary); err != nil {
 				t.Fatal(err)
 			}
 			providerRestaurants := restaurants
@@ -517,6 +545,7 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 			}
 			h := newTestAppWithProvider(t, pool, cuisineUpdateProvider{
 				pool: pool, roomID: roomID, userID: hostID, restaurants: providerRestaurants,
+				addVegetarian: tc.addVegetarian, removeVegetarian: tc.removeVegetarian,
 			})
 			r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
 			r.Header.Set("Authorization", "Bearer "+token)
@@ -525,10 +554,10 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 			if w.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d: %s", w.Code, tc.wantStatus, w.Body.String())
 			}
-			if tc.filterEnabled && !strings.Contains(w.Body.String(), searchConditionsChangedMessage) {
+			if tc.wantStatus == http.StatusConflict && !strings.Contains(w.Body.String(), searchConditionsChangedMessage) {
 				t.Fatalf("409 應回搜尋條件已變更：%s", w.Body.String())
 			}
-			if tc.empty && !tc.filterEnabled && !strings.Contains(w.Body.String(), `"error":"no_restaurants_in_range"`) {
+			if tc.empty && !tc.filterEnabled && !tc.addVegetarian && !strings.Contains(w.Body.String(), `"error":"no_restaurants_in_range"`) {
 				t.Fatalf("過濾關閉的零結果應維持 no_restaurants_in_range：%s", w.Body.String())
 			}
 		})
@@ -1584,6 +1613,94 @@ func TestSearchFallbackAllExcludedIncludesDegraded(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil ||
 		w.Code != http.StatusUnprocessableEntity || body.Error != "no_candidates" || !body.Degraded {
 		t.Fatalf("降級全排除應回 422 degraded=true：status %d body %s", w.Code, w.Body.String())
+	}
+}
+
+// PR #18 codex review：422 帶回的檢索失敗只能是嚴格禁忌詞。菜系支線失敗照 spec §7 容忍
+// 不降級，混進來會讓前端為一個可容忍的失敗改口叫人重試。兩條 422 都要帶——檢索掛掉時
+// 「附近沒餐廳」同樣可能只是結果不完整，而不是這區真的沒有。
+func TestSearchUnfulfilledDietaryTermsInBoth422Paths(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const (
+		hostID  = "3a3a3a3a-3a3a-3a3a-3a3a-3a3a3a3a3a3a"
+		roomID  = "3b3b3b3b-3b3b-3b3b-3b3b-3b3b3b3b3b3b"
+		placeID = "unfulfilled-dietary-excluded"
+	)
+	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+		values ($1, 'unfulfilled@test.dev') on conflict do nothing`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 23.9911, 121.6112)
+		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	// budget_max 50 讓唯一一家餐廳必被 kind "budget" 排除 → 走 no_candidates 那條 422。
+	if _, err = pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		values ($1, $2, 50, '[]', 2000, 'walking')
+		on conflict (room_id, user_id) do update set budget_max = excluded.budget_max,
+			cuisines = excluded.cuisines, max_distance_m = excluded.max_distance_m`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.restaurants where place_id = $1`, placeID)
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+	})
+
+	// dessert 是菜系、vegetarian 是 DietaryRequires 的嚴格禁忌：只有後者該露出。
+	unfulfilled := []string{"dessert", "vegetarian"}
+	doSearch := func(t *testing.T, result PlacesSearchResult) (int, []string, string) {
+		t.Helper()
+		h := newTestAppWithProvider(t, pool, resultProvider{result: result})
+		r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+		r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		var body struct {
+			Error       string   `json:"error"`
+			Unfulfilled []string `json:"unfulfilled_dietary_terms"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("回應不是 JSON：status %d body %s", w.Code, w.Body.String())
+		}
+		return w.Code, body.Unfulfilled, body.Error
+	}
+
+	code, got, kind := doSearch(t, PlacesSearchResult{
+		Restaurants: []Restaurant{{
+			PlaceID: placeID, Name: "全被預算排除", PrimaryType: "restaurant",
+			CuisineTags: []string{}, PriceLevel: 1, Lat: 23.9911, Lng: 121.6112,
+			Hours: daily([2]int{0, 1440}), Rating: 4,
+		}},
+		UnfulfilledTerms: unfulfilled,
+	})
+	if code != http.StatusUnprocessableEntity || kind != "no_candidates" ||
+		!slices.Equal(got, []string{"vegetarian"}) {
+		t.Fatalf("no_candidates 應只帶嚴格禁忌詞：status %d error %q unfulfilled %v", code, kind, got)
+	}
+
+	code, got, kind = doSearch(t, PlacesSearchResult{UnfulfilledTerms: unfulfilled})
+	if code != http.StatusUnprocessableEntity || kind != "no_restaurants_in_range" ||
+		!slices.Equal(got, []string{"vegetarian"}) {
+		t.Fatalf("no_restaurants_in_range 也應帶嚴格禁忌詞：status %d error %q unfulfilled %v", code, kind, got)
+	}
+
+	// 沒有失敗支線時必須是 []（非 null）：前端以長度分流，null 會讓型別斷言變成謊言。
+	code, got, kind = doSearch(t, PlacesSearchResult{})
+	if code != http.StatusUnprocessableEntity || kind != "no_restaurants_in_range" || got == nil || len(got) != 0 {
+		t.Fatalf("全部成功時應回空陣列：status %d error %q unfulfilled %v", code, kind, got)
 	}
 }
 

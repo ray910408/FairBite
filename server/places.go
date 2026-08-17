@@ -99,6 +99,12 @@ type PlacesSearchResult struct {
 	Restaurants             []Restaurant
 	RejectedPlaceIDs        []string // provider 已辨識但拒絕的列；handler 用既有 tombstone 路徑逐出快取
 	DiscardedClosedPlaceIDs []string // 連鎖去重落選的歇業分店，供 handler 併入 closedIDs 做 tombstone；不是非餐廳逐出的 RejectedPlaceIDs
+	// UnfulfilledTerms：本次要求了、但重試後仍未成功的定向檢索詞。
+	// 菜系失敗只是少了補召回（spec §7 容忍不降級）；嚴格禁忌（DietaryRequires）失敗
+	// 卻等於該成員零候選，而漂移閘門比對的是「要求的詞」不是「成功的詞」，攔不到。
+	// handler 用它把「檢索失敗」與「真的沒有」在 422 回應裡分開：以 strictDietaryTerms
+	// 篩出嚴格禁忌子集後放進 unfulfilled_dietary_terms，菜系詞留在這裡只供 log 與測試。
+	UnfulfilledTerms []string
 }
 
 type PlacesProvider interface {

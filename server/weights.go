@@ -9,13 +9,21 @@ const PriceLevelUnknown = -1
 
 var PriceLevelMaxTWD = map[int]int{0: 100, 1: 200, 2: 400, 3: 800, 4: 1600}
 
-// 菜系→Text Search 查詢詞（Round 3 spec §5.2；key 必須是 CUISINE_OPTIONS 的 cuisine key）。
+// 定向檢索的查詢詞（Round 3 spec §5.2）。key 有兩類：CUISINE_OPTIONS 的 cuisine key，
+// 以及 DietaryRequires 的嚴格禁忌 key（2026-08-16 起）。兩類都由 cuisineUnion 統一產出，
+// 送進 SearchNearby 的同一支 fan-out。
 // 查詢詞是檢索召回用，不是分類判準；調詞只影響召回率，正確性仍由候選管線把關。
 var CuisineSearchQueries = map[string]string{
 	"taiwanese": "台式料理", "japanese": "日式料理", "korean": "韓式料理",
 	"cantonese": "港式料理", "western": "西式料理", "fast_food": "速食",
 	"indian": "印度料理", "hotpot": "火鍋", "seafood": "海鮮餐廳",
 	"ramen": "拉麵", "dessert": "甜點", "light_meal": "輕食", "breakfast": "早午餐",
+	// vegetarian 不是 CUISINE_OPTIONS 的選項，而是 DietaryRequires 的嚴格禁忌；
+	// 放在這裡是因為 SearchNearby 的 fan-out 以 cuisineUnion 的元素查表，
+	// 由 cuisineUnion 負責在有成員勾素食時把這個 key 放進去（engine.go）。
+	// 由此產生的 QueryMatches 值為 "vegetarian"，不會被 memberLikes 讀到
+	// （它只走 m.Cuisines），也不會讓 DietaryRequires 誤放行（那只讀 canonical tags）。
+	"vegetarian": "素食",
 }
 
 // 衝突防護（Round 3 spec §5.3 決策 #9，條件式兩層；寧漏勿誤殺，表為資料可擴充）。

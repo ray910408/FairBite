@@ -17,6 +17,8 @@ export const DIETARY_OPTIONS: [string, string][] = [
   ['vegetarian', '素食'], ['no_beef', '不吃牛'], ['no_pork', '不吃豬'],
 ]
 
+export const DIETARY_LABEL = Object.fromEntries(DIETARY_OPTIONS)
+
 export const EXPLORATION_OPTIONS: [Room['exploration'], string, string][] = [
   ['familiar', '熟悉', '常去的店優先：新店加成關閉，最近去過的降權減半'],
   ['balanced', '平均', '預設的平衡配置'],

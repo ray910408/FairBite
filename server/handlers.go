@@ -386,15 +386,21 @@ func memberCuisinesDrifted(ctx context.Context, pool *pgxpool.Pool, roomID strin
 	if err := pool.QueryRow(ctx, `select cuisine_filter from rooms where id = $1`, roomID).Scan(&filterEnabled); err != nil {
 		return false, err
 	}
-	if !filterEnabled {
-		return false, nil
-	}
 	members, err := LoadMembers(ctx, pool, roomID)
 	if err != nil {
 		return false, err
 	}
-	// 期間全員退房：聯集變空 ≠ fetched 時刻意回 409（人走了條件確實變了，freeze 同樣會擋）；與 memberRadiusGrew 回 false 的不對稱是有意為之。
-	return !slices.Equal(cuisineUnion(members), fetched), nil
+	// 期間全員退房：聯集變空 ≠ fetched 時刻意回 409（人走了條件確實變了，freeze 同樣會擋）；
+	// 與 memberRadiusGrew 回 false 的不對稱是有意為之。
+	reloaded := cuisineUnion(members)
+	if slices.Equal(reloaded, fetched) {
+		return false, nil
+	}
+	// 閘門拆兩層的理由見 freeze.go——菜系吃 cuisine_filter，嚴格禁忌不吃、且只看新增方向。
+	if !filterEnabled {
+		return strictDietaryUnderFetched(reloaded, fetched), nil
+	}
+	return true, nil
 }
 
 func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider, inFlight *sync.Map) {
@@ -431,6 +437,11 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	var closedIDs []string
 	// 只涵蓋本次 provider 看見並拒絕的 ID；被 request blocklist 擋住的歷史快取需另行清理或等 TTL。
 	rejectedIDs := searchResult.RejectedPlaceIDs
+	// 嚴格禁忌（DietaryRequires）的定向檢索失敗＝該成員零候選，與「這區真的沒有」是兩種
+	// 死路：前者要叫人重試，後者才要叫人放寬。菜系檢索失敗只少了補召回（spec §7 容忍不
+	// 降級），刻意不進這個欄位——否則前端會為一個可容忍的失敗改口。兩條 422 都要帶，
+	// 檢索掛掉時「附近沒餐廳」同樣可能只是結果不完整。降級路徑的 searchResult 是零值。
+	unfulfilledDietary := nonNilKinds(strictDietaryTerms(searchResult.UnfulfilledTerms))
 	if err != nil {
 		log.Printf("places provider failed, falling back to cache: %v", err)
 		// provider 內已重試一次（spec §8）；此處 fallback 30 天內快取
@@ -518,9 +529,10 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		jsonOK(w, map[string]any{
-			"error":    "no_restaurants_in_range",
-			"message":  "此位置附近沒有餐廳資料，請調整位置或縮小距離再試",
-			"degraded": degraded,
+			"error":                     "no_restaurants_in_range",
+			"message":                   "此位置附近沒有餐廳資料，請調整位置或縮小距離再試",
+			"degraded":                  degraded,
+			"unfulfilled_dietary_terms": unfulfilledDietary,
 		})
 		return
 	}
@@ -584,6 +596,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		jsonOK(w, map[string]any{
 			"error": "no_candidates", "excluded": ex, "excluded_by": byKind, "degraded": degraded,
+			"unfulfilled_dietary_terms": unfulfilledDietary,
 		})
 		return
 	}

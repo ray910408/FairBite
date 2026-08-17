@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -166,6 +167,88 @@ func TestCuisineUnionIsSortedAndDeduplicated(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("cuisineUnion = %v，want %v", got, want)
+		}
+	}
+}
+
+// 素食是嚴格禁忌（DietaryRequires）：沒有專屬檢索支線，素食店永遠進不了池——
+// 2026-08-16 實測台北車站 1.5km 的 nearby 20 筆熱門中素食店為 0 家，
+// 但 textSearch「素食」在同一個圈撈到 15 家、其中 13 家帶 vegetarian_restaurant type。
+func TestCuisineUnionIncludesStrictDietaryAsSearchTerm(t *testing.T) {
+	members := []Member{
+		{UserID: "u1", Cuisines: []string{"japanese"}, Dietary: []string{"vegetarian"}},
+		{UserID: "u2", Cuisines: []string{"hotpot"}},
+	}
+	got := cuisineUnion(members)
+	want := []string{"hotpot", "japanese", "vegetarian"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("cuisineUnion = %v, want %v", got, want)
+	}
+}
+
+// 負向禁忌不需要召回：no_beef/no_pork 是排除條件，多撈牛肉麵店對它們毫無幫助，
+// 只會多花一次 Places 呼叫。只有 DietaryRequires 裡的嚴格禁忌才產生檢索詞。
+func TestCuisineUnionExcludesNegativeDietary(t *testing.T) {
+	members := []Member{
+		{UserID: "u1", Cuisines: []string{"ramen"}, Dietary: []string{"no_beef", "no_pork"}},
+	}
+	got := cuisineUnion(members)
+	want := []string{"ramen"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("cuisineUnion = %v, want %v", got, want)
+	}
+}
+
+func TestStrictDietaryTerms(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"空輸入", nil, nil},
+		{"無嚴格禁忌", []string{"hotpot", "japanese"}, nil},
+		{"只有嚴格禁忌", []string{"vegetarian"}, []string{"vegetarian"}},
+		{"混合輸入維持排序", []string{"hotpot", "japanese", "vegetarian"}, []string{"vegetarian"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := strictDietaryTerms(tc.in)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("strictDietaryTerms(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// 漂移閘門的方向性：只有「reload 後才要求、fetch 沒涵蓋」算 under-fetch。
+// 取消嚴格禁忌回 409 會白丟一次已付費的搜尋（PR #18 codex review）。
+func TestStrictDietaryUnderFetched(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		reloaded, fetched []string
+		want              bool
+	}{
+		{"完全相同", []string{"ramen", "vegetarian"}, []string{"ramen", "vegetarian"}, false},
+		{"新增嚴格禁忌＝under-fetch", []string{"ramen", "vegetarian"}, []string{"ramen"}, true},
+		{"取消嚴格禁忌＝安全的超集", []string{"ramen"}, []string{"ramen", "vegetarian"}, false},
+		{"只有菜系變動不算", []string{"korean"}, []string{"ramen"}, false},
+		{"從零到有", []string{"vegetarian"}, nil, true},
+		{"從有到零", nil, []string{"vegetarian"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := strictDietaryUnderFetched(tc.reloaded, tc.fetched); got != tc.want {
+				t.Errorf("strictDietaryUnderFetched(%v, %v) = %v, want %v",
+					tc.reloaded, tc.fetched, got, tc.want)
+			}
+		})
+	}
+}
+
+// 檢索支線要真的發得出去：fan-out 迴圈查不到查詢詞就 continue，會靜默失效。
+func TestVegetarianHasSearchQuery(t *testing.T) {
+	for key := range DietaryRequires {
+		if _, ok := CuisineSearchQueries[key]; !ok {
+			t.Errorf("嚴格禁忌 %q 沒有 Text Search 查詢詞——"+
+				"定向檢索會對它靜默失效（SearchNearby fan-out 的 continue 分支）", key)
 		}
 	}
 }

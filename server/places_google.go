@@ -31,18 +31,20 @@ func NewGooglePlacesProvider(apiKey, baseURL string) PlacesProvider {
 	return &googleProvider{apiKey, baseURL, &http.Client{Timeout: 10 * time.Second}}
 }
 
-// Google type → 本專案 cuisine tags（詞彙見 CONTEXT.md；未列入者不產 tag，只影響偏好不影響排除）。
+// Google type → 本專案 cuisine tags（詞彙見 CONTEXT.md）。
+// 未列入者不產 tag，而沒有 tag 不是無害的：cuisine_filter 開啟時會被 engine.go 的
+// kind "cuisine" 硬排除，素食成員面前會被 kind "dietary" 硬排除。所以「不對映」必須是
+// 寫下理由的決定（googleTypesDeliberatelyUnmapped），不能是漏網。
 // hamburger_restaurant 維持 western，不一律推定為速食；麥當勞另有 fast_food_restaurant，會同時取得兩個 tag。
 var googleTypeTags = map[string][]string{
 	"japanese_restaurant":   {"japanese"},
 	"ramen_restaurant":      {"japanese", "ramen"},
-	"sushi_restaurant":      {"japanese", "sushi"},
+	"sushi_restaurant":      {"japanese"}, // 不產 sushi：無消費端，見 tags_test.go 的 knownTagVocabulary
 	"korean_restaurant":     {"korean"},
-	"chinese_restaurant":    {"taiwanese"}, // ponytail: 台灣情境下最接近使用者認知的歸類
 	"cantonese_restaurant":  {"cantonese"},
 	"dim_sum_restaurant":    {"cantonese", "dimsum"}, // dimsum 供 no_pork 硬排除比對（weights.go DietaryConflicts）
 	"hot_pot_restaurant":    {"hotpot"},
-	"indian_restaurant":     {"indian", "curry"},
+	"indian_restaurant":     {"indian"}, // 不產 curry：無消費端，見 tags_test.go 的 knownTagVocabulary
 	"seafood_restaurant":    {"seafood"},
 	"steak_house":           {"steak", "western"},
 	"american_restaurant":   {"western"},
@@ -63,6 +65,46 @@ var googleTypeTags = map[string][]string{
 	"brunch_restaurant":     {"breakfast"},
 	"vegetarian_restaurant": {"vegetarian_friendly"},
 	"vegan_restaurant":      {"vegetarian_friendly"},
+
+	// 2026-08-16 普查補齊：以下 type 的菜系歸屬單一明確，不需要 query match 補救。
+	// taiwanese_restaurant 是本次最大缺口——259 家樣本中 64 家帶此 type，
+	// 其中 40 家（63%）沒有 chinese_restaurant，現行對映完全撈不到。
+	"taiwanese_restaurant":        {"taiwanese"},
+	"western_restaurant":          {"western"},
+	"european_restaurant":         {"western"},
+	"japanese_izakaya_restaurant": {"japanese"},
+	"yakiniku_restaurant":         {"japanese"},
+	"japanese_curry_restaurant":   {"japanese"}, // 同 indian_restaurant：curry 無消費端，由 knownTagVocabulary 把關
+}
+
+// googleTypesDeliberatelyUnmapped：觀測到但刻意不產 canonical tag 的 Google type。
+// 兩類理由：(1) 該 type 涵蓋多個互斥菜系，產窄義 tag 就是猜——交由 ADR-0006 的房間層
+// query match 承接；(2) CUISINE_OPTIONS 沒有對應選項，要新增屬產品決策不是對映疏漏。
+// 這張表存在的意義是讓「不對映」變成寫下理由的決定，而不是靜默的漏網
+// （tags_test.go TestObservedGoogleTypesAreMappedOrDeliberatelyUnmapped 把關）。
+var googleTypesDeliberatelyUnmapped = map[string]string{
+	"noodle_shop":               "台式麵店與拉麵店共用此 type（ADR-0006 明列此例）；廣義訊號不產窄義 tag",
+	"chinese_noodle_restaurant": "同 noodle_shop：台/中/港麵食共用",
+	"chinese_restaurant":       "2026-08-16 實測 165 家：15% 台菜、14% 港式、72% 無從分辨——" +
+		"精確訊號改用 taiwanese_restaurant，餘者交由 query match",
+	"asian_restaurant":          "涵蓋全亞洲，無對應窄義 cuisine",
+	"bistro":                    "2026-08-16 實測含韓式酒館、法式小館、台式餐酒館——無單一歸屬",
+	"dumpling_restaurant":       "台式水餃與上海小籠共用",
+	"cafeteria":                 "自助餐，菜系不定",
+	"buffet_restaurant":         "吃到飽，菜系不定",
+	"chicken_restaurant":        "鹹酥雞、美式炸雞、雞湯共用，無對應 cuisine option",
+	"chicken_wings_restaurant":  "同 chicken_restaurant",
+	"kebab_shop":                "無對應 cuisine option",
+	"bar":                       "非供餐場所；meal gate 已擋，這裡只是登記已看過",
+	"thai_restaurant":           "CUISINE_OPTIONS 無泰式；新增選項屬產品決策",
+	"malaysian_restaurant":      "同 thai_restaurant",
+	"australian_restaurant":     "同 thai_restaurant",
+	"hawaiian_restaurant":       "同 thai_restaurant",
+	"pakistani_restaurant":      "與 indian 菜系相鄰但不同源，不擅自併入",
+	"restaurant":                "Google 的通用餐飲分類，不帶菜系訊號",
+	"food":                      "同 restaurant：通用分類",
+	"point_of_interest":         "Google 的地點通用分類，與餐飲無關",
+	"establishment":             "同 point_of_interest：通用分類",
 }
 
 // Google 的 includedTypes 會比對所有 types；只有 primaryType 能表示場所的主要用途。
@@ -128,10 +170,9 @@ type gPlace struct {
 		Latitude  float64 `json:"latitude"`
 		Longitude float64 `json:"longitude"`
 	} `json:"location"`
-	FormattedAddress     string  `json:"formattedAddress"`
-	Rating               float64 `json:"rating"`
-	ServesVegetarianFood bool    `json:"servesVegetarianFood"`
-	RegularOpeningHours  struct {
+	FormattedAddress    string  `json:"formattedAddress"`
+	Rating              float64 `json:"rating"`
+	RegularOpeningHours struct {
 		Periods []struct {
 			Open  gPoint  `json:"open"`
 			Close *gPoint `json:"close"`
@@ -181,7 +222,7 @@ func (g *googleProvider) fetchPlaces(ctx context.Context, endpoint string, body 
 	req.Header.Set("X-Goog-Api-Key", g.apiKey)
 	req.Header.Set("X-Goog-FieldMask",
 		"places.id,places.displayName,places.types,places.primaryType,places.priceLevel,places.location,"+
-			"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours,places.servesVegetarianFood")
+			"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours")
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return nil, nil, err
@@ -199,15 +240,50 @@ func (g *googleProvider) fetchPlaces(ctx context.Context, endpoint string, body 
 	}
 	kept := out.Places[:0]
 	var rejected []string
+	unknown := map[string]bool{}
+	untagged := 0
 	for _, p := range out.Places {
 		if !gIsMealPrimaryType(p.PrimaryType) {
 			rejected = append(rejected, p.ID)
 			continue
 		}
+		// 兩道 runtime 回饋，回答不同問題（eng review D2／T2），同一趟 types 掃描算完——
+		// 別為了第二個訊號再呼叫一次 gTags：它每次都配置 map＋slice，而這是搜尋熱路徑
+		// （K+1 支並行呼叫 × 每支最多 20 筆）。
+		// (1) 未分類的 type：警報。穩態靜音，一出現就代表 tags_test.go 的 census 過期了——
+		//     census 是手抄快照，擋不到 Google 之後新增的 type，那正是 TODOS.md:22 假結案的形狀。
+		// (2) 零 tag 家數：健康度。含刻意不對映的類型（麵店等），所以每次都會有數字——
+		//     它量的是「刻意不對映的實際代價」，將來要不要把 noodle_shop 拉進來有數據可講。
+		tagged := false
+		for _, gt := range p.Types {
+			if mapped, ok := googleTypeTags[gt]; ok {
+				// 與 gTags 逐字等價：空 slice 的對映不產 tag，這裡也不得算「有 tag」。
+				tagged = tagged || len(mapped) > 0
+				continue
+			}
+			if _, waived := googleTypesDeliberatelyUnmapped[gt]; waived {
+				continue
+			}
+			unknown[gt] = true
+		}
+		if !tagged {
+			untagged++
+		}
 		kept = append(kept, p)
 	}
 	if len(rejected) > 0 {
 		log.Printf("primaryType 過濾掉 %d 筆非餐廳", len(rejected))
+	}
+	if untagged > 0 {
+		log.Printf("零 cuisine tag %d/%d 筆（含刻意不對映；勾任何菜系都選不到，cuisine_filter 開啟時被硬排除）", untagged, len(kept))
+	}
+	if len(unknown) > 0 {
+		keys := make([]string, 0, len(unknown))
+		for gt := range unknown {
+			keys = append(keys, gt)
+		}
+		sort.Strings(keys) // 決定性輸出，log 才好比對
+		log.Printf("未分類的 Google type %v——補進 googleTypeTags 或 googleTypesDeliberatelyUnmapped，並更新 tags_test.go 的 observedGoogleTypes", keys)
 	}
 	return kept, rejected, nil
 }
@@ -286,16 +362,18 @@ func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, 
 }
 
 // handleSearch（host 按「開始搜尋餐廳」）          Google Places API (New)
-//   │ members(call-time) → cuisineUnion(K 個菜系)
+//   │ members(call-time) → cuisineUnion(K 個菜系 ＋ 嚴格禁忌檢索詞)
 //   ▼
 // SearchNearby(lat, lng, radiusM, cuisines)
 //   ├─ searchNearby ────────────────────────────► 20 筆熱門（圓形 locationRestriction）
 //   │    └─ 失敗（重試×2 後）→ 取消在途 text → 整體 error → handler 走 30 天快取 fallback（text 結果全棄）
 //   ├─ ∥ textSearch("拉麵") ─────────────────────► ≤15 筆語意相關（pageSize 15，eng review 6）
 //   ├─ ∥ textSearch("火鍋") … K 支並行 ──────────►（locationBias 圓＋haversine 硬過濾 radiusM 外）
+//   ├─ ∥ textSearch("素食")（僅當有成員勾嚴格禁忌）──►（QueryMatches 標 "vegetarian"，
+//   │                                                   memberLikes 與 DietaryRequires 都不讀它）
 //   │    ├─ meal gate：gIsMealPrimaryType fail-closed（拒者入 RejectedPlaceIDs）
 //   │    ├─ 衝突防護：tier1 甜品專門型拒 match／tier2 純輕飲無供餐證據拒 match（店保留、match 不標）
-//   │    └─ 失敗（重試×2 後）→ log 容忍，其餘支照常（部分成功不降級）
+//   │    └─ 失敗（重試×2 後）→ log 容忍並記入 UnfulfilledTerms，其餘支照常（部分成功不降級）
 //   ▼
 // merge by place_id：QueryMatches 聯集；RejectedPlaceIDs 聯集去重
 //   → dedupeChains：同 chainKey（連鎖）只留離圓心最近分店、matches 聯集（不進 Rejected；落選歇業分店→DiscardedClosed 供 tombstone）
@@ -303,15 +381,16 @@ func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, 
 //   ▼
 // closed→tombstone／rejected→逐出 ▶ 快取交易先 commit（restaurants upsert；QueryMatches 不落快取）
 //   ▼
-// 候選交易：freeze（tx 內重讀 cuisine_filter＋成員、半徑收斂）
+// 候選交易：freeze（tx 內重讀 cuisine_filter＋成員、半徑收斂、檢索詞漂移：菜系吃過濾閘門／嚴格禁忌不吃）
 //   → Evaluate（memberLikes = tags ∪ query_matches；cuisine_filter=true 時菜系為硬性條件 kind "cuisine"）
 //   → ReplaceCandidates（query_matches 隨 kept/excluded 列落 room_candidates）→ rescore/draw 讀同欄位回圈
 func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, radiusM int, cuisines []string) (PlacesSearchResult, error) {
 	textCtx, cancelText := context.WithCancel(ctx)
 	defer cancelText()
 	type textOut struct {
-		rs       []Restaurant
-		rejected []string
+		rs         []Restaurant
+		rejected   []string
+		failedTerm string
 	}
 	var (
 		base    PlacesSearchResult
@@ -348,15 +427,19 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 				}
 				rs, rejected, err := g.textSearch(textCtx, cuisine, query, lat, lng, radiusM)
 				if err == nil {
-					outs[i] = textOut{rs, rejected}
+					outs[i] = textOut{rs: rs, rejected: rejected}
 					return
 				}
 				if textCtx.Err() != nil {
 					return
 				}
-				if attempt == 1 && !errors.Is(err, context.Canceled) {
-					// 單支定向檢索失敗只容忍不降級（spec §7）：nearby 池仍在，缺的只是該菜系的補召回
-					log.Printf("text search %q failed after retry: %v", cuisine, err)
+				if attempt == 1 {
+					// 菜系仍只少了補召回、照 spec §7 容忍不降級；嚴格禁忌則由
+					// UnfulfilledTerms 帶回 handler，讓 422 能區分檢索失敗與真的沒有。
+					outs[i].failedTerm = cuisine
+					if !errors.Is(err, context.Canceled) {
+						log.Printf("text search %q failed after retry: %v", cuisine, err)
+					}
 				}
 			}
 		}(i, c, q)
@@ -375,6 +458,9 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 		rejectedSeen[id] = true
 	}
 	for _, o := range outs {
+		if o.failedTerm != "" {
+			base.UnfulfilledTerms = append(base.UnfulfilledTerms, o.failedTerm)
+		}
 		for _, r := range o.rs {
 			if idx, ok := byPlaceID[r.PlaceID]; ok {
 				// 既有列：併入 query match（union，避免重複）
@@ -399,6 +485,7 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 	for i := range base.Restaurants {
 		sort.Strings(base.Restaurants[i].QueryMatches) // 決定性輸出，測試與 trace 穩定
 	}
+	sort.Strings(base.UnfulfilledTerms) // 決定性輸出，供 422 診斷與測試
 	return base, nil
 }
 
@@ -522,9 +609,6 @@ func gTags(p gPlace) []string {
 		for _, t := range googleTypeTags[gt] {
 			add(t)
 		}
-	}
-	if p.ServesVegetarianFood {
-		add("vegetarian_friendly")
 	}
 	return tags
 }

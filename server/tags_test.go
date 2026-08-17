@@ -40,7 +40,7 @@ func webOptionKeys(t *testing.T, constName string) []string {
 	return keys
 }
 
-// googleProducibleTags 走真實的 gTags 對映（含 servesVegetarianFood 路徑），
+// googleProducibleTags 走真實的 gTags 對映，
 // 不複製對映表——表變測試就跟著變。
 func googleProducibleTags() map[string]bool {
 	out := map[string]bool{}
@@ -48,9 +48,6 @@ func googleProducibleTags() map[string]bool {
 		for _, tag := range gTags(gPlace{Types: []string{gt}}) {
 			out[tag] = true
 		}
-	}
-	for _, tag := range gTags(gPlace{ServesVegetarianFood: true}) {
-		out[tag] = true
 	}
 	return out
 }
@@ -165,5 +162,85 @@ func TestDietaryRequiredTagsCoverage(t *testing.T) {
 	sort.Strings(googleGap)
 	if !reflect.DeepEqual(googleGap, []string{}) {
 		t.Errorf("DietaryRequires 的 Google 缺口 = %v，want []——缺口變動必須是刻意決策", googleGap)
+	}
+}
+
+// observedGoogleTypes：2026-08-16 對台北四個點（台北車站／信義／東區忠孝復興／公館，
+// 半徑 1500m）呼叫 Places API (New) searchNearby 與 13 個菜系 searchText 後，實際
+// 出現在餐飲類結果裡的 Google type 普查。這份清單是快照不是真理——Google 會新增 type，
+// 重跑普查後把新出現的補進來，讓測試繼續代表現實。
+var observedGoogleTypes = []string{
+	// 已對映
+	"japanese_restaurant", "ramen_restaurant", "sushi_restaurant", "korean_restaurant",
+	"chinese_restaurant", "cantonese_restaurant", "dim_sum_restaurant", "hot_pot_restaurant",
+	"indian_restaurant", "seafood_restaurant", "steak_house", "american_restaurant",
+	"italian_restaurant", "french_restaurant", "hamburger_restaurant", "fast_food_restaurant",
+	"pizza_restaurant", "dessert_restaurant", "ice_cream_shop", "dessert_shop",
+	"sandwich_shop", "salad_shop", "deli", "cafe", "coffee_shop",
+	"breakfast_restaurant", "brunch_restaurant", "vegetarian_restaurant", "vegan_restaurant",
+	// 本次普查新發現
+	"taiwanese_restaurant", "western_restaurant", "european_restaurant",
+	"japanese_izakaya_restaurant", "yakiniku_restaurant", "japanese_curry_restaurant",
+	"noodle_shop", "chinese_noodle_restaurant", "asian_restaurant", "bistro",
+	"dumpling_restaurant", "cafeteria", "buffet_restaurant", "chicken_restaurant",
+	"chicken_wings_restaurant", "kebab_shop", "bar", "thai_restaurant",
+	"malaysian_restaurant", "australian_restaurant", "hawaiian_restaurant",
+	"pakistani_restaurant",
+	"restaurant", "food", "point_of_interest", "establishment",
+}
+
+// 打標是 fail-open：沒列進 googleTypeTags 的 type 靜默產出 0 個 tag，沒有任何訊號會叫。
+// 這道測試把它變成 fail-closed——比照 gIsMealPrimaryType 對 meal gate 的紀律
+// （places_google.go:96）。不對映是合法選擇，但必須是寫下理由的選擇。
+func TestObservedGoogleTypesAreMappedOrDeliberatelyUnmapped(t *testing.T) {
+	for _, gt := range observedGoogleTypes {
+		_, mapped := googleTypeTags[gt]
+		reason, waived := googleTypesDeliberatelyUnmapped[gt]
+		switch {
+		case mapped && waived:
+			t.Errorf("Google type %q 同時在 googleTypeTags 與刻意不對映清單裡——擇一", gt)
+		case !mapped && !waived:
+			t.Errorf("Google type %q 既未對映也未列入刻意不對映清單；"+
+				"打標 fail-open，漏一個就靜默產 0 個 tag", gt)
+		case waived && reason == "":
+			t.Errorf("Google type %q 列在刻意不對映清單但沒寫理由", gt)
+		}
+	}
+}
+
+// knownTagVocabulary：已知 tag ＝ 有消費者的 tag。刻意從消費端推導而不是手抄清單——
+// 手抄清單會同時祝福「產得出但沒人讀」與「有人讀但產不出」兩種孤兒，而那兩種孤兒
+// 正是本輪根因的一體兩面（beef_noodle 是後者，sushi/curry 是前者）。
+// 新增一個手抄白名單，就是在新增一個「誰也不用對帳」的地方。
+func knownTagVocabulary(t *testing.T) map[string]bool {
+	t.Helper()
+	known := map[string]bool{}
+	for _, key := range webOptionKeys(t, "CUISINE_OPTIONS") {
+		known[key] = true
+	}
+	for _, req := range DietaryRequires {
+		known[req] = true
+	}
+	for _, tags := range DietaryConflicts {
+		for _, tag := range tags {
+			known[tag] = true
+		}
+	}
+	return known
+}
+
+// 沒有豁免清單、沒有逃生門：想產一個沒人讀的 tag 就是不行。
+// eng review T3（採納 outside voice）：原本設計了一張 unconsumedTags 登記表收容
+// sushi/curry，但為兩個死字串蓋一整套登記機制，比直接不要產它們更複雜——而且
+// 登記了不等於修了，它們還是會繼續寫進 prod DB。Step 5 直接移除那兩個 tag。
+func TestGoogleTypeTagsProduceOnlyKnownVocabulary(t *testing.T) {
+	known := knownTagVocabulary(t)
+	for gt, tags := range googleTypeTags {
+		for _, tag := range tags {
+			if !known[tag] {
+				t.Errorf("googleTypeTags[%q] 產出 %q，但沒有任何消費端會讀它——"+
+					"不是打錯字，就是這個 tag 不該存在", gt, tag)
+			}
+		}
 	}
 }

@@ -282,15 +282,20 @@ func TestGoogleProviderMapping(t *testing.T) {
 	if sushi.PrimaryType != "sushi_restaurant" {
 		t.Errorf("primaryType 必須帶入快取判斷欄位，got %q", sushi.PrimaryType)
 	}
-	if !hasTag(sushi.CuisineTags, "japanese") || !hasTag(sushi.CuisineTags, "sushi") {
-		t.Errorf("types 應映到 japanese+sushi：%v", sushi.CuisineTags)
+	if !hasTag(sushi.CuisineTags, "japanese") {
+		t.Errorf("types 應映到 japanese：%v", sushi.CuisineTags)
 	}
 	if !sushi.Hours.IsOpenAt(at(time.Monday, 12, 0)) || sushi.Hours.IsOpenAt(at(time.Monday, 23, 0)) {
 		t.Error("一般營業時段轉換錯誤")
 	}
 	late := byPID["gp-2"]
-	if !hasTag(late.CuisineTags, "vegetarian_friendly") {
-		t.Errorf("servesVegetarianFood 應產 vegetarian_friendly：%v", late.CuisineTags)
+	// gp-2 的 fixture 是 types 只有 restaurant、servesVegetarianFood 為 true 的葷店。
+	// Google 那個欄位表示「菜單有素的」，不是「素食餐廳」（2026-08-16 實測 36% 命中率，
+	// 含雞湯店與港式飲茶）。vegetarian 是 DietaryRequires 的嚴格禁忌（engine.go hardExclude），
+	// 誤放行的代價是素食者吃到葷的。fixture 的 JSON 欄位刻意留著：Go 忽略未知欄位，
+	// 所以這道斷言在 gPlace 移除該欄位之後依然有效——有人把分支加回來就立刻紅。
+	if hasTag(late.CuisineTags, "vegetarian_friendly") {
+		t.Errorf("servesVegetarianFood 不得產出 vegetarian_friendly：%v", late.CuisineTags)
 	}
 	if late.PriceLevel != PriceLevelUnknown {
 		t.Errorf("缺 priceLevel 應為 PriceLevelUnknown，got %d", late.PriceLevel)
@@ -471,6 +476,9 @@ func TestGoogleSearchNearbyCuisineFanOut(t *testing.T) {
 	if _, nearbyOK := byID["near-1"]; !nearbyOK {
 		t.Error("單支失敗時 nearby 結果必須保留")
 	}
+	if !slices.Equal(result.UnfulfilledTerms, []string{"dessert"}) {
+		t.Errorf("重試後仍失敗的定向檢索詞必須回報，got %v", result.UnfulfilledTerms)
+	}
 }
 
 func TestGoogleSearchNearbyFailureFailsWholeSearch(t *testing.T) {
@@ -648,5 +656,109 @@ func TestDedupeChainsFiltersTier1InheritedMatches(t *testing.T) {
 	}, 25.0478, 121.5170)
 	if len(got) != 1 || got[0].PlaceID != "dessert-near" || slices.Contains(got[0].QueryMatches, "ramen") {
 		t.Fatalf("甜品留存分店不可繼承姐妹店的熱食 match，got %+v", got)
+	}
+}
+
+// 本輪（2026-08-16 普查）新增的對映逐條釘住。只釘新增的：既有對映已在線上跑過，
+// 把整張表抄一遍是 DRY 違反，且未來每次正常擴充都要改兩個地方。
+func TestNewGoogleTypeMappings(t *testing.T) {
+	for _, tc := range []struct {
+		gtype string
+		want  []string
+	}{
+		{"taiwanese_restaurant", []string{"taiwanese"}},
+		{"western_restaurant", []string{"western"}},
+		{"european_restaurant", []string{"western"}},
+		{"japanese_izakaya_restaurant", []string{"japanese"}},
+		{"yakiniku_restaurant", []string{"japanese"}},
+		{"japanese_curry_restaurant", []string{"japanese"}},
+	} {
+		got := gTags(gPlace{Types: []string{"restaurant", tc.gtype}})
+		for _, want := range tc.want {
+			if !hasTag(got, want) {
+				t.Errorf("%s 應產出 %q，got %v", tc.gtype, want, got)
+			}
+		}
+	}
+}
+
+// chinese_restaurant 涵蓋台菜、港式與其他中菜。2026-08-16 實測 259 家樣本中 165 家帶此
+// type：15% 也有 taiwanese_restaurant（真台菜）、14% 也有 cantonese/dim_sum（港式，卻被
+// 標成台式）、72% 兩者皆無而無從分辨。誤標實例：玖龍冰室香港茶餐廳、富宴精緻粵菜港式飲茶。
+// 精確訊號 taiwanese_restaurant 已於同批變更對映，這條猜測不再需要。
+func TestChineseRestaurantDoesNotImplyTaiwanese(t *testing.T) {
+	p := gPlace{Types: []string{"restaurant", "chinese_restaurant"}}
+	if hasTag(gTags(p), "taiwanese") {
+		t.Errorf("chinese_restaurant 單獨產出 taiwanese；gTags = %v", gTags(p))
+	}
+}
+
+// 反向：真台菜店的 canonical tag 必須留住。
+func TestTaiwaneseRestaurantTypeGrantsTaiwanese(t *testing.T) {
+	p := gPlace{Types: []string{"restaurant", "taiwanese_restaurant", "chinese_restaurant"}}
+	if !hasTag(gTags(p), "taiwanese") {
+		t.Errorf("taiwanese_restaurant 沒有產出 taiwanese；gTags = %v", gTags(p))
+	}
+}
+
+// 港式店最常見的 type 組合不得再被標成台式。
+func TestCantoneseRestaurantIsNotTaggedTaiwanese(t *testing.T) {
+	p := gPlace{Types: []string{"restaurant", "chinese_restaurant", "cantonese_restaurant"}}
+	tags := gTags(p)
+	if hasTag(tags, "taiwanese") {
+		t.Errorf("港式店被標成 taiwanese；gTags = %v", tags)
+	}
+	if !hasTag(tags, "cantonese") {
+		t.Errorf("港式店少了 cantonese；gTags = %v", tags)
+	}
+}
+
+// 降級模式的已接受代價（eng review T4）：只帶 chinese_restaurant 的真台菜，
+// 在 provider 失敗走快取時沒有 canonical taiwanese、也沒有 query match（ADR-0006：
+// query_matches 不進 restaurants 快取），cuisine_filter 開啟時會被硬排除。
+// 主路徑靠「台式料理」定向檢索補回；本測試釘住降級側的行為，讓它是已知狀態不是意外。
+func TestChineseOnlyRestaurantHasNoTaiwaneseSignalWithoutQueryMatch(t *testing.T) {
+	r := gRestaurant(gPlace{Types: []string{"restaurant", "chinese_restaurant"}})
+	if hasTag(r.CuisineTags, "taiwanese") {
+		t.Errorf("chinese_restaurant 不應產出 canonical taiwanese：%v", r.CuisineTags)
+	}
+	if len(r.QueryMatches) != 0 {
+		t.Errorf("未經 textSearch 的列不得帶 query match：%v", r.QueryMatches)
+	}
+}
+
+// 真素食店的 canonical tag 必須留住，否則 Task 2 補的召回會白費。
+func TestVegetarianRestaurantTypeStillGrantsTag(t *testing.T) {
+	for _, gt := range []string{"vegetarian_restaurant", "vegan_restaurant"} {
+		p := gPlace{Types: []string{"restaurant", gt}}
+		if !hasTag(gTags(p), "vegetarian_friendly") {
+			t.Errorf("type %q 沒有產出 vegetarian_friendly；gTags = %v", gt, gTags(p))
+		}
+	}
+}
+
+// FieldMask 決定計費 SKU，而計費取請求中最高的那一階。servesVegetarianFood 屬
+// Enterprise + Atmosphere（最貴），本專案要的其他欄位最高只到 Enterprise——所以在
+// 2026-08-16 移除它之前，每一次 nearby 與 text search 都被計在最貴的一階。
+// outdoorSeating、takeout、reviews、任何 serves* 欄位都會把它推回去，而成本回升
+// 不會出現在任何測試、log 或 review 的直覺裡，只會出現在下個月的帳單。
+// 刻意比對整串字面值而不是維護一份 Atmosphere 欄位黑名單：黑名單要手抄、會過期，
+// 而且 Google 新增貴欄位時不會自己長出來（那正是本輪在拆的反模式）。
+// SKU 對照：https://developers.google.com/maps/billing-and-pricing/sku-details
+func TestFieldMaskIsPinned(t *testing.T) {
+	const want = "places.id,places.displayName,places.types,places.primaryType,places.priceLevel,places.location," +
+		"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours"
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Goog-FieldMask")
+		_, _ = w.Write([]byte(`{"places":[]}`))
+	}))
+	defer srv.Close()
+	g := NewGooglePlacesProvider("k", srv.URL)
+	if _, err := g.SearchNearby(context.Background(), 25.0478, 121.5170, 1000, nil); err != nil {
+		t.Fatalf("SearchNearby: %v", err)
+	}
+	if got != want {
+		t.Errorf("FieldMask 變了。改動會移動計費 SKU，請在 PR 描述交代為什麼。\ngot  %q\nwant %q", got, want)
 	}
 }
