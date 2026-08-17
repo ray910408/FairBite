@@ -16,6 +16,12 @@
 -- NULL 不是 TRUE——直接寫 `primary_type not in (...)` 會讓所有 0014 之前寫入的列
 -- 全數躲過清理，而且驗證 query 若複製同一個寫法會回 0，看起來乾淨。用 coalesce 蓋掉。
 --
+-- 只清 source = 'google'（PR #18 codex review）：誤標出自 Google adapter 的 gTags，
+-- mock provider 的列是從 mockdata.go 的人工策展資料逐字寫入的，不可能帶這個缺陷。
+-- 清掉它們只會毀掉策展事實（例：復興清粥小菜的 vegetarian_friendly），而那些列要等到
+-- 下次 mock 搜尋才自癒，期間歷史紀錄與偏好學習讀到的是被削過的 tag。用正面表列而非
+-- `<> 'mock'`：第三個 provider 進來時「不是 mock」不等於「是 google」（db.go:311 同款理由）。
+--
 -- 冪等：jsonb 的 `-` 運算子對不存在的元素是 no-op，重跑安全。這點在本輪很重要——
 -- Go server（Render）與 migration（GitHub Actions）的部署先後沒有定義，若 migration
 -- 先跑而舊 binary 還在服務，tag 會被寫回去，屆時重跑本檔即可。
@@ -24,4 +30,5 @@
 update public.restaurants
 set cuisine_tags = cuisine_tags - 'vegetarian_friendly'
 where cuisine_tags @> '["vegetarian_friendly"]'::jsonb
+  and source = 'google'
   and coalesce(primary_type, '') not in ('vegetarian_restaurant', 'vegan_restaurant');

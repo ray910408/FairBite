@@ -24,6 +24,13 @@
 -- 的 `NULL <> '...'` 求值為 NULL 不是 TRUE——直接比對會讓 0014 之前寫入的列全數躲過清理。
 -- 用 coalesce 蓋掉。
 --
+-- 只有清理限定 source = 'google'，回填不限定（PR #18 codex review）。這個不對稱是刻意的：
+-- 被收回的推定出自 Google adapter 的 gTags，mock provider 的列是從 mockdata.go 的人工策展
+-- 資料逐字寫入的，不可能帶這個缺陷——阿宗麵線與林東芳牛肉麵的 primary_type 正是
+-- noodle_shop，不限定 source 就會把剛還原的策展事實再刪一次。回填則相反：把正確的 tag
+-- 加給 primary_type 對得上的列，不論出身都是對的，也與 0016／0018 的既有形狀一致。
+-- 用正面表列而非 `<> 'mock'`：第三個 provider 進來時「不是 mock」不等於「是 google」。
+--
 -- 冪等：`-` 對不存在的元素是 no-op；回填有 not @> 前綴條件，重跑不會產生重複元素。
 -- 順序無關：清理排除 taiwanese_restaurant，回填只加給 taiwanese_restaurant，兩段不重疊。
 -- 下面四段 UPDATE 與 supabase/tests/rls_test.sql 末段逐字相同（migration 只在套用時跑一次，
@@ -31,6 +38,7 @@
 update public.restaurants
 set cuisine_tags = cuisine_tags - 'taiwanese'
 where cuisine_tags @> '["taiwanese"]'::jsonb
+  and source = 'google'
   and coalesce(primary_type, '') <> 'taiwanese_restaurant';
 
 update public.restaurants
