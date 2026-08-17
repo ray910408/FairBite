@@ -41,6 +41,48 @@ describe('searchRoom', () => {
     })
   })
 
+  // 嚴格禁忌的定向檢索掛掉＝結果集不完整。這時「請放寬條件」與「請換地點」都是錯的
+  // 建議，使用者照做也不會有結果——唯一有用的是重試。
+  it('422 嚴格禁忌檢索失敗時改叫人重試，不叫人放寬條件', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: 'no_candidates',
+      excluded_by: { dietary: 4 },
+      unfulfilled_dietary_terms: ['vegetarian'],
+    }), { status: 422, headers: { 'Content-Type': 'application/json' } })))
+
+    await expect(searchRoom('room-3')).resolves.toEqual({
+      error: '「素食」的搜尋暫時失敗，這次的結果不完整，放寬條件不會有幫助。請稍後再試一次。',
+      warning: null,
+    })
+  })
+
+  it('422 no_restaurants_in_range 也吃 unfulfilled_dietary_terms', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: 'no_restaurants_in_range',
+      message: '此位置附近沒有餐廳資料',
+      unfulfilled_dietary_terms: ['vegetarian'],
+      degraded: true,
+    }), { status: 422, headers: { 'Content-Type': 'application/json' } })))
+
+    await expect(searchRoom('room-3')).resolves.toEqual({
+      error: '「素食」的搜尋暫時失敗，這次的結果不完整，放寬條件不會有幫助。請稍後再試一次。',
+      warning: degradedWarning,
+    })
+  })
+
+  it('422 unfulfilled_dietary_terms 為空陣列時維持原本的放寬建議', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: 'no_candidates',
+      excluded_by: { dietary: 4 },
+      unfulfilled_dietary_terms: [],
+    }), { status: 422, headers: { 'Content-Type': 'application/json' } })))
+
+    await expect(searchRoom('room-3')).resolves.toEqual({
+      error: '找不到符合所有條件的餐廳。\n最主要原因：飲食禁忌（排除 4 家）。\n請放寬條件後再試。',
+      warning: null,
+    })
+  })
+
   it('422 無附近餐廳時保留 degraded warning', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       error: 'no_restaurants_in_range',

@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(53);
+select plan(59);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -472,5 +472,69 @@ select is(
 select is(
   (select cuisine_tags from public.restaurants where place_id = 'pg-svf-c'),
   '["vegetarian_friendly"]'::jsonb, '真素食餐廳保留 vegetarian_friendly');
+
+-- ============ 0024：type 普查後的快取對映對帳 ============
+-- 與 0016/0018/0023 段同款：複製 migration 的 UPDATE 驗邏輯，改一邊要改兩邊。
+-- B 列釘住 coalesce 的 NULL 路徑並確認清理不誤傷同列其他 tag；
+-- C 列釘住「清理與回填不重疊」——同一列先躲過清理再拿到回填。
+reset role;
+insert into public.restaurants (id, place_id, name, lat, lng, source, primary_type, cuisine_tags) values
+  ('99999999-9999-9999-9999-999999999941', 'pg-remap-a', '港式茶餐廳', 25.04, 121.51, 'google',
+   'chinese_restaurant', '["taiwanese"]'::jsonb),
+  ('99999999-9999-9999-9999-999999999942', 'pg-remap-b', 'NULL primary type 餐廳', 25.04, 121.51, 'google',
+   null, '["taiwanese", "japanese"]'::jsonb),
+  ('99999999-9999-9999-9999-999999999943', 'pg-remap-c', '真台菜餐廳', 25.04, 121.51, 'google',
+   'taiwanese_restaurant', '[]'::jsonb),
+  ('99999999-9999-9999-9999-999999999944', 'pg-remap-d', '歐式餐廳', 25.04, 121.51, 'google',
+   'european_restaurant', '[]'::jsonb),
+  ('99999999-9999-9999-9999-999999999945', 'pg-remap-e', '咖哩專門店', 25.04, 121.51, 'google',
+   'japanese_curry_restaurant', '[]'::jsonb),
+  ('99999999-9999-9999-9999-999999999946', 'pg-remap-f', '燒肉店', 25.04, 121.51, 'google',
+   'yakiniku_restaurant', '["japanese"]'::jsonb);
+
+-- 跑兩次：第二次必須是 no-op（同 0023，部署順序未定義時本檔要能重跑）。
+do $$
+begin
+  for i in 1..2 loop
+    update public.restaurants
+    set cuisine_tags = cuisine_tags - 'taiwanese'
+    where cuisine_tags @> '["taiwanese"]'::jsonb
+      and coalesce(primary_type, '') <> 'taiwanese_restaurant';
+
+    update public.restaurants
+    set cuisine_tags = cuisine_tags || '["taiwanese"]'::jsonb
+    where primary_type = 'taiwanese_restaurant'
+      and not cuisine_tags @> '["taiwanese"]'::jsonb;
+
+    update public.restaurants
+    set cuisine_tags = cuisine_tags || '["western"]'::jsonb
+    where primary_type in ('western_restaurant', 'european_restaurant')
+      and not cuisine_tags @> '["western"]'::jsonb;
+
+    update public.restaurants
+    set cuisine_tags = cuisine_tags || '["japanese"]'::jsonb
+    where primary_type in ('japanese_izakaya_restaurant', 'yakiniku_restaurant', 'japanese_curry_restaurant')
+      and not cuisine_tags @> '["japanese"]'::jsonb;
+  end loop;
+end $$;
+
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-remap-a'),
+  '[]'::jsonb, 'chinese_restaurant 推定來的 taiwanese 已清除');
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-remap-b'),
+  '["japanese"]'::jsonb, 'primary_type NULL 列由 coalesce 清除 taiwanese，同列其他 tag 不受影響');
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-remap-c'),
+  '["taiwanese"]'::jsonb, 'taiwanese_restaurant 躲過清理並取得回填');
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-remap-d'),
+  '["western"]'::jsonb, 'european_restaurant 回填 western');
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-remap-e'),
+  '["japanese"]'::jsonb, 'japanese_curry_restaurant 回填 japanese');
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-remap-f'),
+  '["japanese"]'::jsonb, '已有 japanese 的列重跑不產生重複元素');
 select * from finish();
 rollback;

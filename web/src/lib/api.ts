@@ -1,3 +1,4 @@
+import { DIETARY_LABEL } from './labels'
 import { supabase } from './supabase'
 
 async function post(path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
@@ -31,6 +32,14 @@ export async function searchRoom(roomId: string): Promise<SearchOutcome> {
   if (res.status === 422) {
     const body = await res.json()
     const warning = body.degraded ? degradedWarning : null
+    // 嚴格禁忌（素食）的定向檢索掛掉時結果集不完整，這時叫人放寬條件或換地點都是錯的
+    // 建議——該叫人重試。伺服器只把嚴格禁忌詞放進這個欄位（菜系檢索失敗只少了補召回，
+    // spec §7 容忍），所以有值就代表這次的結果不能當成「真的沒有」。兩種 422 都可能帶。
+    const unfulfilled = (body.unfulfilled_dietary_terms ?? []) as string[]
+    if (unfulfilled.length > 0) {
+      const names = unfulfilled.map(t => DIETARY_LABEL[t] ?? t).join('、')
+      return { error: `「${names}」的搜尋暫時失敗，這次的結果不完整，放寬條件不會有幫助。請稍後再試一次。`, warning }
+    }
     // 附近沒餐廳 ≠ 條件太嚴：後者叫人放寬條件才有用，前者要叫人換地點
     if (body.error === 'no_restaurants_in_range') return { error: body.message, warning }
     const by = Object.entries((body.excluded_by ?? {}) as Record<string, number>)

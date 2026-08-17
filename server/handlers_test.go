@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -1595,6 +1596,94 @@ func TestSearchFallbackAllExcludedIncludesDegraded(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil ||
 		w.Code != http.StatusUnprocessableEntity || body.Error != "no_candidates" || !body.Degraded {
 		t.Fatalf("降級全排除應回 422 degraded=true：status %d body %s", w.Code, w.Body.String())
+	}
+}
+
+// PR #18 codex review：422 帶回的檢索失敗只能是嚴格禁忌詞。菜系支線失敗照 spec §7 容忍
+// 不降級，混進來會讓前端為一個可容忍的失敗改口叫人重試。兩條 422 都要帶——檢索掛掉時
+// 「附近沒餐廳」同樣可能只是結果不完整，而不是這區真的沒有。
+func TestSearchUnfulfilledDietaryTermsInBoth422Paths(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	const (
+		hostID  = "3a3a3a3a-3a3a-3a3a-3a3a-3a3a3a3a3a3a"
+		roomID  = "3b3b3b3b-3b3b-3b3b-3b3b-3b3b3b3b3b3b"
+		placeID = "unfulfilled-dietary-excluded"
+	)
+	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+		values ($1, 'unfulfilled@test.dev') on conflict do nothing`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 23.9911, 121.6112)
+		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	// budget_max 50 讓唯一一家餐廳必被 kind "budget" 排除 → 走 no_candidates 那條 422。
+	if _, err = pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		values ($1, $2, 50, '[]', 2000, 'walking')
+		on conflict (room_id, user_id) do update set budget_max = excluded.budget_max,
+			cuisines = excluded.cuisines, max_distance_m = excluded.max_distance_m`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.restaurants where place_id = $1`, placeID)
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+	})
+
+	// dessert 是菜系、vegetarian 是 DietaryRequires 的嚴格禁忌：只有後者該露出。
+	unfulfilled := []string{"dessert", "vegetarian"}
+	doSearch := func(t *testing.T, result PlacesSearchResult) (int, []string, string) {
+		t.Helper()
+		h := newTestAppWithProvider(t, pool, resultProvider{result: result})
+		r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+		r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		var body struct {
+			Error       string   `json:"error"`
+			Unfulfilled []string `json:"unfulfilled_dietary_terms"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("回應不是 JSON：status %d body %s", w.Code, w.Body.String())
+		}
+		return w.Code, body.Unfulfilled, body.Error
+	}
+
+	code, got, kind := doSearch(t, PlacesSearchResult{
+		Restaurants: []Restaurant{{
+			PlaceID: placeID, Name: "全被預算排除", PrimaryType: "restaurant",
+			CuisineTags: []string{}, PriceLevel: 1, Lat: 23.9911, Lng: 121.6112,
+			Hours: daily([2]int{0, 1440}), Rating: 4,
+		}},
+		UnfulfilledTerms: unfulfilled,
+	})
+	if code != http.StatusUnprocessableEntity || kind != "no_candidates" ||
+		!slices.Equal(got, []string{"vegetarian"}) {
+		t.Fatalf("no_candidates 應只帶嚴格禁忌詞：status %d error %q unfulfilled %v", code, kind, got)
+	}
+
+	code, got, kind = doSearch(t, PlacesSearchResult{UnfulfilledTerms: unfulfilled})
+	if code != http.StatusUnprocessableEntity || kind != "no_restaurants_in_range" ||
+		!slices.Equal(got, []string{"vegetarian"}) {
+		t.Fatalf("no_restaurants_in_range 也應帶嚴格禁忌詞：status %d error %q unfulfilled %v", code, kind, got)
+	}
+
+	// 沒有失敗支線時必須是 []（非 null）：前端以長度分流，null 會讓型別斷言變成謊言。
+	code, got, kind = doSearch(t, PlacesSearchResult{})
+	if code != http.StatusUnprocessableEntity || kind != "no_restaurants_in_range" || got == nil || len(got) != 0 {
+		t.Fatalf("全部成功時應回空陣列：status %d error %q unfulfilled %v", code, kind, got)
 	}
 }
 

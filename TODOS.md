@@ -51,10 +51,10 @@
   - **Why:** 方向符合 ADR-0001（寧漏勿誤放行）——舊行為是靠 `servesVegetarianFood` 假 tag 讓素食成員看到「錯的候選」。此為刻意取捨，不是缺陷。
   - **Depends on:** 要改就是動 `memberLikes` 命中定義，屬 ADR-0006 範圍——與 Task 5（beef_noodle／ADR 修訂輪）同批評估。
 
-- **B 組（素食管線）上線 checklist：先 Render 後 0023**
-  - **What:** merge 後先確認 Render 已部署新 server binary，再讓 `deploy-pages.yml` 的 migrate job 跑 `0023_purge_svf_vegetarian_tags.sql`。順序反了＝舊 binary 用 `servesVegetarianFood` 把 tag 寫回快取（無告警、方向是誤放行）。
+- **上線 checklist：先 Render 後 0023／0024**
+  - **What:** merge 後先確認 Render 已部署新 server binary，再讓 `deploy-pages.yml` 的 migrate job 跑 `0023_purge_svf_vegetarian_tags.sql` 與 `0024_remap_cuisine_tags_after_type_census.sql`。順序反了＝舊 binary 用 `servesVegetarianFood`／`chinese_restaurant → taiwanese` 把 tag 寫回快取（無告警、0023 那條方向是誤放行）。
   - **Why:** `deploy: needs: migrate` 只排序 migration → GitHub Pages；Go server 在 Render 獨立部署，兩者先後無機制保證。
-  - **補救:** 0023 冪等——順序反了就在 Render 部署完成後重跑一次（migration 檔頭有註記）。
+  - **補救:** 兩支都冪等——順序反了就在 Render 部署完成後各重跑一次（migration 檔頭有註記）。
 
 ### Google Places attribution logo 確認（正式上線前）
 
