@@ -20,12 +20,31 @@
 - ~~**dining_history 排序索引**：足跡頁查詢為 `user_id` 過濾＋`decided_at` 排序，既有 `dining_history_recency (user_id, restaurant_id, decided_at)` 中欄卡住排序用不上；個人規模無感，下次動 `dining_history` schema 時順手補 `(user_id, decided_at desc)`（2026-08-14 Round 2 eng review）。~~ 已結案（2026-08-15）：0022 順手補 `(user_id, decided_at desc)`。
 
 - ~~CUISINE 選項的 Google 缺口~~ 已結案（2026-08-13）：cantonese/hotpot 補真實映射（0018 回填）、sichuan 移除；tags_test gap pin 清空。
+  **⚠️ 這個結案是假的（2026-08-16 更正）**：gap pin 只量「app 詞彙 → adapter 產得出來」單一方向，從沒問過反方向「Google 實際回的 type → 有沒有被對映」。`taiwanese_restaurant` 當時就已經漏了（實測 259 家樣本中 64 家帶此 type，40 家撈不到），而測試全綠。修復與雙向紀律見 `docs/superpowers/plans/2026-08-16-cuisine-tag-accuracy.md`。
 
 ### Round 3 審查遞延（2026-08-15）
 
 - ~~**連鎖去重早於歇業 tombstone 收集**：`dedupeChains` 在 provider 內先於 `closedIDs` 收集；被連鎖去重丟棄的歇業分店逃過 tombstone，快取可能殘留至多 30 天（TTL 自癒）。~~ 已結案（2026-08-15）：本輪讓 `dedupeChains` 回傳落選歇業分店的 `place_id`，由 handler 併入 `closedIDs` 做 tombstone。
 
 - **無名店 chain key 碰撞**：`chainKey("")` 會把多家 `displayName` 缺漏的無名店塌成一家；Google 幾乎必回 `displayName`，機率低。修法：key 為空時跳過 dedupe。
+
+### 菜系打標修復的延後項（2026-08-16 eng review 拆出）
+
+完整內容（含程式碼與 ADR 修訂文字）在 `docs/superpowers/plans/2026-08-16-cuisine-tag-accuracy.md` 的 Task 5／6。以下三項**不在** Task 1–4 的 PR 內。
+
+- **`beef_noodle` 沒有生產者，「不吃牛」對牛肉麵店完全失效**
+  - **What:** `weights.go:41` 的 `DietaryConflicts[no_beef]` 含 `beef_noodle`，但 `places_google.go` 全檔不產這個 tag（只有 `mockdata.go:21` 產）。線上勾「不吃牛」不會排除任何牛肉麵店。
+  - **Why:** Google 沒有牛肉麵 type，`noodle_shop` 與 `chinese_noodle_restaurant` 都涵蓋非牛肉麵店而不可對映。`tags_test.go:145` 曾明文豁免這條檢查，理由「負向排除不需要 tag 被產出」是錯的——負向排除更需要 tag 被產出。
+  - **Depends on:** 需修訂 ADR-0006（店名關鍵字規則的否決，其「若日後發現通用池漏標再議」的重啟條件已於 2026-08-16 觸發）。屬架構決策，要獨立一輪審查。
+  - **順帶清理:** `mockdata.go` 的 `noodle`（:12）與 `fried_chicken`（:16）兩個孤兒 tag，Google 產不出也沒有消費端。
+
+- **`western` 跨區 query match 誤放行尚未量化**
+  - **What:** 「西式料理」的定向檢索會把泰式餐酒館、陝西餐館標成 western（`QueryMatches` 與 canonical tag 等權，`engine.go:234`）。
+  - **Why:** 2026-08-16 實測 types 支持率 27%，但那個數字混了兩種原因：`western_restaurant`／`european_restaurant` 未對映（Task 1 已修）與真正的跨區誤放行。修法（`gRejectQueryMatch` 的 tier3）是否值得做，取決於後者的實際比例。
+  - **Depends on:** Task 1 落地後重跑量化。門檻定為 10%，未達就不做並記錄結果。
+
+- **`light_meal` 25% 支持率：判定不修，記錄理由**
+  - Google 沒有「輕食」對應的 type，query match 正在做 ADR-0006 設計它做的事；抽樣中的沐莛輕食、參食健康餐盒確實是輕食。唯一勉強算錯的是早餐店拿到 `light_meal`，傷害低。若日後有人重看這個數字，不必再查一次。
 
 ### Google Places attribution logo 確認（正式上線前）
 
