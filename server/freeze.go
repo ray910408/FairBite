@@ -46,9 +46,10 @@ func freezeAndLoadMembers(ctx context.Context, tx pgx.Tx, room *RoomRow, fetched
 	// 過濾關閉時菜系只是軟性加分，漏一支不會產生錯誤結果，回 409 只是白讓 host 重搜。
 	// 嚴格禁忌部分不受此閘門限制：DietaryRequires 在 hardExclude 裡無條件生效，
 	// 漏跑素食檢索就是該成員零候選（422 no_candidates），與 cuisine_filter 開關無關。
+	// 但只看「新增」這一個方向：取消嚴格禁忌讓 envelope 變成安全的超集，不是 under-fetch。
 	reloadedTerms := cuisineUnion(members)
 	if !slices.Equal(reloadedTerms, fetchedCuisines) {
-		dietaryDrifted := !slices.Equal(strictDietaryTerms(reloadedTerms), strictDietaryTerms(fetchedCuisines))
+		dietaryDrifted := strictDietaryUnderFetched(reloadedTerms, fetchedCuisines)
 		if room.CuisineFilter || dietaryDrifted {
 			return nil, nil, ErrMembersChanged
 		}

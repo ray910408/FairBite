@@ -396,9 +396,9 @@ func memberCuisinesDrifted(ctx context.Context, pool *pgxpool.Pool, roomID strin
 	if slices.Equal(reloaded, fetched) {
 		return false, nil
 	}
-	// 閘門拆兩層的理由見 freeze.go——菜系吃 cuisine_filter，嚴格禁忌不吃。
+	// 閘門拆兩層的理由見 freeze.go——菜系吃 cuisine_filter，嚴格禁忌不吃、且只看新增方向。
 	if !filterEnabled {
-		return !slices.Equal(strictDietaryTerms(reloaded), strictDietaryTerms(fetched)), nil
+		return strictDietaryUnderFetched(reloaded, fetched), nil
 	}
 	return true, nil
 }

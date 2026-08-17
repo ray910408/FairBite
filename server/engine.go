@@ -254,6 +254,19 @@ func strictDietaryTerms(terms []string) []string {
 	return out
 }
 
+// strictDietaryUnderFetched：reload 後才要求、而本次 fetch envelope 沒涵蓋的嚴格禁忌詞。
+// 單向是刻意的（PR #18 codex review）：取消一個嚴格禁忌只讓 envelope 變成安全的超集
+// ——多跑了一支定向檢索而已，沒有任何成員的硬性條件漏檢索。這種情況回 409 換不到正確性，
+// 只是把一次已付費的搜尋丟掉再叫 host 重來。反向（新增）才是真的 under-fetch。
+func strictDietaryUnderFetched(reloaded, fetched []string) bool {
+	for _, t := range strictDietaryTerms(reloaded) {
+		if !hasTag(fetched, t) {
+			return true
+		}
+	}
+	return false
+}
+
 // memberLikes：成員任一 cuisine 命中餐廳 tags 或本房查詢命中（query match）。偏好因素與
 // 滿足度樣本（prefHit）共用的唯一命中定義——兩者語意必須同步，改這裡即兩處同時生效
 // （eng review D11；Round 3 起含 query_matches，spec §5.4／ADR-0006）。

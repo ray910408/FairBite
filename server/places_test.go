@@ -219,6 +219,30 @@ func TestStrictDietaryTerms(t *testing.T) {
 	}
 }
 
+// 漂移閘門的方向性：只有「reload 後才要求、fetch 沒涵蓋」算 under-fetch。
+// 取消嚴格禁忌回 409 會白丟一次已付費的搜尋（PR #18 codex review）。
+func TestStrictDietaryUnderFetched(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		reloaded, fetched []string
+		want              bool
+	}{
+		{"完全相同", []string{"ramen", "vegetarian"}, []string{"ramen", "vegetarian"}, false},
+		{"新增嚴格禁忌＝under-fetch", []string{"ramen", "vegetarian"}, []string{"ramen"}, true},
+		{"取消嚴格禁忌＝安全的超集", []string{"ramen"}, []string{"ramen", "vegetarian"}, false},
+		{"只有菜系變動不算", []string{"korean"}, []string{"ramen"}, false},
+		{"從零到有", []string{"vegetarian"}, nil, true},
+		{"從有到零", nil, []string{"vegetarian"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := strictDietaryUnderFetched(tc.reloaded, tc.fetched); got != tc.want {
+				t.Errorf("strictDietaryUnderFetched(%v, %v) = %v, want %v",
+					tc.reloaded, tc.fetched, got, tc.want)
+			}
+		})
+	}
+}
+
 // 檢索支線要真的發得出去：fan-out 迴圈查不到查詢詞就 continue，會靜默失效。
 func TestVegetarianHasSearchQuery(t *testing.T) {
 	for key := range DietaryRequires {

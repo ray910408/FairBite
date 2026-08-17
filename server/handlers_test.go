@@ -153,6 +153,8 @@ type cuisineUpdateProvider struct {
 	userID        string
 	restaurants   []Restaurant
 	addVegetarian bool
+	// removeVegetarian：檢索期間取消嚴格禁忌。envelope 變成超集，不該回 409。
+	removeVegetarian bool
 }
 
 func (cuisineUpdateProvider) Source() string { return "mock" }
@@ -163,6 +165,10 @@ func (p cuisineUpdateProvider) SearchNearby(ctx context.Context, _ float64, _ fl
 	if p.addVegetarian {
 		column = "dietary"
 		value = `["vegetarian"]`
+	}
+	if p.removeVegetarian {
+		column = "dietary"
+		value = `[]`
 	}
 	if _, err := p.pool.Exec(ctx, `update room_members set `+column+` = $3
 		where room_id = $1 and user_id = $2`, p.roomID, p.userID, value); err != nil {
@@ -503,8 +509,12 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 		name          string
 		filterEnabled bool
 		addVegetarian bool
-		empty         bool
-		wantStatus    int
+		// removeVegetarian 的兩列釘住方向性：取消嚴格禁忌讓 envelope 變成安全的超集，
+		// 不是 under-fetch，回 409 只會白丟一次已付費的搜尋（PR #18 codex review）。
+		// 兩條路徑各一列——有結果走 freeze.go 的閘門，零結果走 handlers 的 pre-freeze 檢查。
+		removeVegetarian bool
+		empty            bool
+		wantStatus       int
 	}{
 		{name: "過濾開啟", filterEnabled: true, wantStatus: http.StatusConflict},
 		{name: "過濾關閉", filterEnabled: false, wantStatus: http.StatusOK},
@@ -512,14 +522,21 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 		{name: "過濾關閉且零結果", filterEnabled: false, empty: true, wantStatus: http.StatusUnprocessableEntity},
 		{name: "過濾關閉且勾素食", addVegetarian: true, wantStatus: http.StatusConflict},
 		{name: "過濾關閉且勾素食且零結果", addVegetarian: true, empty: true, wantStatus: http.StatusConflict},
+		{name: "過濾關閉且取消素食", removeVegetarian: true, wantStatus: http.StatusOK},
+		{name: "過濾關閉且取消素食且零結果", removeVegetarian: true, empty: true, wantStatus: http.StatusUnprocessableEntity},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := pool.Exec(ctx,
 				`update public.rooms set status = 'lobby', cuisine_filter = $2 where id = $1`, roomID, tc.filterEnabled); err != nil {
 				t.Fatal(err)
 			}
+			startDietary := `[]`
+			if tc.removeVegetarian {
+				startDietary = `["vegetarian"]`
+			}
 			if _, err := pool.Exec(ctx,
-				`update public.room_members set cuisines = '["ramen"]', dietary = '[]' where room_id = $1 and user_id = $2`, roomID, hostID); err != nil {
+				`update public.room_members set cuisines = '["ramen"]', dietary = $3 where room_id = $1 and user_id = $2`,
+				roomID, hostID, startDietary); err != nil {
 				t.Fatal(err)
 			}
 			providerRestaurants := restaurants
@@ -528,7 +545,7 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 			}
 			h := newTestAppWithProvider(t, pool, cuisineUpdateProvider{
 				pool: pool, roomID: roomID, userID: hostID, restaurants: providerRestaurants,
-				addVegetarian: tc.addVegetarian,
+				addVegetarian: tc.addVegetarian, removeVegetarian: tc.removeVegetarian,
 			})
 			r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
 			r.Header.Set("Authorization", "Bearer "+token)
