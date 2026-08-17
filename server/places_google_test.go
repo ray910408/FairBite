@@ -476,6 +476,9 @@ func TestGoogleSearchNearbyCuisineFanOut(t *testing.T) {
 	if _, nearbyOK := byID["near-1"]; !nearbyOK {
 		t.Error("單支失敗時 nearby 結果必須保留")
 	}
+	if !slices.Equal(result.UnfulfilledTerms, []string{"dessert"}) {
+		t.Errorf("重試後仍失敗的定向檢索詞必須回報，got %v", result.UnfulfilledTerms)
+	}
 }
 
 func TestGoogleSearchNearbyFailureFailsWholeSearch(t *testing.T) {

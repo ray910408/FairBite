@@ -39,12 +39,12 @@ func NewGooglePlacesProvider(apiKey, baseURL string) PlacesProvider {
 var googleTypeTags = map[string][]string{
 	"japanese_restaurant":   {"japanese"},
 	"ramen_restaurant":      {"japanese", "ramen"},
-	"sushi_restaurant":      {"japanese"}, // 原為 {"japanese", "sushi"}
+	"sushi_restaurant":      {"japanese"}, // 不產 sushi：無消費端，見 tags_test.go 的 knownTagVocabulary
 	"korean_restaurant":     {"korean"},
 	"cantonese_restaurant":  {"cantonese"},
 	"dim_sum_restaurant":    {"cantonese", "dimsum"}, // dimsum 供 no_pork 硬排除比對（weights.go DietaryConflicts）
 	"hot_pot_restaurant":    {"hotpot"},
-	"indian_restaurant":     {"indian"}, // 原為 {"indian", "curry"}
+	"indian_restaurant":     {"indian"}, // 不產 curry：無消費端，見 tags_test.go 的 knownTagVocabulary
 	"seafood_restaurant":    {"seafood"},
 	"steak_house":           {"steak", "western"},
 	"american_restaurant":   {"western"},
@@ -74,7 +74,7 @@ var googleTypeTags = map[string][]string{
 	"european_restaurant":         {"western"},
 	"japanese_izakaya_restaurant": {"japanese"},
 	"yakiniku_restaurant":         {"japanese"},
-	"japanese_curry_restaurant":   {"japanese"}, // 不加 curry：見本 step 下半，curry 沒有消費端
+	"japanese_curry_restaurant":   {"japanese"}, // 同 indian_restaurant：curry 無消費端，由 knownTagVocabulary 把關
 }
 
 // googleTypesDeliberatelyUnmapped：觀測到但刻意不產 canonical tag 的 Google type。
@@ -247,11 +247,18 @@ func (g *googleProvider) fetchPlaces(ctx context.Context, endpoint string, body 
 			rejected = append(rejected, p.ID)
 			continue
 		}
-		// 兩道 runtime 回饋，回答不同問題（eng review D2／T2）。
+		// 兩道 runtime 回饋，回答不同問題（eng review D2／T2），同一趟 types 掃描算完——
+		// 別為了第二個訊號再呼叫一次 gTags：它每次都配置 map＋slice，而這是搜尋熱路徑
+		// （K+1 支並行呼叫 × 每支最多 20 筆）。
 		// (1) 未分類的 type：警報。穩態靜音，一出現就代表 tags_test.go 的 census 過期了——
 		//     census 是手抄快照，擋不到 Google 之後新增的 type，那正是 TODOS.md:22 假結案的形狀。
+		// (2) 零 tag 家數：健康度。含刻意不對映的類型（麵店等），所以每次都會有數字——
+		//     它量的是「刻意不對映的實際代價」，將來要不要把 noodle_shop 拉進來有數據可講。
+		tagged := false
 		for _, gt := range p.Types {
-			if _, mapped := googleTypeTags[gt]; mapped {
+			if mapped, ok := googleTypeTags[gt]; ok {
+				// 與 gTags 逐字等價：空 slice 的對映不產 tag，這裡也不得算「有 tag」。
+				tagged = tagged || len(mapped) > 0
 				continue
 			}
 			if _, waived := googleTypesDeliberatelyUnmapped[gt]; waived {
@@ -259,9 +266,7 @@ func (g *googleProvider) fetchPlaces(ctx context.Context, endpoint string, body 
 			}
 			unknown[gt] = true
 		}
-		// (2) 零 tag 家數：健康度。含刻意不對映的類型（麵店等），所以每次都會有數字——
-		//     它量的是「刻意不對映的實際代價」，將來要不要把 noodle_shop 拉進來有數據可講。
-		if len(gTags(p)) == 0 {
+		if !tagged {
 			untagged++
 		}
 		kept = append(kept, p)
@@ -368,7 +373,7 @@ func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, 
 //   │                                                   memberLikes 與 DietaryRequires 都不讀它）
 //   │    ├─ meal gate：gIsMealPrimaryType fail-closed（拒者入 RejectedPlaceIDs）
 //   │    ├─ 衝突防護：tier1 甜品專門型拒 match／tier2 純輕飲無供餐證據拒 match（店保留、match 不標）
-//   │    └─ 失敗（重試×2 後）→ log 容忍，其餘支照常（部分成功不降級）
+//   │    └─ 失敗（重試×2 後）→ log 容忍並記入 UnfulfilledTerms，其餘支照常（部分成功不降級）
 //   ▼
 // merge by place_id：QueryMatches 聯集；RejectedPlaceIDs 聯集去重
 //   → dedupeChains：同 chainKey（連鎖）只留離圓心最近分店、matches 聯集（不進 Rejected；落選歇業分店→DiscardedClosed 供 tombstone）
@@ -383,8 +388,9 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 	textCtx, cancelText := context.WithCancel(ctx)
 	defer cancelText()
 	type textOut struct {
-		rs       []Restaurant
-		rejected []string
+		rs         []Restaurant
+		rejected   []string
+		failedTerm string
 	}
 	var (
 		base    PlacesSearchResult
@@ -421,15 +427,19 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 				}
 				rs, rejected, err := g.textSearch(textCtx, cuisine, query, lat, lng, radiusM)
 				if err == nil {
-					outs[i] = textOut{rs, rejected}
+					outs[i] = textOut{rs: rs, rejected: rejected}
 					return
 				}
 				if textCtx.Err() != nil {
 					return
 				}
-				if attempt == 1 && !errors.Is(err, context.Canceled) {
-					// 單支定向檢索失敗只容忍不降級（spec §7）：nearby 池仍在，缺的只是該菜系的補召回
-					log.Printf("text search %q failed after retry: %v", cuisine, err)
+				if attempt == 1 {
+					// 菜系仍只少了補召回、照 spec §7 容忍不降級；嚴格禁忌則由
+					// UnfulfilledTerms 帶回 handler，讓 422 能區分檢索失敗與真的沒有。
+					outs[i].failedTerm = cuisine
+					if !errors.Is(err, context.Canceled) {
+						log.Printf("text search %q failed after retry: %v", cuisine, err)
+					}
 				}
 			}
 		}(i, c, q)
@@ -448,6 +458,9 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 		rejectedSeen[id] = true
 	}
 	for _, o := range outs {
+		if o.failedTerm != "" {
+			base.UnfulfilledTerms = append(base.UnfulfilledTerms, o.failedTerm)
+		}
 		for _, r := range o.rs {
 			if idx, ok := byPlaceID[r.PlaceID]; ok {
 				// 既有列：併入 query match（union，避免重複）
@@ -472,6 +485,7 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 	for i := range base.Restaurants {
 		sort.Strings(base.Restaurants[i].QueryMatches) // 決定性輸出，測試與 trace 穩定
 	}
+	sort.Strings(base.UnfulfilledTerms) // 決定性輸出，供 422 診斷與測試
 	return base, nil
 }
 

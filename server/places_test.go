@@ -199,6 +199,26 @@ func TestCuisineUnionExcludesNegativeDietary(t *testing.T) {
 	}
 }
 
+func TestStrictDietaryTerms(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"空輸入", nil, nil},
+		{"無嚴格禁忌", []string{"hotpot", "japanese"}, nil},
+		{"只有嚴格禁忌", []string{"vegetarian"}, []string{"vegetarian"}},
+		{"混合輸入維持排序", []string{"hotpot", "japanese", "vegetarian"}, []string{"vegetarian"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := strictDietaryTerms(tc.in)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("strictDietaryTerms(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // 檢索支線要真的發得出去：fan-out 迴圈查不到查詢詞就 continue，會靜默失效。
 func TestVegetarianHasSearchQuery(t *testing.T) {
 	for key := range DietaryRequires {

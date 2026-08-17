@@ -451,10 +451,17 @@ insert into public.restaurants (id, place_id, name, lat, lng, source, primary_ty
   ('99999999-9999-9999-9999-999999999933', 'pg-svf-c', '真素食餐廳', 25.04, 121.51, 'google',
    'vegetarian_restaurant', '["vegetarian_friendly"]'::jsonb);
 
-update public.restaurants
-set cuisine_tags = cuisine_tags - 'vegetarian_friendly'
-where cuisine_tags @> '["vegetarian_friendly"]'::jsonb
-  and coalesce(primary_type, '') not in ('vegetarian_restaurant', 'vegan_restaurant');
+-- 跑兩次：第二次必須是 no-op。冪等在本輪不是形式要求——Go server（Render）與 migration
+-- （GitHub Actions）的部署先後沒有定義，順序反了就要重跑本檔，見 0023 檔頭。
+do $$
+begin
+  for i in 1..2 loop
+    update public.restaurants
+    set cuisine_tags = cuisine_tags - 'vegetarian_friendly'
+    where cuisine_tags @> '["vegetarian_friendly"]'::jsonb
+      and coalesce(primary_type, '') not in ('vegetarian_restaurant', 'vegan_restaurant');
+  end loop;
+end $$;
 
 select is(
   (select cuisine_tags from public.restaurants where place_id = 'pg-svf-a'),

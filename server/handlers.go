@@ -590,6 +590,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		jsonOK(w, map[string]any{
 			"error": "no_candidates", "excluded": ex, "excluded_by": byKind, "degraded": degraded,
+			"unfulfilled_terms": nonNilKinds(searchResult.UnfulfilledTerms),
 		})
 		return
 	}
