@@ -46,6 +46,16 @@
 - **`light_meal` 25% 支持率：判定不修，記錄理由**
   - Google 沒有「輕食」對應的 type，query match 正在做 ADR-0006 設計它做的事；抽樣中的沐莛輕食、參食健康餐盒確實是輕食。唯一勉強算錯的是早餐店拿到 `light_meal`，傷害低。若日後有人重看這個數字，不必再查一次。
 
+- **`cuisine_filter=ON` × 素食成員：純素食店會被 kind "cuisine" 硬排除（已知代價，2026-08-17 final review I1）**
+  - **What:** 房主開啟菜系過濾時，Task 2 新召回的純素食店（cuisine_tags 只有 `vegetarian_friendly`）滿足不了任何成員的 `memberLikes`（`engine.go` 只讀 `m.Cuisines`，`QueryMatches["vegetarian"]` 不算命中）→ 被 kind "cuisine" 排除 → 素食成員在過濾開啟的房間比 merge 前更容易看到 422。
+  - **Why:** 方向符合 ADR-0001（寧漏勿誤放行）——舊行為是靠 `servesVegetarianFood` 假 tag 讓素食成員看到「錯的候選」。此為刻意取捨，不是缺陷。
+  - **Depends on:** 要改就是動 `memberLikes` 命中定義，屬 ADR-0006 範圍——與 Task 5（beef_noodle／ADR 修訂輪）同批評估。
+
+- **B 組（素食管線）上線 checklist：先 Render 後 0023**
+  - **What:** merge 後先確認 Render 已部署新 server binary，再讓 `deploy-pages.yml` 的 migrate job 跑 `0023_purge_svf_vegetarian_tags.sql`。順序反了＝舊 binary 用 `servesVegetarianFood` 把 tag 寫回快取（無告警、方向是誤放行）。
+  - **Why:** `deploy: needs: migrate` 只排序 migration → GitHub Pages；Go server 在 Render 獨立部署，兩者先後無機制保證。
+  - **補救:** 0023 冪等——順序反了就在 Render 部署完成後重跑一次（migration 檔頭有註記）。
+
 ### Google Places attribution logo 確認（正式上線前）
 
 - **What:** 依當時最新版 Google 品牌指南確認「Powered by Google」logo 資產與使用方式；目前 UI 已依 `place_id` 自動為 Google 來源資料顯示文字歸因。
