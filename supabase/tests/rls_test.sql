@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(50);
+select plan(53);
 
 -- 回歸鎖：authenticated 對 public 表的 grant 矩陣必須精確等於預期矩陣。
 -- create_room/join_room 是唯一合法寫入入口；這條 pin 住的就是那個前提——
@@ -441,9 +441,29 @@ select is(
 
 -- ============ 0023：清除 servesVegetarianFood 誤標 ============
 -- 與 0016/0018 段同款：複製 migration 的 UPDATE 驗邏輯，改一邊要改兩邊。
+-- B 列釘住 coalesce 的 NULL 路徑，對應 0023 檔頭的 outside-voice #3。
+reset role;
+insert into public.restaurants (id, place_id, name, lat, lng, source, primary_type, cuisine_tags) values
+  ('99999999-9999-9999-9999-999999999931', 'pg-svf-a', '雞肉餐廳', 25.04, 121.51, 'google',
+   'chicken_restaurant', '["vegetarian_friendly"]'::jsonb),
+  ('99999999-9999-9999-9999-999999999932', 'pg-svf-b', 'NULL primary type 餐廳', 25.04, 121.51, 'google',
+   null, '["vegetarian_friendly"]'::jsonb),
+  ('99999999-9999-9999-9999-999999999933', 'pg-svf-c', '真素食餐廳', 25.04, 121.51, 'google',
+   'vegetarian_restaurant', '["vegetarian_friendly"]'::jsonb);
+
 update public.restaurants
 set cuisine_tags = cuisine_tags - 'vegetarian_friendly'
 where cuisine_tags @> '["vegetarian_friendly"]'::jsonb
   and coalesce(primary_type, '') not in ('vegetarian_restaurant', 'vegan_restaurant');
+
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-svf-a'),
+  '[]'::jsonb, '葷類餐廳的 vegetarian_friendly 誤標已清除');
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-svf-b'),
+  '[]'::jsonb, 'primary_type NULL 列仍由 coalesce 清除 vegetarian_friendly');
+select is(
+  (select cuisine_tags from public.restaurants where place_id = 'pg-svf-c'),
+  '["vegetarian_friendly"]'::jsonb, '真素食餐廳保留 vegetarian_friendly');
 select * from finish();
 rollback;
