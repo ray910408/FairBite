@@ -438,5 +438,12 @@ select is(
   (select default_prefs->'cuisines' from public.profiles
     where id = '00000000-0000-0000-0000-0000000000a1'),
   '["thai"]'::jsonb, 'profiles.default_prefs 清掉 sichuan 並保留其餘選項');
+
+-- ============ 0023：清除 servesVegetarianFood 誤標 ============
+-- 與 0016/0018 段同款：複製 migration 的 UPDATE 驗邏輯，改一邊要改兩邊。
+update public.restaurants
+set cuisine_tags = cuisine_tags - 'vegetarian_friendly'
+where cuisine_tags @> '["vegetarian_friendly"]'::jsonb
+  and coalesce(primary_type, '') not in ('vegetarian_restaurant', 'vegan_restaurant');
 select * from finish();
 rollback;

@@ -170,10 +170,9 @@ type gPlace struct {
 		Latitude  float64 `json:"latitude"`
 		Longitude float64 `json:"longitude"`
 	} `json:"location"`
-	FormattedAddress     string  `json:"formattedAddress"`
-	Rating               float64 `json:"rating"`
-	ServesVegetarianFood bool    `json:"servesVegetarianFood"`
-	RegularOpeningHours  struct {
+	FormattedAddress    string  `json:"formattedAddress"`
+	Rating              float64 `json:"rating"`
+	RegularOpeningHours struct {
 		Periods []struct {
 			Open  gPoint  `json:"open"`
 			Close *gPoint `json:"close"`
@@ -223,7 +222,7 @@ func (g *googleProvider) fetchPlaces(ctx context.Context, endpoint string, body 
 	req.Header.Set("X-Goog-Api-Key", g.apiKey)
 	req.Header.Set("X-Goog-FieldMask",
 		"places.id,places.displayName,places.types,places.primaryType,places.priceLevel,places.location,"+
-			"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours,places.servesVegetarianFood")
+			"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours")
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return nil, nil, err
@@ -596,9 +595,6 @@ func gTags(p gPlace) []string {
 		for _, t := range googleTypeTags[gt] {
 			add(t)
 		}
-	}
-	if p.ServesVegetarianFood {
-		add("vegetarian_friendly")
 	}
 	return tags
 }

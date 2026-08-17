@@ -40,7 +40,7 @@ func webOptionKeys(t *testing.T, constName string) []string {
 	return keys
 }
 
-// googleProducibleTags 走真實的 gTags 對映（含 servesVegetarianFood 路徑），
+// googleProducibleTags 走真實的 gTags 對映，
 // 不複製對映表——表變測試就跟著變。
 func googleProducibleTags() map[string]bool {
 	out := map[string]bool{}
@@ -48,9 +48,6 @@ func googleProducibleTags() map[string]bool {
 		for _, tag := range gTags(gPlace{Types: []string{gt}}) {
 			out[tag] = true
 		}
-	}
-	for _, tag := range gTags(gPlace{ServesVegetarianFood: true}) {
-		out[tag] = true
 	}
 	return out
 }

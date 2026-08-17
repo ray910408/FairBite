@@ -289,8 +289,13 @@ func TestGoogleProviderMapping(t *testing.T) {
 		t.Error("一般營業時段轉換錯誤")
 	}
 	late := byPID["gp-2"]
-	if !hasTag(late.CuisineTags, "vegetarian_friendly") {
-		t.Errorf("servesVegetarianFood 應產 vegetarian_friendly：%v", late.CuisineTags)
+	// gp-2 的 fixture 是 types 只有 restaurant、servesVegetarianFood 為 true 的葷店。
+	// Google 那個欄位表示「菜單有素的」，不是「素食餐廳」（2026-08-16 實測 36% 命中率，
+	// 含雞湯店與港式飲茶）。vegetarian 是 DietaryRequires 的嚴格禁忌（engine.go hardExclude），
+	// 誤放行的代價是素食者吃到葷的。fixture 的 JSON 欄位刻意留著：Go 忽略未知欄位，
+	// 所以這道斷言在 gPlace 移除該欄位之後依然有效——有人把分支加回來就立刻紅。
+	if hasTag(late.CuisineTags, "vegetarian_friendly") {
+		t.Errorf("servesVegetarianFood 不得產出 vegetarian_friendly：%v", late.CuisineTags)
 	}
 	if late.PriceLevel != PriceLevelUnknown {
 		t.Errorf("缺 priceLevel 應為 PriceLevelUnknown，got %d", late.PriceLevel)
@@ -716,5 +721,41 @@ func TestChineseOnlyRestaurantHasNoTaiwaneseSignalWithoutQueryMatch(t *testing.T
 	}
 	if len(r.QueryMatches) != 0 {
 		t.Errorf("未經 textSearch 的列不得帶 query match：%v", r.QueryMatches)
+	}
+}
+
+// 真素食店的 canonical tag 必須留住，否則 Task 2 補的召回會白費。
+func TestVegetarianRestaurantTypeStillGrantsTag(t *testing.T) {
+	for _, gt := range []string{"vegetarian_restaurant", "vegan_restaurant"} {
+		p := gPlace{Types: []string{"restaurant", gt}}
+		if !hasTag(gTags(p), "vegetarian_friendly") {
+			t.Errorf("type %q 沒有產出 vegetarian_friendly；gTags = %v", gt, gTags(p))
+		}
+	}
+}
+
+// FieldMask 決定計費 SKU，而計費取請求中最高的那一階。servesVegetarianFood 屬
+// Enterprise + Atmosphere（最貴），本專案要的其他欄位最高只到 Enterprise——所以在
+// 2026-08-16 移除它之前，每一次 nearby 與 text search 都被計在最貴的一階。
+// outdoorSeating、takeout、reviews、任何 serves* 欄位都會把它推回去，而成本回升
+// 不會出現在任何測試、log 或 review 的直覺裡，只會出現在下個月的帳單。
+// 刻意比對整串字面值而不是維護一份 Atmosphere 欄位黑名單：黑名單要手抄、會過期，
+// 而且 Google 新增貴欄位時不會自己長出來（那正是本輪在拆的反模式）。
+// SKU 對照：https://developers.google.com/maps/billing-and-pricing/sku-details
+func TestFieldMaskIsPinned(t *testing.T) {
+	const want = "places.id,places.displayName,places.types,places.primaryType,places.priceLevel,places.location," +
+		"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours"
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Goog-FieldMask")
+		_, _ = w.Write([]byte(`{"places":[]}`))
+	}))
+	defer srv.Close()
+	g := NewGooglePlacesProvider("k", srv.URL)
+	if _, err := g.SearchNearby(context.Background(), 25.0478, 121.5170, 1000, nil); err != nil {
+		t.Fatalf("SearchNearby: %v", err)
+	}
+	if got != want {
+		t.Errorf("FieldMask 變了。改動會移動計費 SKU，請在 PR 描述交代為什麼。\ngot  %q\nwant %q", got, want)
 	}
 }
