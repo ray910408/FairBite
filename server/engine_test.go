@@ -937,4 +937,37 @@ func TestCuisineFilterAndQueryMatches(t *testing.T) {
 			t.Fatalf("query_match=ramen 不得觸發 no_pork 禁忌排除（canonical tags 才算）：%+v", res.Excluded)
 		}
 	})
+
+	t.Run("嚴格禁忌不吃 query match（vegetarian 側，對稱於上一案）", func(t *testing.T) {
+		// Task 2 之後「素食」成為定向檢索詞，命中的店會拿到 QueryMatches ["vegetarian"]。
+		// 那是文字相關性——店名帶「素」的葷餐廳就能拿到——不是素食認證。
+		// engine.go hardExclude 的 DietaryRequires 只讀 canonical tags（ADR-0006），
+		// 這個 case 就是把那條規定釘死：誤放行的後果是素食者吃到葷的。
+		r := Restaurant{ID: "veg-query-only", Name: "素坊燒肉",
+			CuisineTags: []string{"korean"}, QueryMatches: []string{"vegetarian"},
+			PriceLevel: 1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440})}
+		veg := Member{UserID: "u4", DisplayName: "吃素", BudgetMax: 1600,
+			Dietary: []string{"vegetarian"}, MaxDistanceM: 3000, Transport: "walking"}
+		res := Evaluate(EngineInput{Restaurants: []Restaurant{r}, Members: []Member{veg}, Now: now})
+		if len(res.Kept) != 0 {
+			t.Fatalf("query_match=vegetarian 不得滿足 DietaryRequires（canonical tag 才算）：%+v", res.Kept)
+		}
+		if !hasKind(res.Excluded[0].Kinds, "dietary") {
+			t.Fatalf("應以 kind=dietary 排除，got %v", res.Excluded[0].Kinds)
+		}
+	})
+
+	t.Run("正向保留：具 vegetarian_friendly canonical tag 應保留", func(t *testing.T) {
+		// TODOS.md:109 記錄的既有缺口：引擎正向保留路徑無測試。
+		// 沒有這一半，Task 3 收緊 tag 來源之後「收太緊」不會被任何測試發現。
+		r := Restaurant{ID: "veg-real", Name: "春天素食",
+			CuisineTags: []string{"vegetarian_friendly", "taiwanese"},
+			PriceLevel:  1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440})}
+		veg := Member{UserID: "u5", DisplayName: "吃素", BudgetMax: 1600,
+			Dietary: []string{"vegetarian"}, MaxDistanceM: 3000, Transport: "walking"}
+		res := Evaluate(EngineInput{Restaurants: []Restaurant{r}, Members: []Member{veg}, Now: now})
+		if len(res.Kept) != 1 {
+			t.Fatalf("具 vegetarian_friendly 的店應保留：%+v", res.Excluded)
+		}
+	})
 }

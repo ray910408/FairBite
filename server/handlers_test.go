@@ -147,17 +147,24 @@ type conditionUpdateProvider struct {
 }
 
 type cuisineUpdateProvider struct {
-	pool        *pgxpool.Pool
-	roomID      string
-	userID      string
-	restaurants []Restaurant
+	pool          *pgxpool.Pool
+	roomID        string
+	userID        string
+	restaurants   []Restaurant
+	addVegetarian bool
 }
 
 func (cuisineUpdateProvider) Source() string { return "mock" }
 
 func (p cuisineUpdateProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int, _ []string) (PlacesSearchResult, error) {
-	if _, err := p.pool.Exec(ctx, `update room_members set cuisines = '["korean"]'
-		where room_id = $1 and user_id = $2`, p.roomID, p.userID); err != nil {
+	column := "cuisines"
+	value := `["korean"]`
+	if p.addVegetarian {
+		column = "dietary"
+		value = `["vegetarian"]`
+	}
+	if _, err := p.pool.Exec(ctx, `update room_members set `+column+` = $3
+		where room_id = $1 and user_id = $2`, p.roomID, p.userID, value); err != nil {
 		return PlacesSearchResult{}, err
 	}
 	return PlacesSearchResult{Restaurants: append([]Restaurant(nil), p.restaurants...)}, nil
@@ -494,6 +501,7 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		filterEnabled bool
+		addVegetarian bool
 		empty         bool
 		wantStatus    int
 	}{
@@ -501,6 +509,8 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 		{name: "過濾關閉", filterEnabled: false, wantStatus: http.StatusOK},
 		{name: "過濾開啟且零結果", filterEnabled: true, empty: true, wantStatus: http.StatusConflict},
 		{name: "過濾關閉且零結果", filterEnabled: false, empty: true, wantStatus: http.StatusUnprocessableEntity},
+		{name: "過濾關閉且勾素食", addVegetarian: true, wantStatus: http.StatusConflict},
+		{name: "過濾關閉且勾素食且零結果", addVegetarian: true, empty: true, wantStatus: http.StatusConflict},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := pool.Exec(ctx,
@@ -508,7 +518,7 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 				t.Fatal(err)
 			}
 			if _, err := pool.Exec(ctx,
-				`update public.room_members set cuisines = '["ramen"]' where room_id = $1 and user_id = $2`, roomID, hostID); err != nil {
+				`update public.room_members set cuisines = '["ramen"]', dietary = '[]' where room_id = $1 and user_id = $2`, roomID, hostID); err != nil {
 				t.Fatal(err)
 			}
 			providerRestaurants := restaurants
@@ -517,6 +527,7 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 			}
 			h := newTestAppWithProvider(t, pool, cuisineUpdateProvider{
 				pool: pool, roomID: roomID, userID: hostID, restaurants: providerRestaurants,
+				addVegetarian: tc.addVegetarian,
 			})
 			r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
 			r.Header.Set("Authorization", "Bearer "+token)
@@ -525,10 +536,10 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 			if w.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d: %s", w.Code, tc.wantStatus, w.Body.String())
 			}
-			if tc.filterEnabled && !strings.Contains(w.Body.String(), searchConditionsChangedMessage) {
+			if tc.wantStatus == http.StatusConflict && !strings.Contains(w.Body.String(), searchConditionsChangedMessage) {
 				t.Fatalf("409 應回搜尋條件已變更：%s", w.Body.String())
 			}
-			if tc.empty && !tc.filterEnabled && !strings.Contains(w.Body.String(), `"error":"no_restaurants_in_range"`) {
+			if tc.empty && !tc.filterEnabled && !tc.addVegetarian && !strings.Contains(w.Body.String(), `"error":"no_restaurants_in_range"`) {
 				t.Fatalf("過濾關閉的零結果應維持 no_restaurants_in_range：%s", w.Body.String())
 			}
 		})

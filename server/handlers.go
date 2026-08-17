@@ -386,15 +386,21 @@ func memberCuisinesDrifted(ctx context.Context, pool *pgxpool.Pool, roomID strin
 	if err := pool.QueryRow(ctx, `select cuisine_filter from rooms where id = $1`, roomID).Scan(&filterEnabled); err != nil {
 		return false, err
 	}
-	if !filterEnabled {
-		return false, nil
-	}
 	members, err := LoadMembers(ctx, pool, roomID)
 	if err != nil {
 		return false, err
 	}
-	// 期間全員退房：聯集變空 ≠ fetched 時刻意回 409（人走了條件確實變了，freeze 同樣會擋）；與 memberRadiusGrew 回 false 的不對稱是有意為之。
-	return !slices.Equal(cuisineUnion(members), fetched), nil
+	// 期間全員退房：聯集變空 ≠ fetched 時刻意回 409（人走了條件確實變了，freeze 同樣會擋）；
+	// 與 memberRadiusGrew 回 false 的不對稱是有意為之。
+	reloaded := cuisineUnion(members)
+	if slices.Equal(reloaded, fetched) {
+		return false, nil
+	}
+	// 閘門拆兩層的理由見 freeze.go——菜系吃 cuisine_filter，嚴格禁忌不吃。
+	if !filterEnabled {
+		return !slices.Equal(strictDietaryTerms(reloaded), strictDietaryTerms(fetched)), nil
+	}
+	return true, nil
 }
 
 func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider, inFlight *sync.Map) {

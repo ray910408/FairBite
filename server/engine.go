@@ -210,19 +210,47 @@ func lowestSatisfactionMember(in EngineInput) string {
 	return lowID
 }
 
-// cuisineUnion：全員料理偏好聯集（sorted＋dedup）。檢索 fan-out 與菜系過濾共用。
+// cuisineUnion：本次搜尋要送出的定向檢索詞集合。除了成員勾選的菜系，還包含由嚴格飲食
+// 禁忌（DietaryRequires）推導的檢索詞——素食店在 nearby 的 20 筆熱門裡抽不到
+// （2026-08-16 實測台北車站 1.5km 為 0 家），沒有專屬支線就永遠進不了池。
+// 負向禁忌（DietaryConflicts）不列入：它們是排除條件，多召回無益只多花一次 Places 呼叫。
+// 回傳值同時是 freeze.go under-fetch 不變式的比對基準（freeze.go:46）與
+// memberCuisinesDrifted 的 409 判準（handlers.go:397）——三個呼叫端必須共用這一個函式。
 func cuisineUnion(ms []Member) []string {
 	seen := map[string]bool{}
 	var out []string
+	add := func(c string) {
+		if !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
 	for _, m := range ms {
 		for _, c := range m.Cuisines {
-			if !seen[c] {
-				seen[c] = true
-				out = append(out, c)
+			add(c)
+		}
+		for _, d := range m.Dietary {
+			if _, strict := DietaryRequires[d]; strict {
+				add(d)
 			}
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// strictDietaryTerms：從檢索詞集合濾出嚴格禁忌（DietaryRequires）的 key。
+// 存在的理由是 freeze 與 drift 判斷的閘門不對等：菜系只有在 cuisine_filter 開啟時
+// 才是入池門檻（freeze.go 的註解寫下了這個理由），但 DietaryRequires 在 engine.go
+// hardExclude 裡是無條件硬性條件。少跑一支素食檢索＝該成員零候選，與過濾開關無關。
+// 輸入須為 cuisineUnion 的輸出（已排序去重），輸出因此也是排序的，可直接 slices.Equal。
+func strictDietaryTerms(terms []string) []string {
+	var out []string
+	for _, t := range terms {
+		if _, strict := DietaryRequires[t]; strict {
+			out = append(out, t)
+		}
+	}
 	return out
 }
 

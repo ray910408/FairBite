@@ -358,13 +358,15 @@ func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, 
 }
 
 // handleSearch（host 按「開始搜尋餐廳」）          Google Places API (New)
-//   │ members(call-time) → cuisineUnion(K 個菜系)
+//   │ members(call-time) → cuisineUnion(K 個菜系 ＋ 嚴格禁忌檢索詞)
 //   ▼
 // SearchNearby(lat, lng, radiusM, cuisines)
 //   ├─ searchNearby ────────────────────────────► 20 筆熱門（圓形 locationRestriction）
 //   │    └─ 失敗（重試×2 後）→ 取消在途 text → 整體 error → handler 走 30 天快取 fallback（text 結果全棄）
 //   ├─ ∥ textSearch("拉麵") ─────────────────────► ≤15 筆語意相關（pageSize 15，eng review 6）
 //   ├─ ∥ textSearch("火鍋") … K 支並行 ──────────►（locationBias 圓＋haversine 硬過濾 radiusM 外）
+//   ├─ ∥ textSearch("素食")（僅當有成員勾嚴格禁忌）──►（QueryMatches 標 "vegetarian"，
+//   │                                                   memberLikes 與 DietaryRequires 都不讀它）
 //   │    ├─ meal gate：gIsMealPrimaryType fail-closed（拒者入 RejectedPlaceIDs）
 //   │    ├─ 衝突防護：tier1 甜品專門型拒 match／tier2 純輕飲無供餐證據拒 match（店保留、match 不標）
 //   │    └─ 失敗（重試×2 後）→ log 容忍，其餘支照常（部分成功不降級）
@@ -375,7 +377,7 @@ func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, 
 //   ▼
 // closed→tombstone／rejected→逐出 ▶ 快取交易先 commit（restaurants upsert；QueryMatches 不落快取）
 //   ▼
-// 候選交易：freeze（tx 內重讀 cuisine_filter＋成員、半徑收斂）
+// 候選交易：freeze（tx 內重讀 cuisine_filter＋成員、半徑收斂、檢索詞漂移：菜系吃過濾閘門／嚴格禁忌不吃）
 //   → Evaluate（memberLikes = tags ∪ query_matches；cuisine_filter=true 時菜系為硬性條件 kind "cuisine"）
 //   → ReplaceCandidates（query_matches 隨 kept/excluded 列落 room_candidates）→ rescore/draw 讀同欄位回圈
 func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, radiusM int, cuisines []string) (PlacesSearchResult, error) {
