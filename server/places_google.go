@@ -41,7 +41,6 @@ var googleTypeTags = map[string][]string{
 	"ramen_restaurant":      {"japanese", "ramen"},
 	"sushi_restaurant":      {"japanese"}, // 原為 {"japanese", "sushi"}
 	"korean_restaurant":     {"korean"},
-	"chinese_restaurant":    {"taiwanese"}, // ponytail: 台灣情境下最接近使用者認知的歸類
 	"cantonese_restaurant":  {"cantonese"},
 	"dim_sum_restaurant":    {"cantonese", "dimsum"}, // dimsum 供 no_pork 硬排除比對（weights.go DietaryConflicts）
 	"hot_pot_restaurant":    {"hotpot"},
@@ -86,6 +85,8 @@ var googleTypeTags = map[string][]string{
 var googleTypesDeliberatelyUnmapped = map[string]string{
 	"noodle_shop":               "台式麵店與拉麵店共用此 type（ADR-0006 明列此例）；廣義訊號不產窄義 tag",
 	"chinese_noodle_restaurant": "同 noodle_shop：台/中/港麵食共用",
+	"chinese_restaurant":       "2026-08-16 實測 165 家：15% 台菜、14% 港式、72% 無從分辨——" +
+		"精確訊號改用 taiwanese_restaurant，餘者交由 query match",
 	"asian_restaurant":          "涵蓋全亞洲，無對應窄義 cuisine",
 	"bistro":                    "2026-08-16 實測含韓式酒館、法式小館、台式餐酒館——無單一歸屬",
 	"dumpling_restaurant":       "台式水餃與上海小籠共用",

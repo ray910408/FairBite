@@ -673,3 +673,48 @@ func TestNewGoogleTypeMappings(t *testing.T) {
 		}
 	}
 }
+
+// chinese_restaurant 涵蓋台菜、港式與其他中菜。2026-08-16 實測 259 家樣本中 165 家帶此
+// type：15% 也有 taiwanese_restaurant（真台菜）、14% 也有 cantonese/dim_sum（港式，卻被
+// 標成台式）、72% 兩者皆無而無從分辨。誤標實例：玖龍冰室香港茶餐廳、富宴精緻粵菜港式飲茶。
+// 精確訊號 taiwanese_restaurant 已於同批變更對映，這條猜測不再需要。
+func TestChineseRestaurantDoesNotImplyTaiwanese(t *testing.T) {
+	p := gPlace{Types: []string{"restaurant", "chinese_restaurant"}}
+	if hasTag(gTags(p), "taiwanese") {
+		t.Errorf("chinese_restaurant 單獨產出 taiwanese；gTags = %v", gTags(p))
+	}
+}
+
+// 反向：真台菜店的 canonical tag 必須留住。
+func TestTaiwaneseRestaurantTypeGrantsTaiwanese(t *testing.T) {
+	p := gPlace{Types: []string{"restaurant", "taiwanese_restaurant", "chinese_restaurant"}}
+	if !hasTag(gTags(p), "taiwanese") {
+		t.Errorf("taiwanese_restaurant 沒有產出 taiwanese；gTags = %v", gTags(p))
+	}
+}
+
+// 港式店最常見的 type 組合不得再被標成台式。
+func TestCantoneseRestaurantIsNotTaggedTaiwanese(t *testing.T) {
+	p := gPlace{Types: []string{"restaurant", "chinese_restaurant", "cantonese_restaurant"}}
+	tags := gTags(p)
+	if hasTag(tags, "taiwanese") {
+		t.Errorf("港式店被標成 taiwanese；gTags = %v", tags)
+	}
+	if !hasTag(tags, "cantonese") {
+		t.Errorf("港式店少了 cantonese；gTags = %v", tags)
+	}
+}
+
+// 降級模式的已接受代價（eng review T4）：只帶 chinese_restaurant 的真台菜，
+// 在 provider 失敗走快取時沒有 canonical taiwanese、也沒有 query match（ADR-0006：
+// query_matches 不進 restaurants 快取），cuisine_filter 開啟時會被硬排除。
+// 主路徑靠「台式料理」定向檢索補回；本測試釘住降級側的行為，讓它是已知狀態不是意外。
+func TestChineseOnlyRestaurantHasNoTaiwaneseSignalWithoutQueryMatch(t *testing.T) {
+	r := gRestaurant(gPlace{Types: []string{"restaurant", "chinese_restaurant"}})
+	if hasTag(r.CuisineTags, "taiwanese") {
+		t.Errorf("chinese_restaurant 不應產出 canonical taiwanese：%v", r.CuisineTags)
+	}
+	if len(r.QueryMatches) != 0 {
+		t.Errorf("未經 textSearch 的列不得帶 query match：%v", r.QueryMatches)
+	}
+}
