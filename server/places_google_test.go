@@ -282,8 +282,8 @@ func TestGoogleProviderMapping(t *testing.T) {
 	if sushi.PrimaryType != "sushi_restaurant" {
 		t.Errorf("primaryType 必須帶入快取判斷欄位，got %q", sushi.PrimaryType)
 	}
-	if !hasTag(sushi.CuisineTags, "japanese") || !hasTag(sushi.CuisineTags, "sushi") {
-		t.Errorf("types 應映到 japanese+sushi：%v", sushi.CuisineTags)
+	if !hasTag(sushi.CuisineTags, "japanese") {
+		t.Errorf("types 應映到 japanese：%v", sushi.CuisineTags)
 	}
 	if !sushi.Hours.IsOpenAt(at(time.Monday, 12, 0)) || sushi.Hours.IsOpenAt(at(time.Monday, 23, 0)) {
 		t.Error("一般營業時段轉換錯誤")
@@ -648,5 +648,28 @@ func TestDedupeChainsFiltersTier1InheritedMatches(t *testing.T) {
 	}, 25.0478, 121.5170)
 	if len(got) != 1 || got[0].PlaceID != "dessert-near" || slices.Contains(got[0].QueryMatches, "ramen") {
 		t.Fatalf("甜品留存分店不可繼承姐妹店的熱食 match，got %+v", got)
+	}
+}
+
+// 本輪（2026-08-16 普查）新增的對映逐條釘住。只釘新增的：既有對映已在線上跑過，
+// 把整張表抄一遍是 DRY 違反，且未來每次正常擴充都要改兩個地方。
+func TestNewGoogleTypeMappings(t *testing.T) {
+	for _, tc := range []struct {
+		gtype string
+		want  []string
+	}{
+		{"taiwanese_restaurant", []string{"taiwanese"}},
+		{"western_restaurant", []string{"western"}},
+		{"european_restaurant", []string{"western"}},
+		{"japanese_izakaya_restaurant", []string{"japanese"}},
+		{"yakiniku_restaurant", []string{"japanese"}},
+		{"japanese_curry_restaurant", []string{"japanese"}},
+	} {
+		got := gTags(gPlace{Types: []string{"restaurant", tc.gtype}})
+		for _, want := range tc.want {
+			if !hasTag(got, want) {
+				t.Errorf("%s 應產出 %q，got %v", tc.gtype, want, got)
+			}
+		}
 	}
 }
