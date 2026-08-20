@@ -67,6 +67,9 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, weather
 	api.HandleFunc("POST /api/rooms/{id}/start-voting", func(w http.ResponseWriter, r *http.Request) {
 		handleStartVoting(w, r, pool)
 	})
+	api.HandleFunc("POST /api/rooms/{id}/edit-conditions", func(w http.ResponseWriter, r *http.Request) {
+		handleEditConditions(w, r, pool)
+	})
 	api.HandleFunc("POST /api/rooms/{id}/vote", func(w http.ResponseWriter, r *http.Request) {
 		handleVote(w, r, pool, weather)
 	})
@@ -221,6 +224,49 @@ func handleStartVoting(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 		return
 	}
 	jsonOK(w, map[string]string{"status": "voting"})
+}
+
+func handleEditConditions(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
+	ctx := r.Context()
+	room, ok := loadHostRoom(w, r, pool)
+	if !ok {
+		return
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := TransitionRoom(ctx, tx, room.ID, "candidates", "lobby"); err != nil {
+		if errors.Is(err, ErrConflict) {
+			jsonError(w, http.StatusConflict, "房間狀態已變更")
+		} else {
+			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		}
+		return
+	}
+	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
+		if errors.Is(err, ErrNotHost) {
+			jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
+		} else {
+			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		}
+		return
+	}
+	if _, err := tx.Exec(ctx, `delete from room_candidates where room_id = $1`, room.ID); err != nil {
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	if _, err := tx.Exec(ctx, `update room_members set ready = false where room_id = $1`, room.ID); err != nil {
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleVote：spec §3（Task 0 修訂）— 投票/否決/收回的唯一入口（D15 領域命令）。

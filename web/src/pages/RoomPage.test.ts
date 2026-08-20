@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
   getUid: vi.fn(),
   searchRoom: vi.fn(),
+  editConditions: vi.fn(),
   members: {} as { data?: unknown; error?: unknown },
 }))
 
@@ -49,6 +50,7 @@ vi.mock('../lib/supabase', () => ({
 
 vi.mock('../lib/api', () => ({
   searchRoom: mocks.searchRoom,
+  editConditions: mocks.editConditions,
   startVoting: vi.fn(async () => null),
 }))
 
@@ -272,6 +274,7 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     mocks.from.mockReset().mockReturnValue({ update: mocks.update })
     mocks.useRoom.mockReset().mockReturnValue(roomState())
     mocks.searchRoom.mockReset().mockResolvedValue({ error: null, warning: null })
+    mocks.editConditions.mockReset().mockResolvedValue(null)
   })
 
   afterEach(() => {
@@ -419,6 +422,72 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     const tree = await renderRoomPage()
     const btn = findButton(tree, '處理中…') as { props?: { disabled?: boolean } }
     expect(btn.props?.disabled).toBe(true)
+  })
+
+  it('candidates 只有房主看得到「修改條件」與「開始投票」', async () => {
+    mocks.useRoom.mockReturnValue(roomState({ room: { ...lobbyRoom, status: 'candidates' } }))
+    const hostTree = await renderRoomPage()
+    expect(findButton(hostTree, '修改條件').type).toBe('button')
+    expect(findButton(hostTree, '開始投票').type).toBe('button')
+
+    mocks.stateIndex = 0
+    mocks.useRoom.mockReturnValue(roomState({
+      room: { ...lobbyRoom, status: 'candidates' },
+      myUserId: 'user-b',
+    }))
+    const guestTree = await renderRoomPage()
+    expect(findButton(guestTree, '修改條件').type).toBeUndefined()
+    expect(findButton(guestTree, '開始投票').type).toBeUndefined()
+  })
+
+  it('修改條件先用 native confirm；取消時不送 request', async () => {
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    mocks.useRoom.mockReturnValue(roomState({ room: { ...lobbyRoom, status: 'candidates' } }))
+    const tree = await renderRoomPage()
+
+    await findButton(tree, '修改條件').props!.onClick!()
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(mocks.editConditions).not.toHaveBeenCalled()
+  })
+
+  it('修改條件 busy ref 擋連點，成功只 refetch 一次', async () => {
+    const pending = deferred<string | null>()
+    const refetch = vi.fn()
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    mocks.editConditions.mockReturnValue(pending.promise)
+    mocks.useRoom.mockReturnValue(roomState({
+      room: { ...lobbyRoom, status: 'candidates' },
+      refetch,
+    }))
+    const tree = await renderRoomPage()
+    const click = findButton(tree, '修改條件').props!.onClick!
+
+    const first = click()
+    await click()
+    expect(mocks.editConditions).toHaveBeenCalledTimes(1)
+    expect(mocks.editConditions).toHaveBeenCalledWith('room-1')
+    pending.resolve(null)
+    await first
+
+    expect(refetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('修改條件錯誤顯示在既有 action alert 且不 refetch', async () => {
+    const refetch = vi.fn()
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    mocks.editConditions.mockResolvedValue('房間狀態已變更')
+    mocks.useRoom.mockReturnValue(roomState({
+      room: { ...lobbyRoom, status: 'candidates' },
+      refetch,
+    }))
+    const tree = await renderRoomPage()
+
+    await findButton(tree, '修改條件').props!.onClick!()
+
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('房間狀態已變更')
+    expect(refetch).not.toHaveBeenCalled()
   })
 })
 

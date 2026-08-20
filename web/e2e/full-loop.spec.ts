@@ -312,6 +312,47 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await expect(b.getByText(/1\/2 位成員偏好命中/).first()).toBeVisible()
     console.log(`[task-13] runtime kept count: ${keptCount}`)
 
+    // BUG-003：只有房主能回到條件階段；交易清空候選並把全員 ready 歸零，
+    // Realtime/refetch 必須讓兩個 client 收斂後才能修改、重新準備與再次搜尋。
+    await expect(a.getByRole('button', { name: '修改條件' })).toBeVisible()
+    await expect(a.getByRole('button', { name: '開始投票' })).toBeVisible()
+    await expect(b.getByRole('button', { name: '修改條件' })).toHaveCount(0)
+    await expect(b.getByRole('button', { name: '開始投票' })).toHaveCount(0)
+    const emptyCandidates = (page: Page) => page.waitForResponse(async response => {
+      const request = response.request()
+      if (request.method() !== 'GET' || !request.url().includes('/rest/v1/room_candidates')) return false
+      try {
+        const rows = await response.json()
+        return Array.isArray(rows) && rows.length === 0
+      } catch {
+        return false
+      }
+    })
+    const clearedA = emptyCandidates(a)
+    const clearedB = emptyCandidates(b)
+    a.once('dialog', async dialog => {
+      expect(dialog.type()).toBe('confirm')
+      await dialog.accept()
+    })
+    await a.getByRole('button', { name: '修改條件' }).click()
+    await Promise.all([clearedA, clearedB])
+    await expect(candidateHeadingA).toHaveCount(0)
+    await expect(candidateHeadingB).toHaveCount(0)
+    await expect(a.getByRole('button', { name: '開始搜尋餐廳' })).toBeVisible()
+    await expect(b.getByRole('button', { name: '我準備好了' })).toBeVisible()
+    await expect(a.getByText('已準備', { exact: true })).toHaveCount(0)
+
+    await setConditions(a, 1500)
+    await setConditionsAndReady(b, 1500)
+    await expect(a.getByText('已準備', { exact: true })).toHaveCount(1)
+    await expect(search).toBeEnabled()
+    await search.click()
+    await expect(candidateHeadingA).toBeVisible()
+    await expect(candidateHeadingB).toBeVisible()
+    await expect(candidateHeadingA).toHaveText(`候選餐廳（${keptCount}）`)
+    await expect(candidateHeadingB).toHaveText(`候選餐廳（${keptCount}）`)
+    expect(searchRequestCount).toBe(2)
+
     // A 開始投票 → B 在已命名卡片上看到投票控制。
     await a.getByRole('button', { name: '開始投票' }).click()
     const upName = restaurantNames[0]

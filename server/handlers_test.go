@@ -2435,6 +2435,325 @@ func TestVotingFlow(t *testing.T) {
 	}
 }
 
+type editConditionsFixture struct {
+	hostID, guestID, roomID, restaurantID, code string
+}
+
+func seedEditConditionsFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
+	n int, status string, withCandidate bool,
+) editConditionsFixture {
+	t.Helper()
+	f := editConditionsFixture{
+		hostID:       fmt.Sprintf("95000000-0000-4000-8000-%012x", n*4+1),
+		guestID:      fmt.Sprintf("95000000-0000-4000-8000-%012x", n*4+2),
+		roomID:       fmt.Sprintf("95000000-0000-4000-8000-%012x", n*4+3),
+		restaurantID: fmt.Sprintf("95000000-0000-4000-8000-%012x", n*4+4),
+		code:         fmt.Sprintf("ED%010X", n),
+	}
+	if _, err := pool.Exec(ctx, `delete from public.rooms where id = $1`, f.roomID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `delete from auth.users where id in ($1, $2)`, f.hostID, f.guestID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `delete from public.restaurants where id = $1`, f.restaurantID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `delete from public.rooms where id = $1`, f.roomID)
+		pool.Exec(context.Background(), `delete from auth.users where id in ($1, $2)`, f.hostID, f.guestID)
+		pool.Exec(context.Background(), `delete from public.restaurants where id = $1`, f.restaurantID)
+	})
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email) values
+		($1, $3), ($2, $4)`, f.hostID, f.guestID,
+		fmt.Sprintf("edit-host-%d@test.dev", n), fmt.Sprintf("edit-guest-%d@test.dev", n)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.rooms
+		(id, code, host_id, status, center_lat, center_lng, exploration, cuisine_filter)
+		values ($1, $2, $3, $4, 25.0478, 121.5170, 'explore', true)`,
+		f.roomID, f.code, f.hostID, status); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, max_distance_m, transport, ready) values
+		($1, $2, 700, '["japanese"]', 1200, 'walking', true),
+		($1, $3, 900, '["taiwanese"]', 1600, 'transit', true)`,
+		f.roomID, f.hostID, f.guestID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.restaurants
+		(id, place_id, name, cuisine_tags, price_level, lat, lng, opening_hours, source)
+		values ($1, $2, 'Task 5 candidate', '["japanese"]', 2, 25.0478, 121.5171,
+			'{"mon":[[0,1440]]}', 'mock')`, f.restaurantID, fmt.Sprintf("task5-place-%d", n)); err != nil {
+		t.Fatal(err)
+	}
+	if withCandidate {
+		if _, err := pool.Exec(ctx, `insert into public.room_candidates
+			(room_id, restaurant_id, status, probability, exposure_counted)
+			values ($1, $2, 'kept', 1, true)`, f.roomID, f.restaurantID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `insert into public.exposure_stats
+		(user_id, restaurant_id, recommended_count, chosen_count)
+		values ($1, $2, 7, 2)`, f.hostID, f.restaurantID); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func editConditionsRequest(t *testing.T, h http.Handler, uid, roomID string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/edit-conditions", nil)
+	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", uid))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
+}
+
+func TestEditConditions(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Fatal("TEST_DATABASE_URL is required")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+	h := newTestApp(t, pool)
+
+	t.Run("host success retains room membership invite and exposure while clearing candidates and ready", func(t *testing.T) {
+		f := seedEditConditionsFixture(t, ctx, pool, 1, "candidates", true)
+		w := editConditionsRequest(t, h, f.hostID, f.roomID)
+		if w.Code != http.StatusNoContent || w.Body.Len() != 0 {
+			t.Fatalf("edit conditions: want 204 empty body, got %d %q", w.Code, w.Body.String())
+		}
+		var code, hostID, status, exploration string
+		var cuisineFilter bool
+		if err := pool.QueryRow(ctx, `select code, host_id, status, exploration, cuisine_filter
+			from public.rooms where id = $1`, f.roomID).
+			Scan(&code, &hostID, &status, &exploration, &cuisineFilter); err != nil {
+			t.Fatal(err)
+		}
+		if code != f.code || hostID != f.hostID || status != "lobby" || exploration != "explore" || !cuisineFilter {
+			t.Fatalf("room fields changed unexpectedly: code=%s host=%s status=%s exploration=%s filter=%v",
+				code, hostID, status, exploration, cuisineFilter)
+		}
+		var members, ready, candidates, recommended, chosen int
+		if err := pool.QueryRow(ctx, `select count(*), count(*) filter (where ready)
+			from public.room_members where room_id = $1`, f.roomID).Scan(&members, &ready); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `select count(*) from public.room_candidates where room_id = $1`, f.roomID).
+			Scan(&candidates); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `select recommended_count, chosen_count from public.exposure_stats
+			where user_id = $1 and restaurant_id = $2`, f.hostID, f.restaurantID).
+			Scan(&recommended, &chosen); err != nil {
+			t.Fatal(err)
+		}
+		if members != 2 || ready != 0 || candidates != 0 || recommended != 7 || chosen != 2 {
+			t.Fatalf("reset/retention mismatch: members=%d ready=%d candidates=%d recommended=%d chosen=%d",
+				members, ready, candidates, recommended, chosen)
+		}
+	})
+
+	t.Run("non-host is forbidden without mutation", func(t *testing.T) {
+		f := seedEditConditionsFixture(t, ctx, pool, 2, "candidates", true)
+		w := editConditionsRequest(t, h, f.guestID, f.roomID)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("non-host: want 403 got %d body %s", w.Code, w.Body.String())
+		}
+		var status string
+		var candidates, ready int
+		if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, f.roomID).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `select count(*) from public.room_candidates where room_id = $1`, f.roomID).Scan(&candidates); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `select count(*) filter (where ready) from public.room_members where room_id = $1`, f.roomID).Scan(&ready); err != nil {
+			t.Fatal(err)
+		}
+		if status != "candidates" || candidates != 1 || ready != 2 {
+			t.Fatalf("non-host mutated state: status=%s candidates=%d ready=%d", status, candidates, ready)
+		}
+	})
+
+	t.Run("wrong phase is conflict", func(t *testing.T) {
+		f := seedEditConditionsFixture(t, ctx, pool, 3, "lobby", true)
+		w := editConditionsRequest(t, h, f.hostID, f.roomID)
+		if w.Code != http.StatusConflict {
+			t.Fatalf("wrong phase: want 409 got %d body %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("zero candidates still resets every ready flag", func(t *testing.T) {
+		f := seedEditConditionsFixture(t, ctx, pool, 4, "candidates", false)
+		w := editConditionsRequest(t, h, f.hostID, f.roomID)
+		if w.Code != http.StatusNoContent || w.Body.Len() != 0 {
+			t.Fatalf("zero candidates: want 204 empty body got %d %q", w.Code, w.Body.String())
+		}
+		var ready int
+		if err := pool.QueryRow(ctx, `select count(*) filter (where ready) from public.room_members where room_id = $1`, f.roomID).Scan(&ready); err != nil {
+			t.Fatal(err)
+		}
+		if ready != 0 {
+			t.Fatalf("zero candidates left %d ready members", ready)
+		}
+	})
+
+	t.Run("candidate delete database failure is 500 and rolls back all mutations", func(t *testing.T) {
+		f := seedEditConditionsFixture(t, ctx, pool, 5, "candidates", true)
+		pool.Exec(ctx, `drop trigger if exists task5_fail_candidate_delete on public.room_candidates`)
+		pool.Exec(ctx, `drop function if exists public.task5_fail_candidate_delete()`)
+		ddl := fmt.Sprintf(`create function public.task5_fail_candidate_delete() returns trigger
+			language plpgsql as $$ begin
+				if old.room_id = '%s'::uuid then raise exception 'task5 forced delete failure'; end if;
+				return old;
+			end $$;
+			create trigger task5_fail_candidate_delete before delete on public.room_candidates
+			for each row execute function public.task5_fail_candidate_delete()`, f.roomID)
+		if _, err := pool.Exec(ctx, ddl); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			pool.Exec(context.Background(), `drop trigger if exists task5_fail_candidate_delete on public.room_candidates`)
+			pool.Exec(context.Background(), `drop function if exists public.task5_fail_candidate_delete()`)
+		})
+		w := editConditionsRequest(t, h, f.hostID, f.roomID)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("delete DB failure: want 500 got %d body %s", w.Code, w.Body.String())
+		}
+		var status string
+		var candidates, ready int
+		if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, f.roomID).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `select count(*) from public.room_candidates where room_id = $1`, f.roomID).Scan(&candidates); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `select count(*) filter (where ready) from public.room_members where room_id = $1`, f.roomID).Scan(&ready); err != nil {
+			t.Fatal(err)
+		}
+		if status != "candidates" || candidates != 1 || ready != 2 {
+			t.Fatalf("failed transaction committed mixed state: status=%s candidates=%d ready=%d", status, candidates, ready)
+		}
+	})
+}
+
+func TestEditConditionsRacesStartVoting(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Fatal("TEST_DATABASE_URL is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+	f := seedEditConditionsFixture(t, ctx, pool, 6, "candidates", true)
+	h := newTestApp(t, pool)
+
+	gate, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gate.Rollback(ctx)
+	if _, err := gate.Exec(ctx, `select id from public.rooms where id = $1 for update`, f.roomID); err != nil {
+		t.Fatal(err)
+	}
+
+	type result struct {
+		name string
+		code int
+		body string
+	}
+	done := make(chan result, 2)
+	request := func(name, path string) {
+		r := httptest.NewRequest("POST", path, nil)
+		r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", f.hostID))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		done <- result{name: name, code: w.Code, body: w.Body.String()}
+	}
+	go request("edit", "/api/rooms/"+f.roomID+"/edit-conditions")
+	go request("start-voting", "/api/rooms/"+f.roomID+"/start-voting")
+
+	for {
+		var waiting int
+		if err := pool.QueryRow(ctx, `select count(*) from pg_stat_activity
+			where datname = current_database() and wait_event_type = 'Lock'
+			  and query like 'update rooms set status = $3 where id = $1 and status = $2%'`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting >= 2 {
+			break
+		}
+		select {
+		case r := <-done:
+			t.Fatalf("%s completed before deterministic race release: %d %s", r.name, r.code, r.body)
+		case <-ctx.Done():
+			t.Fatal("both transitions did not block on the room row lock")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if err := gate.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r1, r2 := <-done, <-done
+	results := []result{r1, r2}
+	successes, conflicts := 0, 0
+	for _, r := range results {
+		if r.code >= 200 && r.code < 300 {
+			successes++
+		} else if r.code == http.StatusConflict {
+			conflicts++
+		} else {
+			t.Fatalf("race %s returned %d body %s", r.name, r.code, r.body)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("exactly one transition must succeed: %+v", results)
+	}
+
+	var status string
+	var candidates, ready, recommended int
+	if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, f.roomID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select count(*) from public.room_candidates where room_id = $1`, f.roomID).Scan(&candidates); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select count(*) filter (where ready) from public.room_members where room_id = $1`, f.roomID).Scan(&ready); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select recommended_count from public.exposure_stats
+		where user_id = $1 and restaurant_id = $2`, f.hostID, f.restaurantID).Scan(&recommended); err != nil {
+		t.Fatal(err)
+	}
+	if status == "lobby" {
+		if candidates != 0 || ready != 0 {
+			t.Fatalf("edit won but mixed state committed: candidates=%d ready=%d", candidates, ready)
+		}
+	} else if status == "voting" {
+		if candidates != 1 || ready != 2 {
+			t.Fatalf("start-voting won but mixed state committed: candidates=%d ready=%d", candidates, ready)
+		}
+	} else {
+		t.Fatalf("race ended in unexpected status %q", status)
+	}
+	if recommended != 7 {
+		t.Fatalf("race changed retained exposure count to %d", recommended)
+	}
+}
+
 func TestDrawAllVetoed(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

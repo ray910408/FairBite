@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
-import { startVoting } from '../lib/api'
+import { editConditions, startVoting } from '../lib/api'
 import { isVetoDeadEnd } from '../lib/deadEnd'
 import { EXPLORATION_OPTIONS } from '../lib/labels'
 import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
@@ -64,6 +64,7 @@ export default function RoomPage() {
   const [leaveDialog, setLeaveDialog] = useState<LeaveTarget | null>(null)
   const [leaveChecking, setLeaveChecking] = useState(false)
   const [roomSettingsBlocked, setRoomSettingsBlocked] = useState(false)
+  const [editingConditions, setEditingConditions] = useState(false)
   const leaveTriggerRef = useRef<HTMLAnchorElement>(null)
   // 房籍查詢自己的世代（比照 HistoryPage）：aria-busy 擋不住點擊，兩次點擊之間房籍
   // 還可能在別的分頁被改，只有最後一次點擊的回應能生效
@@ -82,6 +83,7 @@ export default function RoomPage() {
   const guestsReadyRef = useRef(true)
   const searchInFlight = useRef(false)
   const startVotingInFlight = useRef(false)
+  const editConditionsInFlight = useRef(false)
   useEffect(() => {
     const d = room?.meal_time ? new Date(room.meal_time) : null
     setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
@@ -239,6 +241,27 @@ export default function RoomPage() {
     setActionError('')
     const msg = await toggleVote(restaurantId, kind)
     if (msg) setActionError(msg) // D4：伺服器訊息直達（額度用盡/不在投票階段都有明確下一步）
+  }
+
+  async function onEditConditions() {
+    if (editConditionsInFlight.current) return
+    if (!globalThis.confirm('修改條件會清除目前候選，並請所有成員重新準備。確定繼續？')) return
+    editConditionsInFlight.current = true
+    setEditingConditions(true)
+    setActionError('')
+    try {
+      const msg = await editConditions(room!.id)
+      if (msg) {
+        setActionError(msg)
+        return
+      }
+      await refetch()
+    } catch {
+      setActionError('修改條件失敗：無法連線到伺服器')
+    } finally {
+      editConditionsInFlight.current = false
+      setEditingConditions(false)
+    }
   }
 
   function closeLeave() {
@@ -513,19 +536,26 @@ export default function RoomPage() {
           <>
             <CandidateList rows={candidates} />
             {isHost && (
-              <button className="btn btn-primary w-full" disabled={startingVoting} aria-busy={startingVoting}
-                onClick={async () => {
-                  if (startVotingInFlight.current) return
-                  startVotingInFlight.current = true
-                  setStartingVoting(true)
-                  setActionError('')
-                  const msg = await startVoting(room.id)
-                    .catch(() => '開始投票失敗：無法連線到伺服器')
-                    .finally(() => { startVotingInFlight.current = false; setStartingVoting(false) })
-                  if (msg) setActionError(msg)
-                }}>
-                {startingVoting ? <><Spinner className="h-5 w-5" />處理中…</> : '開始投票'}
-              </button>
+              <div className="grid grid-cols-2 gap-3">
+                <button className="btn btn-secondary w-full" disabled={editingConditions || startingVoting}
+                  aria-busy={editingConditions} onClick={onEditConditions}>
+                  {editingConditions ? <><Spinner className="h-5 w-5" />處理中…</> : '修改條件'}
+                </button>
+                <button className="btn btn-primary w-full" disabled={startingVoting || editingConditions}
+                  aria-busy={startingVoting}
+                  onClick={async () => {
+                    if (startVotingInFlight.current) return
+                    startVotingInFlight.current = true
+                    setStartingVoting(true)
+                    setActionError('')
+                    const msg = await startVoting(room.id)
+                      .catch(() => '開始投票失敗：無法連線到伺服器')
+                      .finally(() => { startVotingInFlight.current = false; setStartingVoting(false) })
+                    if (msg) setActionError(msg)
+                  }}>
+                  {startingVoting ? <><Spinner className="h-5 w-5" />處理中…</> : '開始投票'}
+                </button>
+              </div>
             )}
           </>
         )}

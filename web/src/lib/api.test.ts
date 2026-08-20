@@ -6,7 +6,7 @@ vi.mock('./supabase', () => ({
   supabase: { auth: { getSession: mocks.getSession } },
 }))
 
-import { searchRoom } from './api'
+import { editConditions, searchRoom } from './api'
 
 const degradedWarning = '外部搜尋暫時失敗，本次使用 30 天內的快取資料'
 
@@ -94,6 +94,33 @@ describe('searchRoom', () => {
       error: '此位置附近沒有餐廳資料',
       warning: degradedWarning,
     })
+  })
+})
+
+describe('editConditions', () => {
+  beforeEach(() => {
+    mocks.getSession.mockResolvedValue({ data: { session: { access_token: 'token' } } })
+    vi.unstubAllGlobals()
+  })
+
+  it('透過共用 POST action 呼叫 endpoint，204 回傳 null', async () => {
+    const fetchStub = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchStub)
+
+    await expect(editConditions('room-1')).resolves.toBeNull()
+    expect(fetchStub).toHaveBeenCalledWith('/api/rooms/room-1/edit-conditions', expect.objectContaining({
+      method: 'POST',
+      headers: expect.objectContaining({ Authorization: 'Bearer token' }),
+    }))
+  })
+
+  it('保留 API error，無 JSON error 時用修改條件 fallback', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: '房間狀態已變更' }), { status: 409 }))
+      .mockResolvedValueOnce(new Response('down', { status: 500 })))
+
+    await expect(editConditions('room-1')).resolves.toBe('房間狀態已變更')
+    await expect(editConditions('room-1')).resolves.toBe('修改條件失敗（500）')
   })
 })
 

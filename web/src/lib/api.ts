@@ -72,6 +72,10 @@ export async function startVoting(roomId: string): Promise<string | null> {
   return postAction(`/api/rooms/${roomId}/start-voting`, '開始投票失敗')
 }
 
+export async function editConditions(roomId: string): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/edit-conditions`, '修改條件失敗')
+}
+
 // 投票/否決/收回的唯一入口（D15）：Go 單一交易寫票 + 權威重算，Realtime 推回全員
 export async function voteRoom(roomId: string, restaurantId: string,
   kind: 'up' | 'veto', op: 'cast' | 'retract'): Promise<string | null> {

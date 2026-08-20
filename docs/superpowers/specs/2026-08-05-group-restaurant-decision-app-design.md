@@ -65,6 +65,8 @@ flowchart TB
 | Endpoint | 權限 | 作用 | Phase |
 |---|---|---|---|
 | `POST /api/rooms/{id}/search` | 房主 | 取候選 → 過濾 → 計分 → 寫入 `room_candidates`，房間 `lobby → candidates`；零候選時房間停留在 `lobby` 並回傳排除統計 | 1 |
+| `POST /api/rooms/{id}/edit-conditions` | 房主 | 單一交易將 `candidates → lobby`、清空 `room_candidates`、全員 `ready=false`；保留房間、成員、邀請碼、條件與既有 `exposure_stats`。成功回 `204 No Content` | 3 |
+| `POST /api/rooms/{id}/start-voting` | 房主 | 單一交易將 `candidates → voting`；與候選修訂競速時只會有一個 conditional transition 成功 | 2 |
 | `POST /api/rooms/{id}/draw` | 房主 | 權威重算（含票數）→ 加權抽選 → 寫入 `draws`，房間 `→ decided` | 1 |
 | `POST /api/rooms/{id}/vote` | 任一成員 | 投票/否決/收回的唯一入口（body `{restaurant_id, kind: up\|veto, op: cast\|retract}`）：單一交易內完成階段驗證 → 冪等 → 限額 → 寫票 → inline rescore；同店 up 與可收回 veto 可並存，重算後的全房機率寫回 `room_candidates`，Realtime 推給全員；轉盤上的 % 永遠是當下真實機率。無獨立 rescore endpoint（D15） | 2 |
 | `GET /healthz` | 公開 | 健康檢查 | 1 |
@@ -130,16 +132,17 @@ UI 渲染為加減權 chips；被排除者顯示 `exclusion_reason`。
 
 ## 6. 房間狀態機
 
-```
-lobby ──房主觸發搜尋──▶ candidates ──房主啟動轉盤──▶ decided
-         （Phase 2 在 candidates 與 decided 之間插入 voting）
+```text
+lobby ──房主觸發搜尋──▶ candidates ──房主開始投票──▶ voting ──房主抽選──▶ decided
+  ▲                         │
+  └────── 房主修改條件 ─────┘
 ```
 
 - `lobby`：憑邀請碼加入（RLS 限制僅此狀態可加入）、設定條件、按 ready；搜尋零候選時停留在此
-- `candidates`：全員即時看到候選清單、機率、trace chips
+- `candidates`：全員即時看到候選清單、機率、trace chips；房主可開始投票，或確認後修改條件回 `lobby`
 - `voting`（P2）：投票、否決與收回（皆走 `POST /vote`），每個動作在同一交易內重算，機率即時更新
 - `decided`：顯示中選餐廳與機率快照；Google Maps 導航連結以成員自己的 `transport` 預選 travelmode；為每位成員寫入 `dining_history` 並更新 `exposure_stats`
-- 只有房主能觸發搜尋與抽選；狀態轉換以 conditional update（`UPDATE ... WHERE status = '<expected>'`）防 race，輸的請求收 409
+- 只有房主能觸發搜尋、候選修訂、開始投票與抽選；`edit-conditions` 與 `start-voting` 都從 `candidates` 做 conditional update，競速時恰有一個成功，輸的請求收 409。候選修訂只清候選與 ready，不回滾 `exposure_stats.recommended_count`
 
 ## 7. 安全
 
