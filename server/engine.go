@@ -143,11 +143,19 @@ func hardExclude(r Restaurant, ms []Member, now time.Time, cuisineFilter bool) (
 			minBudget, minName = m.BudgetMax, m.DisplayName
 		}
 	}
-	if r.PriceLevel >= 0 {
-		if price := PriceLevelMaxTWD[r.PriceLevel]; price > minBudget {
-			addKind("budget")
-			reasons = append(reasons, fmt.Sprintf("價位約 NT$%d，超過 %s 的預算上限 NT$%d", price, minName, minBudget))
+	maxPriceLevel := BudgetMaxGooglePriceLevel(minBudget)
+	if r.PriceLevel >= 0 && r.PriceLevel > maxPriceLevel {
+		priceLabel := GooglePriceLevelLabels[r.PriceLevel]
+		if priceLabel == "" {
+			priceLabel = "未設定"
 		}
+		preferenceLabel := GooglePriceLevelLabels[maxPriceLevel]
+		if preferenceLabel == "" {
+			preferenceLabel = "未設定"
+		}
+		addKind("budget")
+		reasons = append(reasons, fmt.Sprintf("Google 價位層級「%s」高於 %s 的「%s」偏好",
+			priceLabel, minName, preferenceLabel))
 	}
 	// 比照未知價位先例：未知不排除，不能把缺少時段當成用餐時間未營業。
 	if len(r.Hours) > 0 && !r.Hours.IsOpenAt(now) {

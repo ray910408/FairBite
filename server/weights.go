@@ -4,10 +4,25 @@ import "time"
 
 // 所有可調參數集中此檔（spec §5）
 
-// PriceLevelUnknown 代表未知價位：不參與預算硬排除；使用者裁決 2026-08-10，取代原「補中間值 2」。
+// PriceLevelUnknown 代表未知價位：不參與價位偏好硬排除；使用者裁決 2026-08-10，取代原「補中間值 2」。
 const PriceLevelUnknown = -1
 
-var PriceLevelMaxTWD = map[int]int{0: 100, 1: 200, 2: 400, 3: 800, 4: 1600}
+var GooglePriceLevelLabels = map[int]string{1: "平價", 2: "中等", 3: "偏高", 4: "高價"}
+
+func BudgetMaxGooglePriceLevel(budgetMax int) int {
+	switch {
+	case budgetMax < 100:
+		return PriceLevelUnknown
+	case budgetMax <= 200:
+		return 1
+	case budgetMax <= 400:
+		return 2
+	case budgetMax <= 800:
+		return 3
+	default:
+		return 4
+	}
+}
 
 // 定向檢索的查詢詞（Round 3 spec §5.2）。key 有兩類：CUISINE_OPTIONS 的 cuisine key，
 // 以及 DietaryRequires 的嚴格禁忌 key（2026-08-16 起）。兩類都由 cuisineUnion 統一產出，

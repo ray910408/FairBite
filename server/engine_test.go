@@ -40,9 +40,9 @@ func TestHardFilters(t *testing.T) {
 		{"素食成員排除火鍋", rest(func(r *Restaurant) { r.CuisineTags = []string{"hotpot"} }),
 			[]Member{member(func(m *Member) { m.Dietary = []string{"vegetarian"} })},
 			"dietary", "vegetarian"},
-		{"價位超過最低預算", rest(func(r *Restaurant) { r.PriceLevel = 4 }),
+		{"價位超過最低偏好", rest(func(r *Restaurant) { r.PriceLevel = 4 }),
 			[]Member{member(nil), member(func(m *Member) { m.UserID = "u2"; m.BudgetMax = 200 })},
-			"budget", "NT$"},
+			"budget", "高價"},
 		{"未營業", rest(func(r *Restaurant) { r.Hours = daily([2]int{330, 660}) }),
 			[]Member{member(nil)}, "closed", "未營業"},
 	}
@@ -62,6 +62,66 @@ func TestHardFilters(t *testing.T) {
 			e := res.Excluded[0]
 			if !hasKind(e.Kinds, c.wantKind) || !strings.Contains(e.Reason, c.wantReason) {
 				t.Errorf("want kind=%s reason 含 %q，got %v %q", c.wantKind, c.wantReason, e.Kinds, e.Reason)
+			}
+		})
+	}
+}
+
+func TestBudgetMaxGooglePriceLevel(t *testing.T) {
+	for _, tc := range []struct {
+		budget, want int
+	}{
+		{50, PriceLevelUnknown},
+		{100, 1}, {200, 1}, {300, 2}, {400, 2},
+		{500, 3}, {800, 3}, {900, 4}, {1600, 4},
+	} {
+		t.Run(fmt.Sprintf("%d", tc.budget), func(t *testing.T) {
+			if got := BudgetMaxGooglePriceLevel(tc.budget); got != tc.want {
+				t.Errorf("BudgetMaxGooglePriceLevel(%d) = %d, want %d", tc.budget, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBudgetGooglePriceLevelFilter(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		budget, priceLevel int
+		wantExcluded       bool
+	}{
+		{"同層級保留", 200, 1, false},
+		{"高於偏好排除", 200, 2, true},
+		{"未知價位保留", 100, PriceLevelUnknown, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := Evaluate(EngineInput{
+				Restaurants: []Restaurant{rest(func(r *Restaurant) { r.PriceLevel = tc.priceLevel })},
+				Members:     []Member{member(func(m *Member) { m.BudgetMax = tc.budget })},
+				Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+			})
+			if got := len(res.Excluded) == 1; got != tc.wantExcluded {
+				t.Fatalf("excluded = %t, want %t: kept=%+v excluded=%+v", got, tc.wantExcluded, res.Kept, res.Excluded)
+			}
+			if tc.wantExcluded {
+				reason := res.Excluded[0].Reason
+				if strings.Contains(reason, "NT$") || !strings.Contains(reason, "偏好") {
+					t.Errorf("預算排除理由必須是 qualitative labels，got %q", reason)
+				}
+			}
+		})
+	}
+}
+
+func TestBudgetGoogleFreePriceLevelNeverExcludes(t *testing.T) {
+	for budget := 100; budget <= 1600; budget += 100 {
+		t.Run(fmt.Sprintf("%d", budget), func(t *testing.T) {
+			res := Evaluate(EngineInput{
+				Restaurants: []Restaurant{rest(func(r *Restaurant) { r.PriceLevel = 0 })},
+				Members:     []Member{member(func(m *Member) { m.BudgetMax = budget })},
+				Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+			})
+			if len(res.Kept) != 1 {
+				t.Fatalf("Google level 0 在偏好刻度 %d 應保留，got excluded=%+v", budget, res.Excluded)
 			}
 		})
 	}

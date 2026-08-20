@@ -40,6 +40,9 @@ type ElementLike = {
     children?: unknown
     onClick?: () => void | Promise<void>
     onChange?: (event: { target: { value: string } }) => void
+    min?: number
+    max?: number
+    step?: number
   }
 }
 
@@ -184,6 +187,48 @@ describe('ConditionsForm 條件寫入防線', () => {
     condition.resolve({ error: null, count: 1 })
     await readyDone
     expect(mocks.update.mock.calls[1][0]).toEqual({ ready: true })
+  })
+
+  it('價位偏好保留原生 slider 與質性說明', async () => {
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me, isHost: false })
+    const budget = findInput(tree)
+    const copy = textContent(tree)
+
+    expect(budget.props).toMatchObject({ min: 100, max: 1600, step: 100 })
+    expect(copy).toContain('價位偏好')
+    expect(copy).toContain('偏高')
+    expect(copy).toContain('偏好刻度 800')
+    expect(copy).toContain('Google 提供粗略價位層級')
+    expect(copy).not.toContain('每人預算上限')
+    expect(copy).not.toContain('NT$')
+  })
+
+  it('legacy 無效價位偏好不誤顯示有效層級，仍可改回合法 slider 值', async () => {
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me: { ...me, budget_max: 50 }, isHost: false })
+    const budget = findInput(tree)
+    const copy = textContent(tree)
+    if (!budget.props?.onChange) throw new Error('找不到價位偏好輸入')
+
+    expect(copy).toContain('未設定')
+    expect(copy).not.toContain('平價')
+    expect(copy).not.toContain('免費')
+    expect(copy).not.toContain('NT$')
+    expect((budget as InputLike).props?.disabled).not.toBe(true)
+
+    budget.props.onChange({ target: { value: '100' } })
+    await vi.advanceTimersByTimeAsync(401)
+    expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({ budget_max: 100 }), { count: 'exact' })
+  })
+
+  it('legacy 超過 slider 上限的價位偏好也顯示未設定', async () => {
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me: { ...me, budget_max: 1700 }, isHost: false })
+    const copy = textContent(tree)
+
+    expect(copy).toContain('未設定')
+    expect(copy).not.toContain('高價')
   })
 
   it('最新條件寫入失敗會回到最後 durable snapshot 並呈現 role=alert', async () => {

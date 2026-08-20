@@ -1417,6 +1417,10 @@ func TestSearchEdgeCases(t *testing.T) {
 		PlaceID: persistedPlaceID, Name: "零候選快取測試", PrimaryType: "restaurant", PriceLevel: 0,
 		Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
 	}
+	if _, err := pool.Exec(ctx, `delete from public.exposure_stats
+		where restaurant_id in (select id from public.restaurants where place_id = $1)`, persistedPlaceID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `delete from restaurants where place_id = $1`, persistedPlaceID); err != nil {
 		t.Fatal(err)
 	}

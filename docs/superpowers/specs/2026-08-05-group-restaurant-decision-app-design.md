@@ -77,7 +77,7 @@ flowchart TB
 |---|---|---|
 | `profiles` | `id`（= `auth.users.id`）、`display_name`、`default_prefs jsonb` | 預設偏好，開新房自動帶入 |
 | `rooms` | `id`、`code`（6 碼邀請碼，unique）、`host_id`、`status`、`center_lat/lng`、`exploration`（`familiar/balanced/explore`，房主於 lobby 設定） | 房間即一次決策；無跨房間群組概念（ADR-0002） |
-| `room_members` | `(room_id, user_id)` PK、`budget_max`（TWD/人）、`cuisines jsonb`、`dietary jsonb`（tag 層級禁忌，ADR-0001）、`max_distance_m`、`transport`（`walking/driving/transit`）、`ready` | 每位成員的條件 |
+| `room_members` | `(room_id, user_id)` PK、`budget_max`（100–1600 的價位偏好刻度；非人均 TWD 保證）、`cuisines jsonb`、`dietary jsonb`（tag 層級禁忌，ADR-0001）、`max_distance_m`、`transport`（`walking/driving/transit`）、`ready` | 每位成員的條件 |
 | `restaurants` | `id`、`place_id`（unique）、`name`、`cuisine_tags jsonb`、`price_level`（0–4）、`lat/lng`、`address`、`opening_hours jsonb`、`rating`、`fetched_at` | Places 快取。遵守快取條款：`place_id` 可永存，其餘欄位以 `fetched_at` 為準 30 天內刷新 |
 | `room_candidates` | `(room_id, restaurant_id)` PK、`status`（`kept/excluded`）、`probability`、`weight_breakdown jsonb`、`exclusion_reason` | 每房每餐廳的機率與解釋 trace |
 | `votes` | `room_id`、`user_id`、`restaurant_id`、`kind`（`up/veto`）、unique(room_id, user_id, restaurant_id, kind) | 否決是可回收的排除 overlay，不會取代同店的贊成票；否決限額 = **現存**否決數（每人每房同時最多 2 個）；voting 期間可收回（`op: retract`，由 Go 只刪 veto 列）；限額由 Go 於 vote 交易內把關（`VetoQuota`，weights.go）。既有四欄 PK 已支援此語意，無 DB migration；表僅保留宣告式 invariant（PK/CHECK/FK/成員可讀 RLS），客戶端不直寫（D15） |
@@ -94,7 +94,7 @@ flowchart TB
 1. **取候選** — 搜尋半徑 = 全員 `max_distance_m` 的**最小值**（安全交集，不會有人被迫超出可接受範圍）。Places provider 介面回傳菜系標籤、價位、營業時間。
 2. **硬性過濾**（不可妥協，逐筆記中文排除原因）：
    - 任一成員 `dietary` 禁忌與餐廳 `cuisine_tags` 衝突 → 排除（tag 層級判定；系統不處理過敏，ADR-0001）
-   - `price_level` 換算金額 > 任一成員 `budget_max` → 排除
+   - 任一成員的 `budget_max` 映射為可接受的最高 Google `price_level`（100–200→1、300–400→2、500–800→3、900–1600→4）；較高的已知層級排除，層級 0 與未知價位保留。這是粗略價位層級，不保證人均 TWD 價格。
    - 目前未營業 → 排除（時間錨點 = 現在，見非目標）
 3. **軟性計分** — 每家從 base 1.0 開始逐因素乘倍率，同步將 `{factor, mult, reason}` 追加進 trace：
 

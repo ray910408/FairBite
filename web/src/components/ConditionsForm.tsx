@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { MemberRow } from '../lib/types'
-import { CUISINE_OPTIONS, DIETARY_OPTIONS, TRANSPORT_LABELS } from '../lib/labels'
+import { budgetTierLabel, CUISINE_OPTIONS, DIETARY_OPTIONS, TRANSPORT_LABELS } from '../lib/labels'
 import { Alert, Check } from './icons'
 
 const TRANSPORTS = Object.entries(TRANSPORT_LABELS) as [MemberRow['transport'], string][]
@@ -139,13 +139,15 @@ export default function ConditionsForm({ me, isHost, disabled = false, onFlushAv
 
       <label className="block space-y-1">
         <span className="flex items-baseline justify-between">
-          <span className="label">每人預算上限</span>
-          <span className="font-mono text-sm font-semibold text-brand">NT${form.budget_max}</span>
+          <span className="label">價位偏好</span>
+          <span className="text-sm font-semibold text-brand">{budgetTierLabel(form.budget_max)}</span>
         </span>
+        <span className="block text-xs text-fg-muted">偏好刻度 {form.budget_max}</span>
         <input type="range" min={100} max={1600} step={100} className="h-6 w-full"
           disabled={frozen}
           value={form.budget_max}
           onChange={e => save({ budget_max: +e.target.value })} />
+        <span className="block text-xs text-fg-muted">Google 提供粗略價位層級，不保證每人實際 TWD 價格。</span>
       </label>
 
       <div role="group" aria-labelledby="cuisine-label">
