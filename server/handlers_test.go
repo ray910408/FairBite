@@ -2186,10 +2186,12 @@ func TestVotingFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, uid := range []string{hostID, memberID} {
+		ready := uid == memberID
 		if _, err = pool.Exec(ctx,
-			`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
-			 values ($1, $2, 500, '["japanese"]', 2000, 'walking') on conflict do nothing`,
-			roomID, uid); err != nil {
+			`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport, ready)
+			 values ($1, $2, 500, '["japanese"]', 2000, 'walking', $3)
+			 on conflict (room_id, user_id) do update set ready = excluded.ready`,
+			roomID, uid, ready); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -2382,10 +2384,12 @@ func TestDrawAllVetoed(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, uid := range []string{hostID, memberID} {
+		ready := uid == memberID
 		if _, err = pool.Exec(ctx,
-			`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
-			 values ($1, $2, 500, '["japanese"]', 2000, 'walking') on conflict do nothing`,
-			roomID, uid); err != nil {
+			`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport, ready)
+			 values ($1, $2, 500, '["japanese"]', 2000, 'walking', $3)
+			 on conflict (room_id, user_id) do update set ready = excluded.ready`,
+			roomID, uid, ready); err != nil {
 			t.Fatal(err)
 		}
 	}

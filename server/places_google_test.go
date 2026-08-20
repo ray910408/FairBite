@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -375,6 +376,109 @@ func TestGoogleProviderErrorIncludesBodySnippet(t *testing.T) {
 	_, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000, nil)
 	if err == nil || !strings.Contains(err.Error(), "quota exceeded for this key") {
 		t.Fatalf("non-200 error 應含 response body snippet，got %v", err)
+	}
+}
+
+func TestGoogleSearchNearbyRequestEnvelopeDistance(t *testing.T) {
+	type searchRequest struct {
+		RankPreference      string `json:"rankPreference"`
+		LocationRestriction struct {
+			Circle struct {
+				Radius float64 `json:"radius"`
+			} `json:"circle"`
+		} `json:"locationRestriction"`
+		LocationBias struct {
+			Circle struct {
+				Radius float64 `json:"radius"`
+			} `json:"circle"`
+		} `json:"locationBias"`
+	}
+
+	requests := make(map[string]searchRequest)
+	var mu sync.Mutex
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body searchRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode %s request: %v", r.URL.Path, err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		requests[r.URL.Path] = body
+		mu.Unlock()
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"places":[]}`))
+	}))
+	defer srv.Close()
+
+	p := NewGooglePlacesProvider("test-key", srv.URL)
+	if _, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 300, []string{"ramen"}); err != nil {
+		t.Fatalf("SearchNearby: %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("want one Nearby and one Text request, got %d", calls.Load())
+	}
+	mu.Lock()
+	nearby := requests["/v1/places:searchNearby"]
+	if nearby.RankPreference != "DISTANCE" || nearby.LocationRestriction.Circle.Radius != 3000 {
+		t.Errorf("Nearby envelope/rank = radius %.0f, rank %q; want 3000/DISTANCE", nearby.LocationRestriction.Circle.Radius, nearby.RankPreference)
+	}
+	text := requests["/v1/places:searchText"]
+	mu.Unlock()
+	if text.RankPreference != "DISTANCE" || text.LocationBias.Circle.Radius != 3000 {
+		t.Errorf("Text envelope/rank = radius %.0f, rank %q; want 3000/DISTANCE", text.LocationBias.Circle.Radius, text.RankPreference)
+	}
+}
+
+func TestGoogleSearchNearbyRadiusSubset(t *testing.T) {
+	const nearbyPlaces = `{"places":[
+  {"id":"near-200m","primaryType":"restaurant","displayName":{"text":"near-200m"},"types":["restaurant"],"location":{"latitude":25.0496,"longitude":121.5170}},
+  {"id":"near-500m","primaryType":"restaurant","displayName":{"text":"near-500m"},"types":["restaurant"],"location":{"latitude":25.0523,"longitude":121.5170}},
+  {"id":"near-900m","primaryType":"restaurant","displayName":{"text":"near-900m"},"types":["restaurant"],"location":{"latitude":25.0559,"longitude":121.5170}}
+]}`
+	textPlaces := strings.ReplaceAll(nearbyPlaces, "near-", "text-")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/places:searchNearby":
+			_, _ = w.Write([]byte(nearbyPlaces))
+		case "/v1/places:searchText":
+			_, _ = w.Write([]byte(textPlaces))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	p := NewGooglePlacesProvider("test-key", srv.URL)
+	search := func(radiusM int) []string {
+		t.Helper()
+		result, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, radiusM, []string{"ramen"})
+		if err != nil {
+			t.Fatalf("SearchNearby(%d): %v", radiusM, err)
+		}
+		ids := make([]string, len(result.Restaurants))
+		for i, r := range result.Restaurants {
+			ids[i] = r.PlaceID
+		}
+		return ids
+	}
+
+	got300 := search(300)
+	got800 := search(800)
+	if !slices.Equal(got300, []string{"near-200m", "text-200m"}) {
+		t.Errorf("300m results = %v, want [near-200m text-200m]", got300)
+	}
+	if !slices.Equal(got800, []string{"near-200m", "near-500m", "text-200m", "text-500m"}) {
+		t.Errorf("800m results = %v, want [near-200m near-500m text-200m text-500m]", got800)
+	}
+	for _, id := range got300 {
+		if !slices.Contains(got800, id) {
+			t.Errorf("IDs(300m) must be a subset of IDs(800m): %v is missing from %v", got300, got800)
+		}
 	}
 }
 

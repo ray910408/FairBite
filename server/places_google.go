@@ -24,6 +24,8 @@ type googleProvider struct {
 	client  *http.Client
 }
 
+const googleSearchEnvelopeRadiusM = 3000
+
 func NewGooglePlacesProvider(apiKey, baseURL string) PlacesProvider {
 	if baseURL == "" {
 		baseURL = "https://places.googleapis.com"
@@ -192,10 +194,11 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 		"excludedPrimaryTypes": googleRequestExcludedPrimaryTypes,
 		"maxResultCount":       20, // API 上限
 		"languageCode":         "zh-TW",
+		"rankPreference":       "DISTANCE",
 		"locationRestriction": map[string]any{
 			"circle": map[string]any{
 				"center": map[string]float64{"latitude": lat, "longitude": lng},
-				"radius": float64(radiusM),
+				"radius": googleSearchEnvelopeRadiusM,
 			},
 		},
 	}
@@ -205,7 +208,10 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 	}
 	result := PlacesSearchResult{Restaurants: make([]Restaurant, 0, len(places)), RejectedPlaceIDs: rejected}
 	for _, p := range places {
-		result.Restaurants = append(result.Restaurants, gRestaurant(p))
+		r := gRestaurant(p)
+		if Haversine(lat, lng, r.Lat, r.Lng) <= float64(radiusM) {
+			result.Restaurants = append(result.Restaurants, r)
+		}
 	}
 	return result, nil
 }
@@ -335,11 +341,11 @@ func gRejectQueryMatch(cuisine string, p gPlace) bool {
 func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, lat, lng float64, radiusM int) ([]Restaurant, []string, error) {
 	body := map[string]any{
 		// eng review 6：相關性尾段是弱匹配，15 名保真剪雜訊（池子上限與投票體驗的取捨）
-		"textQuery": query, "languageCode": "zh-TW", "pageSize": 15,
+		"textQuery": query, "languageCode": "zh-TW", "pageSize": 15, "rankPreference": "DISTANCE",
 		"locationBias": map[string]any{
 			"circle": map[string]any{
 				"center": map[string]float64{"latitude": lat, "longitude": lng},
-				"radius": float64(radiusM),
+				"radius": googleSearchEnvelopeRadiusM,
 			},
 		},
 	}

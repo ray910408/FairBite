@@ -21,3 +21,10 @@
 - 快取 fallback（無查詢過程）query_matches 為空，降級模式只剩 types 加分（已接受）。
 - 同一家店在不同房間可有不同菜系證據——這是特性不是 bug（房間各自的檢索脈絡）。
 - LLM 分類與店名關鍵字規則的否決理由見上節；決策來源為 spec 2026-08-14 決策 #2 與 §9。
+
+## Retrieval radius boundary
+
+Nearby 與 Text Search 一律以 3000m、`rankPreference: "DISTANCE"` 向 Google 取回同一個 provider envelope；
+解碼後再以呼叫端的房間半徑做 Haversine 硬過濾。因此，在同一份 Google 回應快照內，較小半徑的
+本地結果是較大半徑結果的子集。這不保證跨不同時間的 Google 呼叫仍單調：Google 的排序與可回傳地點
+會變動，重複搜尋可能得到不同快照。
