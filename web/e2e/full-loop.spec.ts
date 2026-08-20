@@ -279,7 +279,7 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     })
     await setConditions(a, 1600)
     await expect(search).toBeEnabled()
-    await search.evaluate((button: HTMLButtonElement) => {
+    await search.evaluate(button => {
       button.click()
       button.click()
     })
@@ -325,13 +325,19 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
       .getByRole('button', { name: '👍 贊成（1）', exact: true })).toBeVisible()
     await expect(votingCard(a, upName).getByText(/1 張贊成票/)).toBeVisible()
 
-    // B 否決第二家；若執行時僅一間開店，誠實改用唯一候選完成同一循環。
-    const cycleName = restaurantNames[1] ?? restaurantNames[0]
-    await castVeto(b, cycleName, 'memberB')
-    await expect(excludedRow(a, cycleName)
+    // BUG-002：同店 up 與 veto 是獨立列。兩端 refresh 後收回 veto，up tally 必須仍是 1。
+    await castVeto(b, upName, 'memberB')
+    await expect(excludedRow(a, upName)
       .getByText('遭 memberB 否決（可收回）', { exact: true })).toBeVisible()
-    await retractVeto(b, cycleName)
-    await expect(votingCard(a, cycleName)).toBeVisible()
+    await Promise.all([a.reload(), b.reload()])
+    await expect(excludedRow(a, upName)).toBeVisible()
+    await expect(excludedRow(b, upName)).toBeVisible()
+    await retractVeto(b, upName)
+    await Promise.all([a.reload(), b.reload()])
+    await expect(votingCard(a, upName)
+      .getByRole('button', { name: '👍 贊成（1）', exact: true })).toBeVisible()
+    await expect(votingCard(b, upName)
+      .getByRole('button', { name: '👍 贊成（1）', exact: true })).toBeVisible()
 
     // D10 #1：候選足夠時用滿 B 的兩個否決額度；否則驗證唯一可達變體。
     let quotaVariant: string
@@ -473,14 +479,6 @@ test('全否決擋抽選（嚴格條件房）', async ({ browser }) => {
       response.request().method() === 'POST' && response.url().endsWith('/search'))
     await a.getByRole('button', { name: '開始搜尋餐廳' }).click()
     const searchResponse = await searchResponsePromise
-    if (searchResponse.status() === 422) {
-      const body = await searchResponse.json().catch(() => null) as { error?: string } | null
-      if (body?.error === 'no_candidates') {
-        const reason = '嚴格條件房在目前時段沒有營業中的平價候選'
-        console.log(`[task-13-strict] ${reason}; runtime search returned 422 no_candidates`)
-        test.skip(true, reason)
-      }
-    }
     expect(searchResponse.status()).toBe(200)
 
     const candidateHeadingA = a.getByText(/候選餐廳（\d+）/)

@@ -6,7 +6,7 @@ import { Chevron } from './icons'
 
 // 純顯示：票數/我的票/剩餘額度都由 useRoom 算好傳入，這裡不碰 raw votes
 type VotingProps = {
-  myVote: (rid: string) => 'up' | 'veto' | null
+  hasMyVote: (rid: string, kind: 'up' | 'veto') => boolean
   ups: Record<string, number>
   vetoesRemaining: number
   onToggle: (restaurantId: string, kind: 'up' | 'veto') => void
@@ -52,13 +52,13 @@ export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; 
           </div>
           {voting && (
             <div className="flex gap-2 border-t border-border pt-2">
-              <button type="button" aria-pressed={voting.myVote(c.restaurant_id) === 'up'}
-                className={`btn flex-1 text-sm ${voting.myVote(c.restaurant_id) === 'up' ? 'btn-primary' : 'btn-quiet'}`}
+              <button type="button" aria-pressed={voting.hasMyVote(c.restaurant_id, 'up')}
+                className={`btn flex-1 text-sm ${voting.hasMyVote(c.restaurant_id, 'up') ? 'btn-primary' : 'btn-quiet'}`}
                 onClick={() => voting.onToggle(c.restaurant_id, 'up')}>
                 👍 贊成{(voting.ups[c.restaurant_id] ?? 0) > 0 ? `（${voting.ups[c.restaurant_id]}）` : ''}
               </button>
-              <button type="button" aria-pressed={voting.myVote(c.restaurant_id) === 'veto'}
-                disabled={voting.myVote(c.restaurant_id) !== 'veto' && voting.vetoesRemaining <= 0}
+              <button type="button" aria-pressed={voting.hasMyVote(c.restaurant_id, 'veto')}
+                disabled={!voting.hasMyVote(c.restaurant_id, 'veto') && voting.vetoesRemaining <= 0}
                 className="btn btn-quiet flex-1 text-sm text-danger disabled:opacity-40"
                 onClick={() => voting.onToggle(c.restaurant_id, 'veto')}>
                 否決
@@ -78,7 +78,7 @@ export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; 
               <li key={c.restaurant_id} className="flex items-center gap-2 text-sm text-fg-muted">
                 <span className="flex-1 line-through">{c.restaurants.name}</span>
                 <span className="text-xs">{c.exclusion_reason}</span>
-                {voting && voting.myVote(c.restaurant_id) === 'veto' && (
+                {voting && voting.hasMyVote(c.restaurant_id, 'veto') && (
                   <button type="button" className="btn btn-quiet shrink-0 px-2 py-1 text-xs"
                     onClick={() => voting.onToggle(c.restaurant_id, 'veto')}>
                     收回否決

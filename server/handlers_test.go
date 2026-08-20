@@ -2357,7 +2357,7 @@ func TestVotingFlow(t *testing.T) {
 		t.Fatalf("vote 後 trace 應含投票因素：%s", trace)
 	}
 
-	// 互斥：同店 cast veto → up 自動撤；回應含剩餘否決額度
+	// 同店可同時保留 up 與 veto；回應含剩餘否決額度。
 	wv := vote(memberID, cands[0], "veto", "cast")
 	if wv.Code != http.StatusOK {
 		t.Fatalf("veto: %d %s", wv.Code, wv.Body.String())
@@ -2379,8 +2379,11 @@ func TestVotingFlow(t *testing.T) {
 	if !vetoKind {
 		t.Fatalf("veto 後 excluded 應含 kinds=[veto]：%s", wv.Body.String())
 	}
-	if myVotes("up") != 0 || myVotes("veto") != 1 {
-		t.Fatalf("互斥失敗：up=%d veto=%d", myVotes("up"), myVotes("veto"))
+	if myVotes("up") != 1 || myVotes("veto") != 1 {
+		t.Fatalf("同店兩種票應各保留一筆：up=%d veto=%d", myVotes("up"), myVotes("veto"))
+	}
+	if votes, err := LoadVotes(ctx, pool, roomID); err != nil || votes[cands[0]].Ups != 1 || len(votes[cands[0]].Vetoers) != 1 {
+		t.Fatalf("權威 tally 應同時含同店 up/veto：votes=%#v err=%v", votes[cands[0]], err)
 	}
 
 	// 限額：第 2 個否決 OK、第 3 個（他店）409；收回後釋放
@@ -2393,6 +2396,9 @@ func TestVotingFlow(t *testing.T) {
 	}
 	if w := vote(memberID, cands[0], "veto", "retract"); w.Code != http.StatusOK {
 		t.Fatalf("收回: %d %s", w.Code, w.Body.String())
+	}
+	if myVotes("up") != 1 || myVotes("veto") != 1 {
+		t.Fatalf("收回同店 veto 不得刪 up，另一店 veto 仍存在：up=%d veto=%d", myVotes("up"), myVotes("veto"))
 	}
 	if w := vote(memberID, cands[0], "veto", "retract"); w.Code != http.StatusOK {
 		t.Fatalf("重複收回應冪等: %d", w.Code)

@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import CandidateList from '../components/CandidateList'
+import type { CandidateRow } from '../lib/types'
 
 const mocks = vi.hoisted(() => ({
   stateIndex: 0,
@@ -165,6 +167,24 @@ describe('RoomPage meal_time draft intent', () => {
     expect(mocks.update).toHaveBeenCalledWith({ meal_time: null }, { count: 'exact' })
     expect(mocks.eq).toHaveBeenCalledWith('id', 'room-1')
     expect(mocks.stateSetters[1]).toHaveBeenCalledWith('用餐時間更新失敗')
+  })
+})
+
+describe('RoomPage voting controls', () => {
+  it('同店 up/veto 各自 pressed；額度用盡仍可收回 veto', () => {
+    const rows: CandidateRow[] = [{
+      room_id: 'room-1', restaurant_id: 'r1', status: 'kept', probability: 1,
+      weight_breakdown: [], exclusion_reason: null, exclusion_kinds: [],
+      restaurants: { name: '測試餐廳', lat: 25, lng: 121, place_id: 'test', source: 'mock' },
+    }]
+    const tree = CandidateList({ rows, voting: {
+      hasMyVote: () => true, ups: { r1: 1 }, vetoesRemaining: 0, onToggle: vi.fn(),
+    } } as never)
+    const up = findNode(tree, el => el.type === 'button' && textContent(el) === '👍 贊成（1）')
+    const veto = findNode(tree, el => el.type === 'button' && textContent(el) === '否決')
+    expect(up?.props?.['aria-pressed']).toBe(true)
+    expect(veto?.props?.['aria-pressed']).toBe(true)
+    expect(veto?.props?.disabled).toBe(false)
   })
 })
 

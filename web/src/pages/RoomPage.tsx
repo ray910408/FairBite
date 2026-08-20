@@ -49,7 +49,7 @@ export default function RoomPage() {
   const { id = '' } = useParams()
   const nav = useNavigate()
   const { room, members, candidates, draw, myUserId, connected, notFound, loadError,
-    refetch, toggleVote, myVote, ups, vetoesRemaining } = useRoom(id)
+    refetch, toggleVote, hasMyVote, ups, vetoesRemaining } = useRoom(id)
   const [spun, setSpun] = useState(false)
   const [actionError, setActionError] = useState('')
   const [actionWarning, setActionWarning] = useState('')
@@ -532,7 +532,7 @@ export default function RoomPage() {
         {room.status === 'voting' && (
           <>
             <CandidateList rows={candidates}
-              voting={{ myVote, ups, vetoesRemaining, onToggle: onToggleVote }} />
+              voting={{ hasMyVote, ups, vetoesRemaining, onToggle: onToggleVote }} />
             {candidates.some(c => c.status === 'kept') ? null : (
               // D16：「全否決」和「全打烊」是兩種死路——用結構化 exclusion_kinds 分辨（deadEnd.ts）
               <p role="status" className="banner bg-warn-soft text-warn">
