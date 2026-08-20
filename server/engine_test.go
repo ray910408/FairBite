@@ -930,6 +930,17 @@ func TestCuisineFilterAndQueryMatches(t *testing.T) {
 			t.Fatal("開關關時菜系不觸發排除（維持偏好制）")
 		}
 	})
+	t.Run("台式 query match 是房間層證據、不改 canonical tag", func(t *testing.T) {
+		taiwaneseFan := Member{UserID: "u-tw", DisplayName: "台菜", BudgetMax: 1600,
+			Cuisines: []string{"taiwanese"}, MaxDistanceM: 3000, Transport: "walking"}
+		noodle := Restaurant{PlaceID: "p-tw-qm", Name: "台式麵店", CuisineTags: []string{},
+			QueryMatches: []string{"taiwanese"}, PriceLevel: 1, Hours: daily([2]int{0, 1440})}
+		res := Evaluate(EngineInput{Restaurants: []Restaurant{noodle}, Members: []Member{taiwaneseFan},
+			Now: now, CuisineFilter: true})
+		if len(res.Kept) != 1 || hasTag(noodle.CuisineTags, "taiwanese") {
+			t.Fatalf("Taiwanese query match must satisfy this room only: kept=%+v tags=%v", res.Kept, noodle.CuisineTags)
+		}
+	})
 	t.Run("飲食禁忌不吃 query match（planning 補訂邊界）", func(t *testing.T) {
 		noPork := Member{UserID: "u3", DisplayName: "不吃豬", BudgetMax: 1600, Dietary: []string{"no_pork"}, MaxDistanceM: 3000, Transport: "walking"}
 		res := Evaluate(EngineInput{Restaurants: []Restaurant{matched}, Members: []Member{noPork}, Now: now})

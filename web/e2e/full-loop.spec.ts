@@ -180,6 +180,30 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
       await expect(b.getByRole('button', { name: label, exact: true })).toBeDisabled()
     }
 
+    // Task 3：台式偏好必須寫入、重載後仍回讀為 selected；菜系過濾再用同一個真實房間流程開啟。
+    const taiwanese = a.getByRole('button', { name: '台式', exact: true })
+    const taiwanesePersisted = a.waitForResponse(response => {
+      const request = response.request()
+      if (request.method() !== 'PATCH' || !request.url().includes('/rest/v1/room_members')) return false
+      const body = request.postDataJSON() as Record<string, unknown>
+      return Array.isArray(body.cuisines) && body.cuisines.includes('taiwanese')
+    })
+    await taiwanese.click()
+    await expect(taiwanese).toHaveAttribute('aria-pressed', 'true')
+    await taiwanesePersisted
+    await a.reload()
+    await expect(a.getByRole('button', { name: '台式', exact: true })).toHaveAttribute('aria-pressed', 'true')
+
+    const cuisineFilterEnabled = a.waitForResponse(response => {
+      const request = response.request()
+      if (request.method() !== 'PATCH' || !request.url().includes('/rest/v1/rooms')) return false
+      const body = request.postDataJSON() as Record<string, unknown>
+      return body.cuisine_filter === true
+    })
+    await a.getByRole('button', { name: '開啟', exact: true }).click()
+    await expect(a.getByRole('button', { name: '開啟', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await cuisineFilterEnabled
+
     // BUG-007：guest Ready 先完成；room write 與 host condition flush 再分開驗證。
     const durabilityEvents: string[] = []
     await b.route('**/rest/v1/room_members**', async route => {
@@ -285,6 +309,7 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     expect(keptCount).toBeGreaterThan(0)
     await expect(candidateHeadingA).toHaveText(`候選餐廳（${keptCount}）`)
     await expect(candidateHeadingB).toHaveText(`候選餐廳（${keptCount}）`)
+    await expect(b.getByText(/1\/2 位成員偏好命中/).first()).toBeVisible()
     console.log(`[task-13] runtime kept count: ${keptCount}`)
 
     // A 開始投票 → B 在已命名卡片上看到投票控制。

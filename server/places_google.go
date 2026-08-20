@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 )
@@ -202,7 +203,7 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 			},
 		},
 	}
-	places, rejected, err := g.fetchPlaces(ctx, "/v1/places:searchNearby", body)
+	places, rejected, _, err := g.fetchPlaces(ctx, "/v1/places:searchNearby", body)
 	if err != nil {
 		return PlacesSearchResult{}, err
 	}
@@ -218,31 +219,36 @@ func (g *googleProvider) call(ctx context.Context, lat, lng float64, radiusM int
 
 // fetchPlaces：對指定 endpoint 發請求並 parse＋meal gate。nearby 與 textSearch 共用。
 // eng review 2A：只回原始 gPlace（gate 後），轉換交給 gRestaurant——不維護平行陣列對齊。
-func (g *googleProvider) fetchPlaces(ctx context.Context, endpoint string, body map[string]any) ([]gPlace, []string, error) {
+func (g *googleProvider) fetchPlaces(ctx context.Context, endpoint string, body map[string]any) ([]gPlace, []string, string, error) {
 	payload, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, "POST", g.baseURL+endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Goog-Api-Key", g.apiKey)
-	req.Header.Set("X-Goog-FieldMask",
-		"places.id,places.displayName,places.types,places.primaryType,places.priceLevel,places.location,"+
-			"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours")
+	fieldMask :=
+		"places.id,places.displayName,places.types,places.primaryType,places.priceLevel,places.location," +
+			"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours"
+	if endpoint == "/v1/places:searchText" {
+		fieldMask += ",nextPageToken"
+	}
+	req.Header.Set("X-Goog-FieldMask", fieldMask)
 	resp, err := g.client.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, nil, fmt.Errorf("places api status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+		return nil, nil, "", fmt.Errorf("places api status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}
 	var out struct {
-		Places []gPlace `json:"places"`
+		Places        []gPlace `json:"places"`
+		NextPageToken string   `json:"nextPageToken"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	kept := out.Places[:0]
 	var rejected []string
@@ -291,7 +297,7 @@ func (g *googleProvider) fetchPlaces(ctx context.Context, endpoint string, body 
 		sort.Strings(keys) // 決定性輸出，log 才好比對
 		log.Printf("未分類的 Google type %v——補進 googleTypeTags 或 googleTypesDeliberatelyUnmapped，並更新 tags_test.go 的 observedGoogleTypes", keys)
 	}
-	return kept, rejected, nil
+	return kept, rejected, out.NextPageToken, nil
 }
 
 // gRestaurant：gPlace → Restaurant 的唯一轉換點（自現 call 的 parse 迴圈抽出，欄位不變）。
@@ -320,9 +326,11 @@ func gHasMealEvidence(types []string) bool {
 	return false
 }
 
-// gRejectQueryMatch：條件式衝突防護（spec 決策 #9）。回 true = 拒收該筆 query match
-// （店仍保留為一般候選，只是不帶這個菜系證據）。
+// gRejectQueryMatch：條件式衝突防護。回 true = 拒收該筆 query match（店仍保留為一般候選）。
 func gRejectQueryMatch(cuisine string, p gPlace) bool {
+	if cuisine == "dessert" {
+		return hasHotMealCuisine(gTags(p))
+	}
 	if !HotMealCuisines[cuisine] {
 		return false
 	}
@@ -335,10 +343,19 @@ func gRejectQueryMatch(cuisine string, p gPlace) bool {
 	return false
 }
 
+func hasHotMealCuisine(tags []string) bool {
+	for _, tag := range tags {
+		if HotMealCuisines[tag] {
+			return true
+		}
+	}
+	return false
+}
+
 // textSearch：單一菜系的定向檢索。locationBias 圓形非硬性範圍（searchText 的
 // locationRestriction 只支援矩形），radiusM 外的結果以 haversine 硬過濾，
 // 維持 fetch envelope 語意（spec §5.1）。
-func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, lat, lng float64, radiusM int) ([]Restaurant, []string, error) {
+func (g *googleProvider) textSearch(ctx context.Context, cuisine, query, pageToken string, lat, lng float64, radiusM int) ([]Restaurant, []string, string, error) {
 	body := map[string]any{
 		// eng review 6：相關性尾段是弱匹配，15 名保真剪雜訊（池子上限與投票體驗的取捨）
 		"textQuery": query, "languageCode": "zh-TW", "pageSize": 15, "rankPreference": "DISTANCE",
@@ -349,9 +366,12 @@ func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, 
 			},
 		},
 	}
-	places, rejected, err := g.fetchPlaces(ctx, "/v1/places:searchText", body)
+	if pageToken != "" {
+		body["pageToken"] = pageToken
+	}
+	places, rejected, nextPageToken, err := g.fetchPlaces(ctx, "/v1/places:searchText", body)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	var kept []Restaurant
 	for _, p := range places {
@@ -364,7 +384,55 @@ func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, 
 		}
 		kept = append(kept, r)
 	}
-	return kept, rejected, nil
+	return kept, rejected, nextPageToken, nil
+}
+
+type textOut struct {
+	rs         []Restaurant
+	rejected   []string
+	failedTerm string
+}
+
+func nextTaiwanesePage(seenTokens map[string]bool, token string) bool {
+	if token == "" || seenTokens[token] {
+		return false
+	}
+	seenTokens[token] = true
+	return true
+}
+
+func (g *googleProvider) taiwaneseTextSearch(ctx context.Context, lat, lng float64, radiusM int, textCalls, partialFailures *atomic.Int32) textOut {
+	var out textOut
+	decodedPage := false
+	for _, query := range CuisineSearchQueries["taiwanese"] {
+		pageToken := ""
+		seenTokens := map[string]bool{}
+		for page := 1; page <= 2; page++ {
+			if ctx.Err() != nil {
+				return out
+			}
+			textCalls.Add(1)
+			rs, rejected, nextPageToken, err := g.textSearch(ctx, "taiwanese", query, pageToken, lat, lng, radiusM)
+			if err != nil {
+				if ctx.Err() == nil {
+					partialFailures.Add(1)
+					log.Printf("Taiwanese text search %q page %d failed: %v", query, page, err)
+				}
+				break // no retry; a failed page-one never reaches page two
+			}
+			decodedPage = true
+			out.rs = append(out.rs, rs...)
+			out.rejected = append(out.rejected, rejected...)
+			if !nextTaiwanesePage(seenTokens, nextPageToken) {
+				break
+			}
+			pageToken = nextPageToken
+		}
+	}
+	if !decodedPage && ctx.Err() == nil {
+		out.failedTerm = "taiwanese"
+	}
+	return out
 }
 
 // handleSearch（host 按「開始搜尋餐廳」）          Google Places API (New)
@@ -378,7 +446,7 @@ func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, 
 //   ├─ ∥ textSearch("素食")（僅當有成員勾嚴格禁忌）──►（QueryMatches 標 "vegetarian"，
 //   │                                                   memberLikes 與 DietaryRequires 都不讀它）
 //   │    ├─ meal gate：gIsMealPrimaryType fail-closed（拒者入 RejectedPlaceIDs）
-//   │    ├─ 衝突防護：tier1 甜品專門型拒 match／tier2 純輕飲無供餐證據拒 match（店保留、match 不標）
+//   │    ├─ 衝突防護：熱食遇甜品專門／純輕飲拒 match；dessert 只拒 canonical 熱食 tag（店保留、match 不標）
 //   │    └─ 失敗（重試×2 後）→ log 容忍並記入 UnfulfilledTerms，其餘支照常（部分成功不降級）
 //   ▼
 // merge by place_id：QueryMatches 聯集；RejectedPlaceIDs 聯集去重
@@ -393,23 +461,25 @@ func (g *googleProvider) textSearch(ctx context.Context, cuisine, query string, 
 func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, radiusM int, cuisines []string) (PlacesSearchResult, error) {
 	textCtx, cancelText := context.WithCancel(ctx)
 	defer cancelText()
-	type textOut struct {
-		rs         []Restaurant
-		rejected   []string
-		failedTerm string
-	}
 	var (
-		base    PlacesSearchResult
-		baseErr error
-		outs    = make([]textOut, len(cuisines))
-		wg      sync.WaitGroup
+		base                PlacesSearchResult
+		baseErr             error
+		outs                = make([]textOut, len(cuisines))
+		wg                  sync.WaitGroup
+		nearbyCalls         atomic.Int32
+		textCalls           atomic.Int32
+		partialTextFailures atomic.Int32
 	)
+	defer func() {
+		log.Printf("Google Places 搜尋呼叫 nearby=%d text=%d，部分失敗=%d", nearbyCalls.Load(), textCalls.Load(), partialTextFailures.Load())
+	}()
 	// eng review D8（codex #8 收束）：nearby 與 text 同時發車——總延遲才真正≈最慢一支。
 	// 失敗語意不變：nearby 敗（重試後）即整場敗、text 結果丟棄（spec §7 骨幹語意）。
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		for attempt := 0; attempt < 2; attempt++ { // spec §8：失敗重試一次
+			nearbyCalls.Add(1)
 			rs, err := g.call(ctx, lat, lng, radiusM)
 			if err == nil {
 				base, baseErr = rs, nil
@@ -419,19 +489,30 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 		}
 		cancelText()
 	}()
+	seenCuisines := make(map[string]bool, len(cuisines))
 	for i, c := range cuisines {
-		q, ok := CuisineSearchQueries[c]
-		if !ok {
+		if seenCuisines[c] {
+			continue
+		}
+		seenCuisines[c] = true
+		queries, ok := CuisineSearchQueries[c]
+		if !ok || len(queries) == 0 {
 			continue // 沒有查詢詞的菜系（防未來 key 漂移）：只靠 nearby＋types
 		}
 		wg.Add(1)
-		go func(i int, cuisine, query string) {
+		go func(i int, cuisine string, queries []string) {
 			defer wg.Done()
+			if cuisine == "taiwanese" {
+				outs[i] = g.taiwaneseTextSearch(textCtx, lat, lng, radiusM, &textCalls, &partialTextFailures)
+				return
+			}
+			query := queries[0] // all non-Taiwanese cuisines retain one query plus one retry
 			for attempt := 0; attempt < 2; attempt++ {
 				if textCtx.Err() != nil {
 					return
 				}
-				rs, rejected, err := g.textSearch(textCtx, cuisine, query, lat, lng, radiusM)
+				textCalls.Add(1)
+				rs, rejected, _, err := g.textSearch(textCtx, cuisine, query, "", lat, lng, radiusM)
 				if err == nil {
 					outs[i] = textOut{rs: rs, rejected: rejected}
 					return
@@ -443,12 +524,13 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 					// 菜系仍只少了補召回、照 spec §7 容忍不降級；嚴格禁忌則由
 					// UnfulfilledTerms 帶回 handler，讓 422 能區分檢索失敗與真的沒有。
 					outs[i].failedTerm = cuisine
+					partialTextFailures.Add(1)
 					if !errors.Is(err, context.Canceled) {
 						log.Printf("text search %q failed after retry: %v", cuisine, err)
 					}
 				}
 			}
-		}(i, c, q)
+		}(i, c, queries)
 	}
 	wg.Wait()
 	if baseErr != nil {
@@ -563,17 +645,18 @@ func dedupeChains(rs []Restaurant, lat, lng float64) ([]Restaurant, []string) {
 		}
 	}
 	for i := range out {
-		out[i].QueryMatches = filterInheritedMatches(out[i].PrimaryType, dedupeStrings(out[i].QueryMatches))
+		out[i].QueryMatches = filterInheritedMatches(out[i], dedupeStrings(out[i].QueryMatches))
 	}
 	return out, discardedClosed
 }
 
-// filterInheritedMatches：tier1 再把關——熱食 match 不得掛在甜品專門型留存分店上。
+// filterInheritedMatches：連鎖合併後依留存分店重跑可用的衝突閘門。
 // filterInheritedMatches 會破壞性原地改寫 matches 的底層陣列；呼叫端不得再持有原 slice。
-func filterInheritedMatches(primaryType string, matches []string) []string {
+func filterInheritedMatches(restaurant Restaurant, matches []string) []string {
 	out := matches[:0]
 	for _, c := range matches {
-		if HotMealCuisines[c] && DessertOnlyPrimaryTypes[primaryType] {
+		if (c == "dessert" && hasHotMealCuisine(restaurant.CuisineTags)) ||
+			(HotMealCuisines[c] && DessertOnlyPrimaryTypes[restaurant.PrimaryType]) {
 			continue
 		}
 		out = append(out, c)

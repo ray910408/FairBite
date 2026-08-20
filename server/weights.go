@@ -13,22 +13,22 @@ var PriceLevelMaxTWD = map[int]int{0: 100, 1: 200, 2: 400, 3: 800, 4: 1600}
 // 以及 DietaryRequires 的嚴格禁忌 key（2026-08-16 起）。兩類都由 cuisineUnion 統一產出，
 // 送進 SearchNearby 的同一支 fan-out。
 // 查詢詞是檢索召回用，不是分類判準；調詞只影響召回率，正確性仍由候選管線把關。
-var CuisineSearchQueries = map[string]string{
-	"taiwanese": "台式料理", "japanese": "日式料理", "korean": "韓式料理",
-	"cantonese": "港式料理", "western": "西式料理", "fast_food": "速食",
-	"indian": "印度料理", "hotpot": "火鍋", "seafood": "海鮮餐廳",
-	"ramen": "拉麵", "dessert": "甜點", "light_meal": "輕食", "breakfast": "早午餐",
+var CuisineSearchQueries = map[string][]string{
+	"taiwanese": {"台式料理", "台灣小吃"},
+	"japanese":  {"日式料理"}, "korean": {"韓式料理"},
+	"cantonese": {"港式料理"}, "western": {"西式料理"}, "fast_food": {"速食"},
+	"indian": {"印度料理"}, "hotpot": {"火鍋"}, "seafood": {"海鮮餐廳"},
+	"ramen": {"拉麵"}, "dessert": {"甜點"}, "light_meal": {"輕食"}, "breakfast": {"早午餐"},
 	// vegetarian 不是 CUISINE_OPTIONS 的選項，而是 DietaryRequires 的嚴格禁忌；
 	// 放在這裡是因為 SearchNearby 的 fan-out 以 cuisineUnion 的元素查表，
 	// 由 cuisineUnion 負責在有成員勾素食時把這個 key 放進去（engine.go）。
 	// 由此產生的 QueryMatches 值為 "vegetarian"，不會被 memberLikes 讀到
 	// （它只走 m.Cuisines），也不會讓 DietaryRequires 誤放行（那只讀 canonical tags）。
-	"vegetarian": "素食",
+	"vegetarian": {"素食"},
 }
 
-// 衝突防護（Round 3 spec §5.3 決策 #9，條件式兩層；寧漏勿誤殺，表為資料可擴充）。
-// tier1：熱食十類的 query match 遇甜品專門 primaryType 無條件拒收。
-// tier2：primaryType 為輕飲（cafe/coffee_shop）且 types 無正向料理證據才拒收。
+// 衝突防護（Round 3 spec §5.3 決策 #9）。熱食 query match 維持甜品專門／純輕飲防護；
+// dessert query match 反向只在 canonical tags 命中這張熱食表時拒收（不把 bakery 納入）。
 var HotMealCuisines = map[string]bool{
 	"taiwanese": true, "japanese": true, "korean": true, "cantonese": true, "western": true,
 	"indian": true, "hotpot": true, "seafood": true, "ramen": true, "fast_food": true,

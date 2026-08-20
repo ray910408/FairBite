@@ -497,6 +497,79 @@ func TestQueryMatchesSurviveRescoreRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSearchTaiwaneseQueryMatchPersistsWithoutCanonicalTag(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Fatal("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	const (
+		hostID  = "ce4ae4ae-ae4a-4e4a-8e4a-ae4ae4ae4ae4"
+		roomID  = "cf4be4be-be4b-4e4b-8e4b-be4be4be4be4"
+		placeID = "test-taiwanese-query-match-search"
+	)
+	if _, err := pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `delete from public.restaurants where place_id = $1`, placeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `delete from auth.users where id = $1`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `delete from public.exposure_stats where user_id = $1`, hostID)
+		pool.Exec(context.Background(), `delete from public.rooms where id = $1`, roomID)
+		pool.Exec(context.Background(), `delete from public.restaurants where place_id = $1`, placeID)
+		pool.Exec(context.Background(), `delete from auth.users where id = $1`, hostID)
+	})
+	if _, err := pool.Exec(ctx,
+		`insert into auth.users (id, email) values ($1, 'taiwanese-query-match-search@test.dev')`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.rooms
+		(id, host_id, status, center_lat, center_lng, cuisine_filter)
+		values ($1, $2, 'lobby', 25.0478, 121.5170, true)`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.room_members
+		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
+		values ($1, $2, 1600, '["taiwanese"]', '[]', 1000, 'walking')`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := resultProvider{result: PlacesSearchResult{Restaurants: []Restaurant{{
+		PlaceID: placeID, Name: "台式麵店", PrimaryType: "noodle_shop", CuisineTags: []string{},
+		QueryMatches: []string{"taiwanese"}, PriceLevel: 1, Lat: 25.0478, Lng: 121.5170,
+		Hours: daily([2]int{0, 1440}),
+	}}}}
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
+	w := httptest.NewRecorder()
+	newTestAppWithProvider(t, pool, provider).ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("search: want 200 got %d body %s", w.Code, w.Body.String())
+	}
+
+	var tags, matches []string
+	if err := pool.QueryRow(ctx, `select r.cuisine_tags, rc.query_matches
+		from public.room_candidates rc
+		join public.restaurants r on r.id = rc.restaurant_id
+		where rc.room_id = $1 and r.place_id = $2`, roomID, placeID).Scan(&tags, &matches); err != nil {
+		t.Fatal(err)
+	}
+	if hasTag(tags, "taiwanese") || !slices.Equal(matches, []string{"taiwanese"}) {
+		t.Fatalf("query match must persist on candidate without changing canonical tags: tags=%v matches=%v", tags, matches)
+	}
+}
+
 func TestSearchRequiresAuth(t *testing.T) {
 	h := newTestApp(t, nil)
 	r := httptest.NewRequest("POST", "/api/rooms/00000000-0000-0000-0000-000000000001/search", nil)
