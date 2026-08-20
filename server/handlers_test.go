@@ -238,6 +238,24 @@ type blockingProvider struct {
 	restaurants  []Restaurant
 }
 
+type countingSearchProvider struct {
+	calls        atomic.Int32
+	restaurants  []Restaurant
+	beforeReturn func(context.Context) error
+}
+
+func (*countingSearchProvider) Source() string { return "mock" }
+
+func (p *countingSearchProvider) SearchNearby(ctx context.Context, _ float64, _ float64, _ int, _ []string) (PlacesSearchResult, error) {
+	p.calls.Add(1)
+	if p.beforeReturn != nil {
+		if err := p.beforeReturn(ctx); err != nil {
+			return PlacesSearchResult{}, err
+		}
+	}
+	return PlacesSearchResult{Restaurants: append([]Restaurant(nil), p.restaurants...)}, nil
+}
+
 func (*blockingProvider) Source() string { return "mock" }
 
 func (p *blockingProvider) SearchNearby(context.Context, float64, float64, int, []string) (PlacesSearchResult, error) {
@@ -246,6 +264,144 @@ func (p *blockingProvider) SearchNearby(context.Context, float64, float64, int, 
 		<-p.releaseFirst
 	}
 	return PlacesSearchResult{Restaurants: append([]Restaurant(nil), p.restaurants...)}, nil
+}
+
+func TestSearchReadyInvariant(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Fatal("TEST_DATABASE_URL not set; run `supabase start` and set it")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	seed := func(t *testing.T, hostID, roomID, guestID string, guestReady bool) {
+		t.Helper()
+		userIDs := []string{hostID}
+		if guestID != "" {
+			userIDs = append(userIDs, guestID)
+		}
+		if _, err := pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `delete from auth.users where id = any($1::uuid[])`, userIDs); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			pool.Exec(context.Background(), `delete from public.rooms where id = $1`, roomID)
+			pool.Exec(context.Background(), `delete from auth.users where id = any($1::uuid[])`, userIDs)
+		})
+		if _, err := pool.Exec(ctx, `insert into auth.users (id, email) values ($1, $2)`,
+			hostID, "ready-host-"+roomID+"@test.dev"); err != nil {
+			t.Fatal(err)
+		}
+		if guestID != "" {
+			if _, err := pool.Exec(ctx, `insert into auth.users (id, email) values ($1, $2)`,
+				guestID, "ready-guest-"+roomID+"@test.dev"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := pool.Exec(ctx, `insert into public.rooms
+			(id, host_id, status, center_lat, center_lng) values ($1, $2, 'lobby', 25.0478, 121.5170)`,
+			roomID, hostID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `insert into public.room_members
+			(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport, ready)
+			values ($1, $2, 1600, '[]', '[]', 3000, 'walking', false)`, roomID, hostID); err != nil {
+			t.Fatal(err)
+		}
+		if guestID != "" {
+			if _, err := pool.Exec(ctx, `insert into public.room_members
+				(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport, ready)
+				values ($1, $2, 1600, '[]', '[]', 3000, 'walking', $3)`,
+				roomID, guestID, guestReady); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	requestSearch := func(t *testing.T, provider PlacesProvider, weather WeatherProvider, hostID, roomID string) *httptest.ResponseRecorder {
+		t.Helper()
+		h := newTestAppWithWeather(t, pool, provider, weather)
+		r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+		r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+
+	openRestaurant := func(placeID string) Restaurant {
+		return Restaurant{
+			PlaceID: placeID, Name: "Ready invariant restaurant", PrimaryType: "restaurant",
+			PriceLevel: 1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
+		}
+	}
+
+	t.Run("old client cannot bypass an unready guest before paid providers", func(t *testing.T) {
+		const hostID = "81000000-0000-0000-0000-000000000001"
+		const guestID = "81000000-0000-0000-0000-000000000002"
+		const roomID = "81000000-0000-0000-0000-000000000003"
+		seed(t, hostID, roomID, guestID, false)
+		places := &countingSearchProvider{}
+		weather := &countingWeatherProvider{}
+		w := requestSearch(t, places, weather, hostID, roomID)
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "仍有成員尚未準備") {
+			t.Fatalf("unready search: want specific 409 got %d body %s", w.Code, w.Body.String())
+		}
+		if got := places.calls.Load(); got != 0 {
+			t.Fatalf("unready preflight called Places %d times, want 0", got)
+		}
+		if got := weather.currentCalls.Load(); got != 0 {
+			t.Fatalf("unready preflight called weather %d times, want 0", got)
+		}
+	})
+
+	t.Run("readiness change during provider call rolls the freeze transaction back", func(t *testing.T) {
+		const hostID = "82000000-0000-0000-0000-000000000001"
+		const guestID = "82000000-0000-0000-0000-000000000002"
+		const roomID = "82000000-0000-0000-0000-000000000003"
+		const placeID = "ready-race-place"
+		seed(t, hostID, roomID, guestID, true)
+		t.Cleanup(func() { pool.Exec(context.Background(), `delete from public.restaurants where place_id = $1`, placeID) })
+		places := &countingSearchProvider{
+			restaurants: []Restaurant{openRestaurant(placeID)},
+			beforeReturn: func(ctx context.Context) error {
+				_, err := pool.Exec(ctx, `update public.room_members set ready = false where room_id = $1 and user_id = $2`, roomID, guestID)
+				return err
+			},
+		}
+		w := requestSearch(t, places, nil, hostID, roomID)
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "仍有成員尚未準備") {
+			t.Fatalf("ready race: want specific 409 got %d body %s", w.Code, w.Body.String())
+		}
+		var status string
+		if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if status != "lobby" {
+			t.Fatalf("ready race left room in %q, want lobby", status)
+		}
+	})
+
+	t.Run("solo host searches without a ready action", func(t *testing.T) {
+		const hostID = "83000000-0000-0000-0000-000000000001"
+		const roomID = "83000000-0000-0000-0000-000000000003"
+		const placeID = "ready-solo-place"
+		seed(t, hostID, roomID, "", false)
+		t.Cleanup(func() { pool.Exec(context.Background(), `delete from public.restaurants where place_id = $1`, placeID) })
+		places := &countingSearchProvider{restaurants: []Restaurant{openRestaurant(placeID)}}
+		w := requestSearch(t, places, nil, hostID, roomID)
+		if w.Code != http.StatusOK {
+			t.Fatalf("solo host search: want 200 got %d body %s", w.Code, w.Body.String())
+		}
+		if got := places.calls.Load(); got != 1 {
+			t.Fatalf("solo host Places calls = %d, want 1", got)
+		}
+	})
 }
 
 func TestQueryMatchesSurviveRescoreRoundTrip(t *testing.T) {

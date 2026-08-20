@@ -3,6 +3,7 @@ import type { MemberRow } from '../lib/types'
 
 const mocks = vi.hoisted(() => ({
   stateIndex: 0,
+  stateValues: [] as unknown[],
   stateSetters: [] as ReturnType<typeof vi.fn>[],
   effects: [] as Array<() => void | (() => void)>,
   refs: [] as Array<{ current: unknown }>,
@@ -17,9 +18,10 @@ vi.mock('react', async importOriginal => {
   return {
     ...actual,
     useState: (initial: unknown) => {
+      const index = mocks.stateIndex++
       const setter = vi.fn()
-      mocks.stateSetters[mocks.stateIndex++] = setter
-      return [initial, setter]
+      mocks.stateSetters[index] = setter
+      return [index < mocks.stateValues.length ? mocks.stateValues[index] : initial, setter]
     },
     useRef: (initial: unknown) => {
       const ref = { current: initial }
@@ -42,6 +44,28 @@ type ElementLike = {
 }
 
 type InputLike = { type?: unknown; props?: { disabled?: boolean; children?: unknown } }
+
+type NodeLike = { type?: unknown; props?: Record<string, unknown> }
+
+function findNode(node: unknown, pred: (el: NodeLike) => boolean): NodeLike | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findNode(child, pred)
+      if (found) return found
+    }
+    return undefined
+  }
+  if (!node || typeof node !== 'object') return undefined
+  const element = node as NodeLike
+  if (pred(element)) return element
+  return findNode(element.props?.children, pred)
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(r => { resolve = r })
+  return { promise, resolve }
+}
 
 function textContent(node: unknown): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node)
@@ -99,6 +123,7 @@ describe('ConditionsForm 條件寫入防線', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     mocks.stateIndex = 0
+    mocks.stateValues = []
     mocks.stateSetters = []
     mocks.effects = []
     mocks.refs = []
@@ -120,6 +145,158 @@ describe('ConditionsForm 條件寫入防線', () => {
     if (!ready.props?.onClick) throw new Error('找不到準備按鈕')
     await ready.props.onClick()
   }
+
+  async function renderWithFlush(isHost = false) {
+    let flush: (() => Promise<boolean>) | undefined
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({
+      me,
+      isHost,
+      ...({ onFlushAvailable: (fn: () => Promise<boolean>) => { flush = fn } } as object),
+    })
+    for (const effect of mocks.effects) effect()
+    return { tree, flush: () => {
+      if (!flush) throw new Error('ConditionsForm 未註冊 flushPending')
+      return flush()
+    } }
+  }
+
+  it('成員編輯後立刻按 Ready，條件 PATCH 成功前不會送 ready PATCH', async () => {
+    const condition = deferred<{ error: null; count: number }>()
+    mocks.eqUser
+      .mockImplementationOnce(() => condition.promise)
+      .mockResolvedValueOnce({ error: null, count: 1 })
+
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me, isHost: false })
+    const budget = findInput(tree)
+    const ready = findButton(tree, '我準備好了')
+    if (!budget.props?.onChange || !ready.props?.onClick) throw new Error('找不到條件或準備輸入')
+
+    budget.props.onChange({ target: { value: '900' } })
+    const readyDone = ready.props.onClick()
+    await Promise.resolve()
+
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(mocks.update.mock.calls[0][0]).toMatchObject({ budget_max: 900 })
+    expect(mocks.update).not.toHaveBeenCalledWith({ ready: true }, { count: 'exact' })
+
+    condition.resolve({ error: null, count: 1 })
+    await readyDone
+    expect(mocks.update.mock.calls[1][0]).toEqual({ ready: true })
+  })
+
+  it('最新條件寫入失敗會回到最後 durable snapshot 並呈現 role=alert', async () => {
+    mocks.eqUser.mockResolvedValueOnce({ error: { message: 'boom' }, count: 0 })
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me, isHost: false })
+    const budget = findInput(tree)
+    if (!budget.props?.onChange) throw new Error('找不到預算輸入')
+
+    budget.props.onChange({ target: { value: '900' } })
+    await vi.advanceTimersByTimeAsync(401)
+
+    expect(mocks.stateSetters[0]).toHaveBeenLastCalledWith(me)
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('儲存失敗：房間可能已開始選餐，條件已凍結')
+
+    mocks.stateIndex = 0
+    mocks.stateValues = [me, '儲存失敗：房間可能已開始選餐，條件已凍結']
+    mocks.effects = []
+    const failedTree = ConditionsForm({ me, isHost: false })
+    expect(findNode(failedTree, el => el.props?.role === 'alert')).toBeDefined()
+  })
+
+  it('舊 generation 失敗不得回滾更新一代仍在畫面上的編輯', async () => {
+    const oldWrite = deferred<{ error: { message: string }; count: number }>()
+    mocks.eqUser
+      .mockImplementationOnce(() => oldWrite.promise)
+      .mockResolvedValueOnce({ error: null, count: 1 })
+    const { tree, flush } = await renderWithFlush()
+    const budget = findInput(tree)
+    if (!budget.props?.onChange) throw new Error('找不到預算輸入')
+
+    budget.props.onChange({ target: { value: '900' } })
+    await vi.advanceTimersByTimeAsync(401)
+    budget.props.onChange({ target: { value: '1000' } })
+    const callsBeforeFailure = mocks.stateSetters[0].mock.calls.length
+
+    oldWrite.resolve({ error: { message: 'old failed' }, count: 0 })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mocks.stateSetters[0]).toHaveBeenCalledTimes(callsBeforeFailure)
+
+    await vi.advanceTimersByTimeAsync(401)
+    expect(await flush()).toBe(true)
+  })
+
+  it('條件寫入依 generation 序列化，舊 success 不會蓋掉較新的 durable snapshot', async () => {
+    const oldWrite = deferred<{ error: null; count: number }>()
+    mocks.eqUser
+      .mockImplementationOnce(() => oldWrite.promise)
+      .mockResolvedValueOnce({ error: null, count: 1 })
+    const { tree, flush } = await renderWithFlush()
+    const budget = findInput(tree)
+    if (!budget.props?.onChange) throw new Error('找不到預算輸入')
+
+    budget.props.onChange({ target: { value: '900' } })
+    await vi.advanceTimersByTimeAsync(401)
+    budget.props.onChange({ target: { value: '1000' } })
+    await vi.advanceTimersByTimeAsync(401)
+
+    expect(mocks.eqUser).toHaveBeenCalledTimes(1)
+    oldWrite.resolve({ error: null, count: 1 })
+    expect(await flush()).toBe(true)
+    expect((mocks.refs[0].current as MemberRow).budget_max).toBe(1000)
+  })
+
+  it('flushPending 在 write failure 後維持 false，直到較新 generation 成功', async () => {
+    mocks.eqUser
+      .mockResolvedValueOnce({ error: { message: 'boom' }, count: 0 })
+      .mockResolvedValueOnce({ error: null, count: 1 })
+    const { tree, flush } = await renderWithFlush(true)
+    const budget = findInput(tree)
+    if (!budget.props?.onChange) throw new Error('找不到預算輸入')
+
+    budget.props.onChange({ target: { value: '900' } })
+    expect(await flush()).toBe(false)
+    budget.props.onChange({ target: { value: '1000' } })
+    expect(await flush()).toBe(true)
+  })
+
+  it('本地條件寫入失敗後收到權威 ready=true，仍可直接取消準備', async () => {
+    mocks.eqUser
+      .mockResolvedValueOnce({ error: { message: 'condition failed' }, count: 0 })
+      .mockResolvedValueOnce({ error: null, count: 1 })
+      .mockResolvedValueOnce({ error: null, count: 1 })
+    const authoritativeReady = { ...me, ready: true }
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me: authoritativeReady, isHost: false })
+    const budget = findInput(tree)
+    if (!budget.props?.onChange) throw new Error('找不到預算輸入')
+    const saveErrorSetter = mocks.stateSetters[1]
+    const conditionError = '儲存失敗：房間可能已開始選餐，條件已凍結'
+
+    // 代表 Realtime ready=true 抵達前已排入的本地 generation；其失敗 gate 不得阻斷取消準備。
+    budget.props.onChange({ target: { value: '900' } })
+    await vi.advanceTimersByTimeAsync(401)
+    const cancel = findButton(tree, '已準備（點擊取消）')
+    if (!cancel.props?.onClick) throw new Error('找不到取消準備按鈕')
+    await cancel.props.onClick()
+
+    expect(mocks.update).toHaveBeenLastCalledWith({ ready: false }, { count: 'exact' })
+    expect(saveErrorSetter).toHaveBeenLastCalledWith(conditionError)
+
+    // 取消成功只解除 ready 凍結；未 durable 的 condition gate 與可見 alert 必須保留。
+    mocks.stateIndex = 0
+    mocks.stateValues = [{ ...authoritativeReady, ready: false }, conditionError]
+    mocks.effects = []
+    const cancelledTree = ConditionsForm({ me: { ...authoritativeReady, ready: false }, isHost: false })
+    expect(findNode(cancelledTree, el => el.props?.role === 'alert')).toBeDefined()
+
+    budget.props.onChange({ target: { value: '1000' } })
+    await vi.advanceTimersByTimeAsync(401)
+    expect(saveErrorSetter).toHaveBeenLastCalledWith('')
+  })
 
   it('條件批次寫入只含五個條件欄位，不夾帶 ready', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
@@ -189,6 +366,7 @@ describe('ConditionsForm 條件寫入防線', () => {
 describe('ConditionsForm 凍結（準備／搜尋中）', () => {
   beforeEach(() => {
     mocks.stateIndex = 0
+    mocks.stateValues = []
     mocks.stateSetters = []
     mocks.effects = []
     mocks.refs = []

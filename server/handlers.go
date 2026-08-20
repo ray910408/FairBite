@@ -144,12 +144,13 @@ func loadHostRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (R
 // ErrNotHost：host-gated 交易鎖內重驗失敗——呼叫者已非房主（退房繼任，ADR-0007）。
 var ErrNotHost = errors.New("caller is no longer the room host")
 
-// assertHostInTx：在已持有 rooms row lock 的交易內重驗 host_id。
+// assertHostInTx：取得（或沿用）rooms row lock 後重驗 host_id；呼叫端後續 room transition
+// 與 members lock 必須留在同一交易，保持 rooms → room_members 鎖序。
 // loadHostRoom 的檢查在交易外，search 的 Places 呼叫是秒級窗口，
 // 繼任（leaveOneRoom）可在其間 commit——比照 castVote 的成員重驗（ErrNotMember）。
 func assertHostInTx(ctx context.Context, tx pgx.Tx, roomID, uid string) error {
 	var hostID string
-	if err := tx.QueryRow(ctx, `select host_id from rooms where id = $1`, roomID).Scan(&hostID); err != nil {
+	if err := tx.QueryRow(ctx, `select host_id from rooms where id = $1 for update`, roomID).Scan(&hostID); err != nil {
 		return err
 	}
 	if hostID != uid {
@@ -359,6 +360,8 @@ func averageMemberRadius(members []Member) int {
 // 且 Go 測試以同一段文字釘住這條路徑。
 const searchConditionsChangedMessage = "成員條件已於搜尋期間變更，請再按一次開始搜尋"
 
+const searchNotReadyMessage = "仍有成員尚未準備，請等待所有成員完成條件設定"
+
 // handleSearch 有兩條 early return 走在凍結之前——provider 失敗且快取為空的 502、零餐廳的
 // 422——它們手上的空結果可能只是因為搜尋繞的是舊的、更小的半徑。此時 422 叫使用者「縮小
 // 距離」方向剛好相反：正解是有人剛加入把搜尋圈推大了，再搜一次就會有結果。
@@ -419,14 +422,19 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	defer inFlight.Delete(room.ID)
-	// wx 用 pre-tx 的 roomEvalTime(room) 取（凍結重讀前）；host 在按鈕與凍結之間改時間的競態
-	// 只影響天氣取樣的小時，屬可接受誤差（exploration 的 pre-tx 讀取同款先例）。
-	wx := loadWeather(ctx, weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
 	members, err := LoadMembers(ctx, pool, room.ID)
 	if err != nil || len(members) == 0 {
 		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
 		return
 	}
+	// 付費 provider 前先擋 old/direct client；freeze transaction 會再鎖定重查一次競態。
+	if !allGuestsReady(members, room.HostID) {
+		jsonError(w, http.StatusConflict, searchNotReadyMessage)
+		return
+	}
+	// wx 用 pre-tx 的 roomEvalTime(room) 取（凍結重讀前）；host 在按鈕與凍結之間改時間的競態
+	// 只影響天氣取樣的小時，屬可接受誤差（exploration 的 pre-tx 讀取同款先例）。
+	wx := loadWeather(ctx, weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
 	fetchedRadius := averageMemberRadius(members)
 	fetchedCuisines := cuisineUnion(members)
 	// Provider fetch envelope 採 call-time 成員平均距離；tx 內重讀若縮小，會在 Evaluate 前重濾。
@@ -542,6 +550,15 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	defer tx.Rollback(ctx)
+	// Provider call 期間可能發生房主繼任；先在 room lock 下重驗權限，避免向前房主洩漏 readiness。
+	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
+		if errors.Is(err, ErrNotHost) {
+			jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
 	members, found, err = freezeAndLoadMembers(ctx, tx, &room, fetchedRadius, fetchedCuisines, found)
 	if err != nil {
 		switch {
@@ -549,18 +566,12 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 			jsonError(w, http.StatusConflict, "房間狀態已變更")
 		case errors.Is(err, ErrMembersChanged):
 			jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
+		case errors.Is(err, ErrNotReady):
+			jsonError(w, http.StatusConflict, searchNotReadyMessage)
 		default:
 			log.Printf("search freeze failed: %v", err)
 			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		}
-		return
-	}
-	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
-		if errors.Is(err, ErrNotHost) {
-			jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
 	recency, err := LoadRecency(ctx, tx, memberIDs(members), restaurantIDs(found))

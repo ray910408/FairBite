@@ -4,14 +4,27 @@ import { expect, test, type Page } from '@playwright/test'
 // 開始投票 → 贊成/否決/收回 → 額度與全否決防線 → 抽選 → 結果同步
 const run = Date.now()
 
+function roomRealtimeReady(payload: string | Buffer) {
+  let decoded: unknown
+  try {
+    decoded = JSON.parse(payload.toString())
+  } catch {
+    return false
+  }
+  const message = Array.isArray(decoded)
+    ? { topic: decoded[2], event: decoded[3], payload: decoded[4] }
+    : decoded as Record<string, unknown>
+  const body = message.payload as { extension?: unknown; status?: unknown } | undefined
+  return typeof message.topic === 'string' && message.topic.startsWith('realtime:room-') &&
+    message.event === 'system' && body?.extension === 'postgres_changes' && body.status === 'ok'
+}
+
 function waitForRoomRealtime(page: Page) {
   return new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('room Realtime subscription timed out')), 10_000)
     page.on('websocket', socket => {
       socket.on('framereceived', ({ payload }) => {
-        const frame = payload.toString()
-        if (frame.includes('realtime:room-') && frame.includes('"phx_reply"') &&
-          frame.includes('"status":"ok"')) {
+        if (roomRealtimeReady(payload)) {
           clearTimeout(timeout)
           resolve()
         }
@@ -69,6 +82,17 @@ async function createAndJoinRoom(a: Page, b: Page) {
   const expected = hhmm ? `今天 ${hhmm}` : '馬上出發'
   await expect(b.getByText(expected)).toBeVisible() // meal_time 經 Realtime 同步到加入方
 }
+
+test('Realtime subscription readiness guard waits for postgres_changes system OK', () => {
+  const topic = 'realtime:room-test'
+  const joinAck = JSON.stringify([null, '1', topic, 'phx_reply', { status: 'ok', response: {} }])
+  const systemReady = JSON.stringify([null, null, topic, 'system', {
+    extension: 'postgres_changes', status: 'ok', message: 'Subscribed to PostgreSQL',
+  }])
+
+  expect(roomRealtimeReady(joinAck)).toBe(false)
+  expect(roomRealtimeReady(systemReady)).toBe(true)
+})
 
 // Round 5（ADR-0007 2026-08-16 修訂）：回首頁不再靜默退房——HomePage mount 查到房籍
 // 就跳確認，按下「離開房間」才真的退。「加入」只由 leavePending 閘門控制（「建立房間」
@@ -156,25 +180,104 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
       await expect(b.getByRole('button', { name: label, exact: true })).toBeDisabled()
     }
 
-    // 開店時段會隨測試執行時間改變；兩人皆將預算與距離拉到最大。
-    await setConditions(a, 1600)
+    // BUG-007：guest Ready 先完成；room write 與 host condition flush 再分開驗證。
+    const durabilityEvents: string[] = []
+    await b.route('**/rest/v1/room_members**', async route => {
+      const request = route.request()
+      if (request.method() !== 'PATCH') return route.continue()
+      const payload = request.postDataJSON() as Record<string, unknown>
+      const kind = Object.hasOwn(payload, 'ready') ? 'ready' : 'conditions'
+      durabilityEvents.push(`guest-${kind}:start`)
+      await new Promise(resolve => setTimeout(resolve, 250))
+      const response = await route.fetch()
+      durabilityEvents.push(`guest-${kind}:complete`)
+      await route.fulfill({ response })
+    })
+
+    // 先完成 guest conditions → Ready，避免 host debounce 在 guest 流程等待期間偷跑完。
     await setConditionsAndReady(b, 1600)
     await expect(a.getByText('已準備', { exact: true })).toHaveCount(1)
 
-    // A 快速連點搜尋只送一次 request → 兩邊同步看到候選；後續投票定位不依賴排序。
     let searchRequestCount = 0
     a.on('request', request => {
-      if (request.method() === 'POST' && request.url().endsWith('/search')) searchRequestCount++
+      if (request.method() === 'POST' && request.url().endsWith('/search')) {
+        searchRequestCount++
+        durabilityEvents.push('search:start')
+      }
     })
-    await a.getByRole('button', { name: '開始搜尋餐廳' }).evaluate(button => {
+    const search = a.getByRole('button', { name: '開始搜尋餐廳' })
+
+    // room-setting gate 獨立驗證：PATCH 未釋放時按鈕 disabled 且沒有 search POST。
+    let roomSettingStartedResolve!: () => void
+    let releaseRoomSetting!: () => void
+    let roomSettingCompleteResolve!: () => void
+    const roomSettingStarted = new Promise<void>(resolve => { roomSettingStartedResolve = resolve })
+    const roomSettingRelease = new Promise<void>(resolve => { releaseRoomSetting = resolve })
+    const roomSettingComplete = new Promise<void>(resolve => { roomSettingCompleteResolve = resolve })
+    await a.route('**/rest/v1/rooms**', async route => {
+      const request = route.request()
+      if (request.method() !== 'PATCH') return route.continue()
+      durabilityEvents.push('room-setting:start')
+      roomSettingStartedResolve()
+      await roomSettingRelease
+      const response = await route.fetch()
+      durabilityEvents.push('room-setting:complete')
+      await route.fulfill({ response })
+      roomSettingCompleteResolve()
+    })
+    await a.getByRole('button', { name: '開啟', exact: true }).click()
+    await roomSettingStarted
+    await expect(search).toBeDisabled()
+    expect(searchRequestCount).toBe(0)
+    releaseRoomSetting()
+    await roomSettingComplete
+    await expect(search).toBeEnabled()
+
+    // 再 hold host condition PATCH；搜尋鈕本身可點，但 handler 必須 await child flush。
+    let hostConditionStartedResolve!: () => void
+    let releaseHostCondition!: () => void
+    let hostConditionCompleteResolve!: () => void
+    const hostConditionStarted = new Promise<void>(resolve => { hostConditionStartedResolve = resolve })
+    const hostConditionRelease = new Promise<void>(resolve => { releaseHostCondition = resolve })
+    const hostConditionComplete = new Promise<void>(resolve => { hostConditionCompleteResolve = resolve })
+    await a.route('**/rest/v1/room_members**', async route => {
+      const request = route.request()
+      if (request.method() !== 'PATCH') return route.continue()
+      const payload = request.postDataJSON() as Record<string, unknown>
+      if (Object.hasOwn(payload, 'ready')) return route.continue()
+      durabilityEvents.push('host-conditions:start')
+      hostConditionStartedResolve()
+      await hostConditionRelease
+      const response = await route.fetch()
+      durabilityEvents.push('host-conditions:complete')
+      await route.fulfill({ response })
+      hostConditionCompleteResolve()
+    })
+    await setConditions(a, 1600)
+    await expect(search).toBeEnabled()
+    await search.evaluate((button: HTMLButtonElement) => {
       button.click()
       button.click()
     })
+    await hostConditionStarted
+    expect(searchRequestCount).toBe(0)
+    releaseHostCondition()
+    await hostConditionComplete
+
     const candidateHeadingA = a.getByText(/候選餐廳（\d+）/)
     const candidateHeadingB = b.getByText(/候選餐廳（\d+）/)
     await expect(candidateHeadingA).toBeVisible()
     await expect(candidateHeadingB).toBeVisible()
     expect(searchRequestCount).toBe(1)
+    const eventIndex = (event: string) => {
+      const index = durabilityEvents.indexOf(event)
+      expect(index, `${event} missing from ${durabilityEvents.join(', ')}`).toBeGreaterThanOrEqual(0)
+      return index
+    }
+    expect(eventIndex('guest-conditions:complete')).toBeLessThan(eventIndex('guest-ready:start'))
+    expect(eventIndex('guest-ready:complete')).toBeLessThan(eventIndex('search:start'))
+    expect(eventIndex('host-conditions:complete')).toBeLessThan(eventIndex('search:start'))
+    expect(eventIndex('room-setting:complete')).toBeLessThan(eventIndex('search:start'))
     const restaurantNames = await b
       .locator('div.card.animate-rise.space-y-2.p-3 span.flex-1.font-semibold')
       .allInnerTexts()
@@ -409,6 +512,9 @@ test('房主繼任（lobby 中房主回首頁）', async ({ browser }) => {
     // 繼任前：B 是普通成員——有 ready 鈕、無房主搜尋鈕
     await expect(b.getByRole('button', { name: '我準備好了' })).toBeVisible()
     await expect(b.getByRole('button', { name: '開始搜尋餐廳' })).toHaveCount(0)
+    // readiness 成為 search invariant 後，先讓 B ready，房主搜尋鈕才是可聚焦的背景控制項。
+    await b.getByRole('button', { name: '我準備好了' }).click()
+    await expect(a.getByText('已準備', { exact: true })).toHaveCount(1)
     // Round 5（Codex P2）：dialog 開著時背景整塊 inert——fixed 遮罩只擋得住指標，
     // 擋不住 tab 順序。開啟前後各量一次，證明斷言不是恆為 false 的空話。
     expect(await canFocusBackground(a, '開始搜尋餐廳')).toBe(true)

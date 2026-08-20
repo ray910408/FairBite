@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,7 +13,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestMemberConditionUpdateBlocksUntilFreezeCommit(t *testing.T) {
+func TestLoadMembersSQLSelectsReady(t *testing.T) {
+	if !strings.Contains(loadMembersSQL, "rm.ready") {
+		t.Fatalf("loadMembersSQL must include authoritative ready: %s", loadMembersSQL)
+	}
+}
+
+func TestMemberConditionAndReadyUpdateBlocksUntilFreezeCommit(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
@@ -39,7 +47,7 @@ func TestMemberConditionUpdateBlocksUntilFreezeCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx,
-		`insert into room_members (room_id, user_id) values ($1, $2)`, roomID, userID); err != nil {
+		`insert into room_members (room_id, user_id, ready) values ($1, $2, true)`, roomID, userID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -51,8 +59,13 @@ func TestMemberConditionUpdateBlocksUntilFreezeCommit(t *testing.T) {
 	if err := TransitionRoom(ctx, freezeTx, roomID, "lobby", "candidates"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadMembersForUpdate(ctx, freezeTx, roomID); err != nil {
+	members, err := LoadMembersForUpdate(ctx, freezeTx, roomID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	readyField := reflect.ValueOf(members[0]).FieldByName("Ready")
+	if !readyField.IsValid() || !readyField.Bool() {
+		t.Fatalf("LoadMembersForUpdate did not load authoritative ready=true: %+v", members[0])
 	}
 
 	updateTx, err := pool.Begin(ctx)
@@ -79,7 +92,7 @@ func TestMemberConditionUpdateBlocksUntilFreezeCommit(t *testing.T) {
 	updateDone := make(chan updateResult, 1)
 	go func() {
 		tag, err := updateTx.Exec(ctx,
-			`update room_members set budget_max = 999 where room_id = $1 and user_id = $2`,
+			`update room_members set budget_max = 999, ready = false where room_id = $1 and user_id = $2`,
 			roomID, userID)
 		updateDone <- updateResult{rows: tag.RowsAffected(), err: err}
 	}()
@@ -123,6 +136,15 @@ func TestMemberConditionUpdateBlocksUntilFreezeCommit(t *testing.T) {
 	}
 	if budget != 300 {
 		t.Fatalf("frozen budget = %d, want 300", budget)
+	}
+	var ready bool
+	if err := pool.QueryRow(ctx,
+		`select ready from room_members where room_id = $1 and user_id = $2`, roomID, userID).
+		Scan(&ready); err != nil {
+		t.Fatal(err)
+	}
+	if !ready {
+		t.Fatal("frozen ready = false, want true")
 	}
 }
 

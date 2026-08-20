@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   eq: vi.fn(),
   navigate: vi.fn(),
   getUid: vi.fn(),
+  searchRoom: vi.fn(),
   members: {} as { data?: unknown; error?: unknown },
 }))
 
@@ -45,13 +46,13 @@ vi.mock('../lib/supabase', () => ({
 }))
 
 vi.mock('../lib/api', () => ({
-  searchRoom: vi.fn(async () => ({ error: null, warning: null })),
+  searchRoom: mocks.searchRoom,
   startVoting: vi.fn(async () => null),
 }))
 
 type ElementLike = {
   type?: unknown
-  props?: { children?: unknown; onClick?: () => void | Promise<void> }
+  props?: { children?: unknown; disabled?: boolean; onClick?: () => void | Promise<void> }
 }
 
 function textContent(node: unknown): string {
@@ -97,6 +98,12 @@ function findNode(node: unknown, pred: (el: NodeLike) => boolean): NodeLike | un
   const element = node as NodeLike
   if (pred(element)) return element
   return findNode(element.props?.children, pred)
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(r => { resolve = r })
+  return { promise, resolve }
 }
 
 async function renderRoomPage() {
@@ -244,6 +251,7 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     mocks.update.mockReset().mockReturnValue({ eq: mocks.eq })
     mocks.from.mockReset().mockReturnValue({ update: mocks.update })
     mocks.useRoom.mockReset().mockReturnValue(roomState())
+    mocks.searchRoom.mockReset().mockResolvedValue({ error: null, warning: null })
   })
 
   afterEach(() => {
@@ -261,13 +269,71 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     expect(text.split('設定中').length - 1).toBe(1)
   })
 
-  it('確認視窗計數排除房主：僅房主未準備時不彈 confirm', async () => {
-    const confirmSpy = vi.fn(() => true)
-    vi.stubGlobal('confirm', confirmSpy)
+  it('所有非房主都 ready 時搜尋鈕可用，房主自己的 ready 不列入', async () => {
     mocks.useRoom.mockReturnValue(roomState({ members: [hostMe, { ...memberB, ready: true }] }))
     const tree = await renderRoomPage()
+    expect(findButton(tree, '開始搜尋餐廳').props?.disabled).toBe(false)
+  })
+
+  it('任一非房主未 ready 時搜尋鈕 disabled，直接呼叫 stale handler 也不送 /search', async () => {
+    const tree = await renderRoomPage()
+    const search = findButton(tree, '開始搜尋餐廳')
+    expect(search.props?.disabled).toBe(true)
+    await search.props?.onClick?.()
+    expect(mocks.searchRoom).not.toHaveBeenCalled()
+  })
+
+  it('solo host 不需要 ready 即可搜尋', async () => {
+    mocks.useRoom.mockReturnValue(roomState({ members: [hostMe] }))
+    const tree = await renderRoomPage()
+    expect(findButton(tree, '開始搜尋餐廳').props?.disabled).toBe(false)
+  })
+
+  it('host 搜尋同時等待 ConditionsForm flush 與 room-setting write chain', async () => {
+    const roomWrite = deferred<{ error: null; count: number }>()
+    const childFlush = deferred<boolean>()
+    mocks.eq.mockReturnValueOnce(roomWrite.promise)
+    mocks.useRoom.mockReturnValue(roomState({ members: [hostMe, { ...memberB, ready: true }] }))
+    const tree = await renderRoomPage()
+
+    const conditions = findNode(tree, el => typeof el.props?.onFlushAvailable === 'function')
+    const register = conditions?.props?.onFlushAvailable as
+      ((flush: () => Promise<boolean>) => void) | undefined
+    register?.(() => childFlush.promise)
+
+    const roomWriteDone = findButton(tree, '熟悉').props!.onClick!()
+    const searchDone = findButton(tree, '開始搜尋餐廳').props!.onClick!()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mocks.searchRoom).not.toHaveBeenCalled()
+
+    roomWrite.resolve({ error: null, count: 1 })
+    await roomWriteDone
+    await Promise.resolve()
+    expect(mocks.searchRoom).not.toHaveBeenCalled()
+
+    childFlush.resolve(true)
+    await searchDone
+    expect(mocks.searchRoom).toHaveBeenCalledTimes(1)
+    expect(mocks.searchRoom).toHaveBeenCalledWith('room-1')
+  })
+
+  it('欄位 A 寫入失敗後，欄位 B 成功仍阻擋搜尋，直到 A 重試成功', async () => {
+    mocks.eq
+      .mockResolvedValueOnce({ error: { message: 'exploration failed' }, count: 0 })
+      .mockResolvedValueOnce({ error: null, count: 1 })
+      .mockResolvedValueOnce({ error: null, count: 1 })
+    mocks.useRoom.mockReturnValue(roomState({ members: [hostMe, { ...memberB, ready: true }] }))
+    const tree = await renderRoomPage()
+
+    await findButton(tree, '熟悉').props!.onClick!()
+    await findButton(tree, '開啟').props!.onClick!()
     await findButton(tree, '開始搜尋餐廳').props!.onClick!()
-    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(mocks.searchRoom).not.toHaveBeenCalled()
+
+    await findButton(tree, '熟悉').props!.onClick!()
+    await findButton(tree, '開始搜尋餐廳').props!.onClick!()
+    expect(mocks.searchRoom).toHaveBeenCalledTimes(1)
   })
 
   it('searching=true 時按鈕 disabled 顯示「搜尋中…」', async () => {

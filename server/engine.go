@@ -16,6 +16,16 @@ type Member struct {
 	Dietary      []string
 	MaxDistanceM int
 	Transport    string
+	Ready        bool
+}
+
+func allGuestsReady(members []Member, hostID string) bool {
+	for _, member := range members {
+		if member.UserID != hostID && !member.Ready {
+			return false
+		}
+	}
+	return true
 }
 
 type VoteInfo struct {
