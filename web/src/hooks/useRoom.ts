@@ -4,7 +4,7 @@ import { classifyRoomLoad } from '../lib/roomLoad'
 import { supabase } from '../lib/supabase'
 import type { CandidateRow, DrawRow, MemberRow, Room, VoteRow } from '../lib/types'
 import { getUid } from '../lib/uid'
-import { VETO_QUOTA, applyVoteMirror, myVetoCount, myVoteKind, upCounts } from '../lib/votes'
+import { VETO_QUOTA, applyVoteMirror, hasMyVote, myVetoCount, upCounts } from '../lib/votes'
 
 export function useRoom(roomId: string) {
   const [room, setRoom] = useState<Room | null>(null)
@@ -89,12 +89,27 @@ export function useRoom(roomId: string) {
     }
   }, [roomId, refetch])
 
+  useEffect(() => {
+    if (room?.status !== 'lobby') return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout>
+    const poll = async () => {
+      await refetch().catch(() => undefined)
+      if (!cancelled) timer = setTimeout(poll, 5_000)
+    }
+    timer = setTimeout(poll, 5_000)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [room?.status, refetch])
+
   const voteInFlight = useRef(false)
   // 投票唯一入口：算 op、打 API、成功才做本地鏡射；失敗回伺服器訊息字串給呼叫端顯示
   async function toggleVote(restaurantId: string, kind: 'up' | 'veto'): Promise<string | null> {
     if (voteInFlight.current) return null // D6：連點鎖 —— 慢網路下不重送、不閃假錯誤
     voteInFlight.current = true
-    const op = myVoteKind(votes, myUserId, restaurantId) === kind ? 'retract' : 'cast'
+    const op = hasMyVote(votes, myUserId, restaurantId, kind) ? 'retract' : 'cast'
     const msg = await voteRoom(roomId, restaurantId, kind, op)
       .catch(() => '投票失敗：無法連線到伺服器')
     voteInFlight.current = false
@@ -104,10 +119,11 @@ export function useRoom(roomId: string) {
     return null
   }
 
-  const myVote = (rid: string) => myVoteKind(votes, myUserId, rid)
+  const hasMyVoteForRestaurant = (rid: string, kind: VoteRow['kind']) =>
+    hasMyVote(votes, myUserId, rid, kind)
   const ups = upCounts(votes)
   const vetoesRemaining = VETO_QUOTA - myVetoCount(votes, myUserId)
 
   return { room, members, candidates, draw, myUserId, connected, notFound, loadError,
-    refetch, toggleVote, myVote, ups, vetoesRemaining }
+    refetch, toggleVote, hasMyVote: hasMyVoteForRestaurant, ups, vetoesRemaining }
 }

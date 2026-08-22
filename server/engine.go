@@ -16,6 +16,16 @@ type Member struct {
 	Dietary      []string
 	MaxDistanceM int
 	Transport    string
+	Ready        bool
+}
+
+func allGuestsReady(members []Member, hostID string) bool {
+	for _, member := range members {
+		if member.UserID != hostID && !member.Ready {
+			return false
+		}
+	}
+	return true
 }
 
 type VoteInfo struct {
@@ -118,13 +128,7 @@ func hardExclude(r Restaurant, ms []Member, now time.Time, cuisineFilter bool) (
 				}
 				continue
 			}
-			for _, conflict := range DietaryConflicts[d] {
-				if hasTag(r.CuisineTags, conflict) {
-					addKind("dietary")
-					reasons = append(reasons, fmt.Sprintf("類型「%s」與 %s 的飲食禁忌（%s）衝突",
-						conflict, m.DisplayName, DietaryLabels[d]))
-				}
-			}
+			// 不在 DietaryRequires 的舊值沒有正向 Places 證據；相容期安全忽略。
 		}
 	}
 	minBudget, minName := ms[0].BudgetMax, ms[0].DisplayName
@@ -133,11 +137,19 @@ func hardExclude(r Restaurant, ms []Member, now time.Time, cuisineFilter bool) (
 			minBudget, minName = m.BudgetMax, m.DisplayName
 		}
 	}
-	if r.PriceLevel >= 0 {
-		if price := PriceLevelMaxTWD[r.PriceLevel]; price > minBudget {
-			addKind("budget")
-			reasons = append(reasons, fmt.Sprintf("價位約 NT$%d，超過 %s 的預算上限 NT$%d", price, minName, minBudget))
+	maxPriceLevel := BudgetMaxGooglePriceLevel(minBudget)
+	if r.PriceLevel >= 0 && r.PriceLevel > maxPriceLevel {
+		priceLabel := GooglePriceLevelLabels[r.PriceLevel]
+		if priceLabel == "" {
+			priceLabel = "未設定"
 		}
+		preferenceLabel := GooglePriceLevelLabels[maxPriceLevel]
+		if preferenceLabel == "" {
+			preferenceLabel = "未設定"
+		}
+		addKind("budget")
+		reasons = append(reasons, fmt.Sprintf("Google 價位層級「%s」高於 %s 的「%s」偏好",
+			priceLabel, minName, preferenceLabel))
 	}
 	// 比照未知價位先例：未知不排除，不能把缺少時段當成用餐時間未營業。
 	if len(r.Hours) > 0 && !r.Hours.IsOpenAt(now) {
@@ -213,7 +225,6 @@ func lowestSatisfactionMember(in EngineInput) string {
 // cuisineUnion：本次搜尋要送出的定向檢索詞集合。除了成員勾選的菜系，還包含由嚴格飲食
 // 禁忌（DietaryRequires）推導的檢索詞——素食店在 nearby 的 20 筆熱門裡抽不到
 // （2026-08-16 實測台北車站 1.5km 為 0 家），沒有專屬支線就永遠進不了池。
-// 負向禁忌（DietaryConflicts）不列入：它們是排除條件，多召回無益只多花一次 Places 呼叫。
 // 回傳值同時是 freeze.go under-fetch 不變式的比對基準（freeze.go:46）與
 // memberCuisinesDrifted 的 409 判準（handlers.go:397）——三個呼叫端必須共用這一個函式。
 func cuisineUnion(ms []Member) []string {

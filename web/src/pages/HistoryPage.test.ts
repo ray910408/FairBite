@@ -72,14 +72,35 @@ const room = (id: string, code: string, status: string, hostId = 'someone-else')
 const DIALOG = 2
 const CHECKING = 3
 
-async function render(dialog: unknown = undefined, total = 0) {
+async function render(dialog: unknown = undefined, total = 0, rows: unknown[] = []) {
   mocks.stateIndex = 0
-  mocks.stateValues = [{ phase: 'ready', rows: [], total }, null, dialog]
+  mocks.stateValues = [{ phase: 'ready', rows, total }, null, dialog]
   mocks.stateSetters = []
   mocks.effects = []
   const { default: HistoryPage } = await import('./HistoryPage')
   return HistoryPage()
 }
+
+describe('足跡評分星形', () => {
+  it('3 分仍渲染五顆星，前三顆實心、後兩顆空心', async () => {
+    const tree = await render(undefined, 1, [{
+      id: 'history-1', rating: 3, decided_at: '2026-08-20T12:00:00Z',
+      restaurants: { name: '測試餐廳', cuisine_tags: [] },
+    }])
+    const rating = findNode(tree, el => el.props?.['aria-label'] === '已評 3 顆星')
+    const stars: NodeLike[] = []
+    const collect = (node: unknown) => {
+      if (Array.isArray(node)) return node.forEach(collect)
+      if (!node || typeof node !== 'object') return
+      const element = node as NodeLike
+      if (typeof element.type === 'function' && element.type.name === 'Star') stars.push(element)
+      collect(element.props?.children)
+    }
+    collect(rating)
+    expect(stars).toHaveLength(5)
+    expect(stars.map(star => star.props?.filled)).toEqual([true, true, true, false, false])
+  })
+})
 
 async function clickHome(tree: unknown, label = '回首頁') {
   const preventDefault = vi.fn()

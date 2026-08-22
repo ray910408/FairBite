@@ -1,17 +1,24 @@
 import { DIETARY_LABEL } from './labels'
 import { supabase } from './supabase'
 
-async function post(path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
+type PostOptions = {
+  signal?: AbortSignal
+  onRequestStart?: () => void
+}
+
+async function post(path: string, body?: unknown, options: PostOptions = {}): Promise<Response> {
   const { data } = await supabase.auth.getSession()
+  options.signal?.throwIfAborted()
   const token = data.session?.access_token ?? ''
-  return fetch(`${import.meta.env.VITE_API_URL}${path}`, {
+  options.onRequestStart?.()
+  return fetch(`${import.meta.env.VITE_API_URL ?? ''}${path}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal,
+    signal: options.signal,
   })
 }
 
@@ -27,8 +34,8 @@ export type SearchOutcome = { error: string | null; warning: string | null }
 
 const degradedWarning = '外部搜尋暫時失敗，本次使用 30 天內的快取資料'
 
-export async function searchRoom(roomId: string): Promise<SearchOutcome> {
-  const res = await post(`/api/rooms/${roomId}/search`)
+export async function searchRoom(roomId: string, options: PostOptions = {}): Promise<SearchOutcome> {
+  const res = await post(`/api/rooms/${roomId}/search`, undefined, options)
   if (res.status === 422) {
     const body = await res.json()
     const warning = body.degraded ? degradedWarning : null
@@ -72,6 +79,10 @@ export async function startVoting(roomId: string): Promise<string | null> {
   return postAction(`/api/rooms/${roomId}/start-voting`, '開始投票失敗')
 }
 
+export async function editConditions(roomId: string): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/edit-conditions`, '修改條件失敗')
+}
+
 // 投票/否決/收回的唯一入口（D15）：Go 單一交易寫票 + 權威重算，Realtime 推回全員
 export async function voteRoom(roomId: string, restaurantId: string,
   kind: 'up' | 'veto', op: 'cast' | 'retract'): Promise<string | null> {
@@ -90,7 +101,7 @@ let leaveInFlight: Promise<void> | null = null
 export function leaveRooms(): Promise<void> {
   leaveInFlight ??= (async () => {
     try {
-      await post('/api/leave', undefined, AbortSignal.timeout(5000))
+      await post('/api/leave', undefined, { signal: AbortSignal.timeout(5000) })
     } catch {
       // Go server 連不上／逾時：靜默，下次進首頁自癒
     } finally {

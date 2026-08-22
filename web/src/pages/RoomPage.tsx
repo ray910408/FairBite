@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
-import { startVoting } from '../lib/api'
+import { editConditions, startVoting } from '../lib/api'
 import { isVetoDeadEnd } from '../lib/deadEnd'
 import { EXPLORATION_OPTIONS } from '../lib/labels'
 import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
@@ -23,6 +23,8 @@ const STEPS = [
   { key: 'voting', label: '投票' },
   { key: 'decided', label: '定案' },
 ] as const
+
+const SEARCH_SLOW_STATUS_MS = 3000
 
 function Stepper({ status }: { status: Room['status'] }) {
   const current = STEPS.findIndex(s => s.key === status)
@@ -49,7 +51,7 @@ export default function RoomPage() {
   const { id = '' } = useParams()
   const nav = useNavigate()
   const { room, members, candidates, draw, myUserId, connected, notFound, loadError,
-    refetch, toggleVote, myVote, ups, vetoesRemaining } = useRoom(id)
+    refetch, toggleVote, hasMyVote, ups, vetoesRemaining } = useRoom(id)
   const [spun, setSpun] = useState(false)
   const [actionError, setActionError] = useState('')
   const [actionWarning, setActionWarning] = useState('')
@@ -63,19 +65,58 @@ export default function RoomPage() {
   // 退房確認（ADR-0007：回首頁＝離席）——新 state 一律接在最後，RoomPage.test.ts 依呼叫順序 mock useState
   const [leaveDialog, setLeaveDialog] = useState<LeaveTarget | null>(null)
   const [leaveChecking, setLeaveChecking] = useState(false)
+  const [roomSettingsBlocked, setRoomSettingsBlocked] = useState(false)
+  const [editingConditions, setEditingConditions] = useState(false)
+  const [searchSlow, setSearchSlow] = useState(false)
   const leaveTriggerRef = useRef<HTMLAnchorElement>(null)
   // 房籍查詢自己的世代（比照 HistoryPage）：aria-busy 擋不住點擊，兩次點擊之間房籍
   // 還可能在別的分頁被改，只有最後一次點擊的回應能生效
   const leaveGen = useRef(0)
   const mealTimeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const mealTimeChain = useRef(Promise.resolve())
+  const pendingMealTime = useRef<{ generation: number; iso: string | null } | null>(null)
+  const roomWriteChain = useRef(Promise.resolve())
+  const roomWriteGeneration = useRef(0)
+  const roomWriteQueued = useRef(0)
+  const roomWriteFailures = useRef(new Set<keyof Pick<Room, 'exploration' | 'meal_time' | 'cuisine_filter'>>())
+  const roomWritesValid = useRef(true)
+  const mealTimeGeneration = useRef(0)
+  const durableMealTimeGeneration = useRef(0)
+  const durableMealTime = useRef<string | null>(room?.meal_time ?? null)
+  const conditionsFlush = useRef<() => Promise<boolean>>(async () => true)
+  const guestsReadyRef = useRef(true)
   const searchInFlight = useRef(false)
+  const searchSlowTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const searchMounted = useRef(true)
+  const searchGeneration = useRef(0)
+  const searchAbort = useRef<AbortController | undefined>(undefined)
   const startVotingInFlight = useRef(false)
+  const editConditionsInFlight = useRef(false)
   useEffect(() => {
     const d = room?.meal_time ? new Date(room.meal_time) : null
     setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
     setDraftMM(d ? String(d.getMinutes()).padStart(2, '0') : '')
   }, [room?.meal_time])
+  useEffect(() => {
+    durableMealTime.current = room?.meal_time ?? null
+  }, [room?.id, room?.meal_time])
+  useEffect(() => {
+    const mounted = searchMounted
+    const generation = searchGeneration
+    const abort = searchAbort
+    const inFlight = searchInFlight
+    const slowTimer = searchSlowTimer
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      generation.current++
+      abort.current?.abort()
+      abort.current = undefined
+      inFlight.current = false
+      const timer = slowTimer.current
+      slowTimer.current = undefined
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [])
   if (!room) {
     if (loadError) return (
       <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
@@ -100,31 +141,106 @@ export default function RoomPage() {
 
   const me = members.find(m => m.user_id === myUserId)
   const isHost = room.host_id === myUserId
-  async function doWriteMealTime(iso: string | null) {
-    const { error, count } = await supabase.from('rooms')
-      .update({ meal_time: iso }, { count: 'exact' }).eq('id', room!.id)
-    if (error || count === 0) {
-      const d = room?.meal_time ? new Date(room.meal_time) : null
-      setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
-      setDraftMM(d ? String(d.getMinutes()).padStart(2, '0') : '')
-      setActionError('用餐時間更新失敗')
-    } else if (iso === null) {
-      setEditingCustom(false)
-      setDraftHH('')
-      setDraftMM('')
-    }
+  const guestsReady = !members.some(m => m.user_id !== room.host_id && !m.ready)
+  guestsReadyRef.current = guestsReady
+
+  function updateRoomSettingsGate() {
+    setRoomSettingsBlocked(roomWriteQueued.current > 0 || pendingMealTime.current !== null || !roomWritesValid.current)
+  }
+
+  function restoreDurableMealTime() {
+    const d = durableMealTime.current ? new Date(durableMealTime.current) : null
+    setEditingCustom(d !== null)
+    setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
+    setDraftMM(d ? String(d.getMinutes()).padStart(2, '0') : '')
+  }
+
+  function enqueueRoomWrite(generation: number, patch: Partial<Pick<Room, 'exploration' | 'meal_time' | 'cuisine_filter'>>,
+    errorMessage: string, onLatestFailure?: () => void) {
+    roomWriteQueued.current++
+    updateRoomSettingsGate()
+    const operation = roomWriteChain.current.then(async () => {
+      let failed = false
+      try {
+        const { error, count } = await supabase.from('rooms')
+          .update(patch, { count: 'exact' }).eq('id', room!.id)
+        failed = !!error || count === 0
+      } catch {
+        failed = true
+      }
+      const fields = Object.keys(patch) as Array<keyof typeof patch>
+      if (failed) {
+        for (const field of fields) roomWriteFailures.current.add(field)
+        roomWritesValid.current = false
+        onLatestFailure?.()
+        setActionError(errorMessage)
+      } else {
+        if ('meal_time' in patch && generation > durableMealTimeGeneration.current) {
+          durableMealTimeGeneration.current = generation
+          durableMealTime.current = patch.meal_time ?? null
+          if (patch.meal_time === null) {
+            setEditingCustom(false)
+            setDraftHH('')
+            setDraftMM('')
+          }
+        }
+        for (const field of fields) roomWriteFailures.current.delete(field)
+        roomWritesValid.current = roomWriteFailures.current.size === 0
+        if (roomWritesValid.current) {
+          setActionError('')
+        }
+      }
+      return !failed
+    })
+    const settled = operation.then(result => {
+      roomWriteQueued.current--
+      updateRoomSettingsGate()
+      return result
+    })
+    roomWriteChain.current = settled.then(() => undefined)
+    return settled
+  }
+
+  function enqueuePendingMealTime() {
+    clearTimeout(mealTimeTimer.current)
+    mealTimeTimer.current = undefined
+    const pending = pendingMealTime.current
+    if (!pending) return roomWriteChain.current
+    pendingMealTime.current = null
+    return enqueueRoomWrite(pending.generation, { meal_time: pending.iso }, '用餐時間更新失敗', () => {
+      if (pending.generation === mealTimeGeneration.current) restoreDurableMealTime()
+    })
+  }
+
+  function saveRoomSetting(patch: Partial<Pick<Room, 'exploration' | 'cuisine_filter'>>, errorMessage: string) {
+    void enqueuePendingMealTime()
+    const generation = ++roomWriteGeneration.current
+    setActionError('')
+    return enqueueRoomWrite(generation, patch, errorMessage)
+  }
+
+  async function flushRoomWrites() {
+    enqueuePendingMealTime()
+    await roomWriteChain.current
+    return roomWritesValid.current && roomWriteQueued.current === 0 && pendingMealTime.current === null
   }
 
   function cancelPendingMealTime() {
     clearTimeout(mealTimeTimer.current)
     mealTimeTimer.current = undefined
+    pendingMealTime.current = null
+    updateRoomSettingsGate()
   }
 
   function saveMealTime(iso: string | null) {
     setActionError('')
     cancelPendingMealTime()
+    const generation = ++roomWriteGeneration.current
+    mealTimeGeneration.current = generation
+    pendingMealTime.current = { generation, iso }
+    updateRoomSettingsGate()
     mealTimeTimer.current = setTimeout(() => {
-      mealTimeChain.current = mealTimeChain.current.then(() => doWriteMealTime(iso))
+      void enqueuePendingMealTime()
     }, 400)
   }
 
@@ -150,6 +266,27 @@ export default function RoomPage() {
     setActionError('')
     const msg = await toggleVote(restaurantId, kind)
     if (msg) setActionError(msg) // D4：伺服器訊息直達（額度用盡/不在投票階段都有明確下一步）
+  }
+
+  async function onEditConditions() {
+    if (editConditionsInFlight.current) return
+    if (!globalThis.confirm('修改條件會清除目前候選，並請所有成員重新準備。確定繼續？')) return
+    editConditionsInFlight.current = true
+    setEditingConditions(true)
+    setActionError('')
+    try {
+      const msg = await editConditions(room!.id)
+      if (msg) {
+        setActionError(msg)
+        return
+      }
+      await refetch()
+    } catch {
+      setActionError('修改條件失敗：無法連線到伺服器')
+    } finally {
+      editConditionsInFlight.current = false
+      setEditingConditions(false)
+    }
   }
 
   function closeLeave() {
@@ -293,16 +430,10 @@ export default function RoomPage() {
               {EXPLORATION_OPTIONS.map(([key, label]) => (
                 <button key={key} type="button" aria-pressed={room.exploration === key}
                   disabled={!isHost || searching}
-                  className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                  className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                     room.exploration === key ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                   } disabled:cursor-default`}
-                  onClick={async () => {
-                    setActionError('')
-                    // count:'exact'：RLS 擋下時 204 無 error，只看 error 會誤判成功
-                    const { error, count } = await supabase.from('rooms')
-                      .update({ exploration: key }, { count: 'exact' }).eq('id', room.id)
-                    if (error || count === 0) setActionError('探索檔位更新失敗')
-                  }}>
+                  onClick={() => saveRoomSetting({ exploration: key }, '探索檔位更新失敗')}>
                   {label}
                 </button>
               ))}
@@ -321,7 +452,7 @@ export default function RoomPage() {
                 <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
                   <button type="button" aria-pressed={room.meal_time === null && !editingCustom}
                     disabled={searching}
-                    className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                    className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                       room.meal_time === null && !editingCustom
                         ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                     }`}
@@ -330,7 +461,7 @@ export default function RoomPage() {
                   </button>
                   <button type="button" aria-pressed={room.meal_time !== null || editingCustom}
                     disabled={searching}
-                    className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                    className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                       room.meal_time !== null || editingCustom
                         ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                     }`}
@@ -387,64 +518,111 @@ export default function RoomPage() {
               {([[false, '關閉'], [true, '開啟']] as const).map(([value, label]) => (
                 <button key={label} type="button" aria-pressed={room.cuisine_filter === value}
                   disabled={!isHost || searching}
-                  className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                  className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                     room.cuisine_filter === value ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                   } disabled:cursor-default`}
-                  onClick={async () => {
-                    setActionError('')
-                    const { error, count } = await supabase.from('rooms')
-                      .update({ cuisine_filter: value }, { count: 'exact' }).eq('id', room.id)
-                    if (error || count === 0) setActionError('菜系過濾更新失敗')
-                  }}>
+                  onClick={() => saveRoomSetting({ cuisine_filter: value }, '菜系過濾更新失敗')}>
                   {label}
                 </button>
               ))}
             </div>
           </section>
         )}
-        {room.status === 'lobby' && me && <ConditionsForm me={me} isHost={isHost} disabled={searching} />}
+        {room.status === 'lobby' && me && <ConditionsForm me={me} isHost={isHost} disabled={searching}
+          onFlushAvailable={flush => { conditionsFlush.current = flush ?? (async () => false) }} />}
         {room.status === 'lobby' && isHost && (
-          <button className="btn btn-primary w-full" disabled={searching} aria-busy={searching}
-            onClick={() => {
-              const notReady = members.filter(m => !m.ready && m.user_id !== room.host_id).length
-              if (notReady > 0 &&
-                !confirm(`還有 ${notReady} 位成員未按準備，開始後條件將凍結。確定開始搜尋？`)) return
-              if (searchInFlight.current) return
+          <button className="btn btn-primary w-full"
+            disabled={searching || roomSettingsBlocked || !guestsReady} aria-busy={searching}
+            onClick={async () => {
+              if (searchInFlight.current || !guestsReadyRef.current) return
               searchInFlight.current = true
+              const generation = ++searchGeneration.current
+              const controller = new AbortController()
+              searchAbort.current = controller
+              const isCurrent = () => searchMounted.current &&
+                searchGeneration.current === generation && !controller.signal.aborted
               setSearching(true)
               setActionError('')
-              import('../lib/api').then(m => m.searchRoom(room.id))
-                .then(o => { setActionError(o.error ?? ''); setActionWarning(o.warning ?? '') })
-                .catch(() => setActionError('搜尋失敗：無法連線到伺服器'))
-                .finally(() => { searchInFlight.current = false; setSearching(false) })
+              try {
+                const [conditionsOK, roomSettingsOK] = await Promise.all([
+                  conditionsFlush.current(),
+                  flushRoomWrites(),
+                ])
+                if (!isCurrent() || !conditionsOK || !roomSettingsOK || !guestsReadyRef.current) return
+                const { searchRoom } = await import('../lib/api')
+                if (!isCurrent()) return
+                const o = await searchRoom(room.id, {
+                  signal: controller.signal,
+                  onRequestStart: () => {
+                    if (!isCurrent()) return
+                    const slowTimer = setTimeout(() => {
+                      if (searchSlowTimer.current === slowTimer && isCurrent()) setSearchSlow(true)
+                    }, SEARCH_SLOW_STATUS_MS)
+                    searchSlowTimer.current = slowTimer
+                  },
+                })
+                if (!isCurrent()) return
+                setActionError(o.error ?? '')
+                setActionWarning(o.warning ?? '')
+              } catch {
+                if (!isCurrent()) return
+                setActionError('搜尋失敗：無法連線到伺服器')
+              } finally {
+                const currentRequest = isCurrent()
+                if (searchAbort.current === controller) {
+                  searchAbort.current = undefined
+                  searchInFlight.current = false
+                }
+                if (currentRequest) {
+                  const timer = searchSlowTimer.current
+                  searchSlowTimer.current = undefined
+                  if (timer !== undefined) {
+                    clearTimeout(timer)
+                    setSearchSlow(false)
+                  }
+                  setSearching(false)
+                }
+              }
             }}>
             {searching ? <><Spinner className="h-5 w-5" />搜尋中…</> : '開始搜尋餐廳'}
           </button>
+        )}
+        {searchSlow && (
+          <p role="status" className="text-center text-sm text-fg-muted">
+            搜尋仍在進行；首次使用可能需要約 15 秒。
+          </p>
         )}
         {room.status === 'candidates' && (
           <>
             <CandidateList rows={candidates} />
             {isHost && (
-              <button className="btn btn-primary w-full" disabled={startingVoting} aria-busy={startingVoting}
-                onClick={async () => {
-                  if (startVotingInFlight.current) return
-                  startVotingInFlight.current = true
-                  setStartingVoting(true)
-                  setActionError('')
-                  const msg = await startVoting(room.id)
-                    .catch(() => '開始投票失敗：無法連線到伺服器')
-                    .finally(() => { startVotingInFlight.current = false; setStartingVoting(false) })
-                  if (msg) setActionError(msg)
-                }}>
-                {startingVoting ? <><Spinner className="h-5 w-5" />處理中…</> : '開始投票'}
-              </button>
+              <div className="grid grid-cols-2 gap-3">
+                <button className="btn btn-secondary w-full" disabled={editingConditions || startingVoting}
+                  aria-busy={editingConditions} onClick={onEditConditions}>
+                  {editingConditions ? <><Spinner className="h-5 w-5" />處理中…</> : '修改條件'}
+                </button>
+                <button className="btn btn-primary w-full" disabled={startingVoting || editingConditions}
+                  aria-busy={startingVoting}
+                  onClick={async () => {
+                    if (startVotingInFlight.current) return
+                    startVotingInFlight.current = true
+                    setStartingVoting(true)
+                    setActionError('')
+                    const msg = await startVoting(room.id)
+                      .catch(() => '開始投票失敗：無法連線到伺服器')
+                      .finally(() => { startVotingInFlight.current = false; setStartingVoting(false) })
+                    if (msg) setActionError(msg)
+                  }}>
+                  {startingVoting ? <><Spinner className="h-5 w-5" />處理中…</> : '開始投票'}
+                </button>
+              </div>
             )}
           </>
         )}
         {room.status === 'voting' && (
           <>
             <CandidateList rows={candidates}
-              voting={{ myVote, ups, vetoesRemaining, onToggle: onToggleVote }} />
+              voting={{ hasMyVote, ups, vetoesRemaining, onToggle: onToggleVote }} />
             {candidates.some(c => c.status === 'kept') ? null : (
               // D16：「全否決」和「全打烊」是兩種死路——用結構化 exclusion_kinds 分辨（deadEnd.ts）
               <p role="status" className="banner bg-warn-soft text-warn">

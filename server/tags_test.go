@@ -139,15 +139,14 @@ func TestCuisineSearchQueriesCoverAllCuisineOptions(t *testing.T) {
 	}
 }
 
-// DIETARY_OPTIONS 與 tag 不是 1:1：只有 DietaryRequires 子集（目前僅 vegetarian）
-// 要求餐廳具備正向認證 tag，才有「adapter 產得出來」的語意；
-// no_beef/no_pork 是負向衝突排除，不需要任何 tag 被產出，故不在本檢查範圍。
+// DIETARY_OPTIONS 只保留具正向 Places tag 證據的 DietaryRequires（目前僅 vegetarian）。
 func TestDietaryRequiredTagsCoverage(t *testing.T) {
 	google, mock := googleProducibleTags(), mockProducibleTags()
 	googleGap := []string{}
 	for _, key := range webOptionKeys(t, "DIETARY_OPTIONS") {
 		req, strict := DietaryRequires[key]
 		if !strict {
+			t.Errorf("DIETARY_OPTIONS 的 %q 沒有正向 DietaryRequires 證據", key)
 			continue
 		}
 		if !google[req] && !mock[req] {
@@ -220,11 +219,6 @@ func knownTagVocabulary(t *testing.T) map[string]bool {
 	}
 	for _, req := range DietaryRequires {
 		known[req] = true
-	}
-	for _, tags := range DietaryConflicts {
-		for _, tag := range tags {
-			known[tag] = true
-		}
 	}
 	return known
 }

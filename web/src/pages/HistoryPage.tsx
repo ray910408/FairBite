@@ -221,8 +221,8 @@ export default function HistoryPage() {
                         {r.rating !== null && (
                           <span role="img" aria-label={`已評 ${r.rating} 顆星`}
                             className="flex shrink-0 items-center gap-0.5 text-brand">
-                            {Array.from({ length: r.rating }, (_, i) => (
-                              <Star key={i} className="h-4 w-4" />
+                            {Array.from({ length: 5 }, (_, i) => (
+                              <Star key={i} className="h-4 w-4" filled={i < r.rating!} />
                             ))}
                           </span>
                         )}

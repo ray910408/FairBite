@@ -473,6 +473,7 @@ type hostLeavingProvider struct {
 	roomID string
 	uid    string
 	inner  PlacesProvider
+	afterLeave func(context.Context) error
 }
 
 func (p hostLeavingProvider) Source() string { return "mock" }
@@ -480,6 +481,11 @@ func (p hostLeavingProvider) Source() string { return "mock" }
 func (p hostLeavingProvider) SearchNearby(ctx context.Context, lat, lng float64, radiusM int, cuisines []string) (PlacesSearchResult, error) {
 	if err := leaveOneRoom(ctx, p.pool, nil, p.roomID, p.uid); err != nil {
 		return PlacesSearchResult{}, err
+	}
+	if p.afterLeave != nil {
+		if err := p.afterLeave(ctx); err != nil {
+			return PlacesSearchResult{}, err
+		}
 	}
 	return p.inner.SearchNearby(ctx, lat, lng, radiusM, cuisines)
 }
@@ -501,8 +507,8 @@ func TestSearchAfterHostLeaveMidFlightRejected(t *testing.T) {
 		values ($1, $2, 'lobby', 25.0478, 121.5170)`, roomID, host); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `insert into room_members (room_id, user_id, joined_at) values
-		($1, $2, now() - interval '1 minute'), ($1, $3, now())`, roomID, host, memberB); err != nil {
+	if _, err := pool.Exec(ctx, `insert into room_members (room_id, user_id, joined_at, ready) values
+		($1, $2, now() - interval '1 minute', false), ($1, $3, now(), true)`, roomID, host, memberB); err != nil {
 		t.Fatal(err)
 	}
 	h := newTestAppWithProvider(t, pool,
@@ -524,5 +530,165 @@ func TestSearchAfterHostLeaveMidFlightRejected(t *testing.T) {
 	}
 	if hostID != memberB {
 		t.Fatalf("繼任結果不得被覆寫：host_id = %s, want %s", hostID, memberB)
+	}
+}
+
+func TestSearchAfterHostLeaveMidFlightForbiddenBeforeReadiness(t *testing.T) {
+	pool, ctx := leaveTestPool(t)
+	const host = "17777777-abab-4bab-8bab-777777777777"
+	const memberB = "18888888-abab-4bab-8bab-888888888888"
+	const memberC = "19999999-abab-4bab-8bab-999999999999"
+	const roomID = "20000000-abab-4bab-8bab-000000000000"
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `delete from rooms where id = $1`, roomID)
+		pool.Exec(context.Background(), `delete from auth.users where id in ($1,$2,$3)`, host, memberB, memberC)
+	})
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email) values
+		($1,'midflight-priority-host@test.dev'), ($2,'midflight-priority-b@test.dev'),
+		($3,'midflight-priority-c@test.dev')`, host, memberB, memberC); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into rooms (id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 25.0478, 121.5170)`, roomID, host); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into room_members (room_id, user_id, joined_at, ready) values
+		($1, $2, now() - interval '2 minutes', false),
+		($1, $3, now() - interval '1 minute', true),
+		($1, $4, now(), true)`, roomID, host, memberB, memberC); err != nil {
+		t.Fatal(err)
+	}
+	h := newTestAppWithProvider(t, pool, hostLeavingProvider{
+		pool: pool, roomID: roomID, uid: host, inner: NewMockProvider(),
+		afterLeave: func(ctx context.Context) error {
+			_, err := pool.Exec(ctx, `update room_members set ready = false where room_id = $1 and user_id = $2`, roomID, memberC)
+			return err
+		},
+	})
+	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", host))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("前房主失去權限應優先於 remaining guest readiness：got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+type pausedSearchProvider struct {
+	started chan<- struct{}
+	release <-chan struct{}
+	inner   PlacesProvider
+}
+
+func (p pausedSearchProvider) Source() string { return "mock" }
+
+func (p pausedSearchProvider) SearchNearby(ctx context.Context, lat, lng float64, radiusM int, cuisines []string) (PlacesSearchResult, error) {
+	close(p.started)
+	select {
+	case <-p.release:
+		return p.inner.SearchNearby(ctx, lat, lng, radiusM, cuisines)
+	case <-ctx.Done():
+		return PlacesSearchResult{}, ctx.Err()
+	}
+}
+
+func TestSearchHostValidationHoldsRoomLockThroughTransition(t *testing.T) {
+	pool, ctx := leaveTestPool(t)
+	const host = "30000000-abab-4bab-8bab-000000000001"
+	const successor = "30000000-abab-4bab-8bab-000000000002"
+	const roomID = "30000000-abab-4bab-8bab-000000000003"
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `delete from rooms where id = $1`, roomID)
+		pool.Exec(context.Background(), `delete from auth.users where id in ($1,$2)`, host, successor)
+	})
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email) values
+		($1,'host-lock-window@test.dev'), ($2,'successor-lock-window@test.dev')`, host, successor); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into rooms (id, host_id, status, center_lat, center_lng)
+		values ($1, $2, 'lobby', 25.0478, 121.5170)`, roomID, host); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into room_members (room_id, user_id, joined_at, ready) values
+		($1, $2, now() - interval '1 minute', false), ($1, $3, now(), true)`, roomID, host, successor); err != nil {
+		t.Fatal(err)
+	}
+
+	// 未 commit 的繼任交易先持有 rooms row lock；READ COMMITTED plain SELECT 仍會讀到舊 host。
+	succession, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer succession.Rollback(ctx)
+	if _, err := succession.Exec(ctx, `select id from rooms where id = $1 for update`, roomID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := succession.Exec(ctx, `delete from room_members where room_id = $1 and user_id = $2`, roomID, host); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := succession.Exec(ctx, `update rooms set host_id = $2 where id = $1`, roomID, successor); err != nil {
+		t.Fatal(err)
+	}
+
+	providerStarted := make(chan struct{})
+	releaseProvider := make(chan struct{})
+	h := newTestAppWithProvider(t, pool, pausedSearchProvider{
+		started: providerStarted, release: releaseProvider, inner: NewMockProvider(),
+	})
+	token := signHS256(t, "test-secret-test-secret-test-secret!", host)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		done <- w
+	}()
+	select {
+	case <-providerStarted:
+	case <-ctx.Done():
+		t.Fatal("search did not reach provider before context deadline")
+	}
+	close(releaseProvider)
+
+	// 不用 sleep 猜時序：等 search backend 確實卡在 rooms row lock，再 commit 繼任。
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting bool
+		if err := pool.QueryRow(ctx, `select exists (
+			select 1 from pg_stat_activity
+			where datname = current_database() and pid <> pg_backend_pid()
+			  and wait_event_type = 'Lock' and query ilike '%rooms%'
+		)`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("search 未進入 rooms row-lock wait")
+		case <-ticker.C:
+		}
+	}
+	if err := succession.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var w *httptest.ResponseRecorder
+	select {
+	case w = <-done:
+	case <-ctx.Done():
+		t.Fatal("search did not complete after host succession")
+	}
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("host 驗證與轉場必須共用 room lock：got %d body=%s", w.Code, w.Body.String())
+	}
+	var status, hostID string
+	if err := pool.QueryRow(ctx, `select status, host_id from rooms where id = $1`, roomID).Scan(&status, &hostID); err != nil {
+		t.Fatal(err)
+	}
+	if status != "lobby" || hostID != successor {
+		t.Fatalf("former host 不得轉場：status=%s host_id=%s", status, hostID)
 	}
 }
