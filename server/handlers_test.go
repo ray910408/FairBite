@@ -269,7 +269,7 @@ func (p *blockingProvider) SearchNearby(context.Context, float64, float64, int, 
 func TestSearchReadyInvariant(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Fatal("TEST_DATABASE_URL not set; run `supabase start` and set it")
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
 	}
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
@@ -500,7 +500,7 @@ func TestQueryMatchesSurviveRescoreRoundTrip(t *testing.T) {
 func TestSearchTaiwaneseQueryMatchPersistsWithoutCanonicalTag(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Fatal("TEST_DATABASE_URL not set; run `supabase start` and set it")
+		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -2519,7 +2519,7 @@ func editConditionsRequest(t *testing.T, h http.Handler, uid, roomID string) *ht
 func TestEditConditions(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Fatal("TEST_DATABASE_URL is required")
+		t.Skip("TEST_DATABASE_URL is required")
 	}
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
@@ -2653,7 +2653,7 @@ func TestEditConditions(t *testing.T) {
 func TestEditConditionsFormerHostRejectedAfterLockedSuccession(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Fatal("TEST_DATABASE_URL is required")
+		t.Skip("TEST_DATABASE_URL is required")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -2743,7 +2743,7 @@ func TestEditConditionsFormerHostRejectedAfterLockedSuccession(t *testing.T) {
 func TestEditConditionsRacesStartVoting(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Fatal("TEST_DATABASE_URL is required")
+		t.Skip("TEST_DATABASE_URL is required")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
