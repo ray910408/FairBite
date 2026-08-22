@@ -59,14 +59,8 @@ var DietaryRequires = map[string]string{
 	"vegetarian": "vegetarian_friendly",
 }
 
-// 偏好型禁忌 → 衝突的餐廳 tag（負向排除；漏放行屬可接受誤差，ADR-0001）
-var DietaryConflicts = map[string][]string{
-	"no_beef": {"steak", "beef_noodle"},
-	"no_pork": {"ramen", "dimsum"},
-}
-
 var DietaryLabels = map[string]string{
-	"vegetarian": "素食", "no_beef": "不吃牛", "no_pork": "不吃豬",
+	"vegetarian": "素食",
 }
 
 var TransportMetersPerMin = map[string]float64{"walking": 75, "driving": 500, "transit": 200}

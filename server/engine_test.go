@@ -133,7 +133,7 @@ func TestHardFilterCollectsAllReasons(t *testing.T) {
 		r.PriceLevel = 4
 		r.Hours = daily([2]int{330, 660}) // 午餐時間未營業
 	})
-	ms := []Member{member(func(m *Member) { m.Dietary = []string{"no_beef"}; m.BudgetMax = 200 })}
+	ms := []Member{member(func(m *Member) { m.Dietary = []string{"vegetarian"}; m.BudgetMax = 200 })}
 	res := Evaluate(EngineInput{Restaurants: []Restaurant{r}, Members: ms,
 		Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170})
 	e := res.Excluded[0]
@@ -1001,14 +1001,6 @@ func TestCuisineFilterAndQueryMatches(t *testing.T) {
 			t.Fatalf("Taiwanese query match must satisfy this room only: kept=%+v tags=%v", res.Kept, noodle.CuisineTags)
 		}
 	})
-	t.Run("飲食禁忌不吃 query match（planning 補訂邊界）", func(t *testing.T) {
-		noPork := Member{UserID: "u3", DisplayName: "不吃豬", BudgetMax: 1600, Dietary: []string{"no_pork"}, MaxDistanceM: 3000, Transport: "walking"}
-		res := Evaluate(EngineInput{Restaurants: []Restaurant{matched}, Members: []Member{noPork}, Now: now})
-		if len(res.Kept) != 1 {
-			t.Fatalf("query_match=ramen 不得觸發 no_pork 禁忌排除（canonical tags 才算）：%+v", res.Excluded)
-		}
-	})
-
 	t.Run("嚴格禁忌不吃 query match（vegetarian 側，對稱於上一案）", func(t *testing.T) {
 		// Task 2 之後「素食」成為定向檢索詞，命中的店會拿到 QueryMatches ["vegetarian"]。
 		// 那是文字相關性——店名帶「素」的葷餐廳就能拿到——不是素食認證。

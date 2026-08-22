@@ -21,7 +21,7 @@
 | 即時同步 | DB 為單一真相：狀態全在 Postgres，客戶端訂閱 Supabase Realtime `postgres_changes` |
 | 寫入路徑 | 混合分工：條件設定等簡單寫入由客戶端直寫 Supabase（RLS 把關）；搜尋/計分/抽選/確認**與投票**走 Go（`votes` 客戶端唯讀，見 §7 D15） |
 | 抽選可信度 | 純伺服器隨機（`crypto/rand`）+ 留存 seed 與機率快照；commit-reveal 為預留升級路徑，非本期範圍 |
-| 過敏處理 | 不做。飲食禁忌僅限 tag 層級可判定者，UI 無過敏欄位（[ADR-0001](../../adr/0001-no-allergen-handling.md)） |
+| 過敏／食材處理 | 不做。UI 只提供有正向 Places 證據的素食；無 `vegetarian_friendly` canonical tag 即排除。過敏、牛／豬等食材級禁忌需要菜單／食材證據，Google place types 不可作 hard exclusion（[ADR-0001](../../adr/0001-no-allergen-handling.md)） |
 | 群組身分 | 無群組實體。跨房間歷史一律掛在「每人同席紀錄」上（[ADR-0002](../../adr/0002-per-user-history-no-group-entity.md)） |
 | 時間錨點 | 只支援「現在出發」，預約未來時段不在範圍 |
 | Google Places | 申請 API key 與開發併行：Places 存取封成 provider 介面，先用內建 mock 資料，key 到手切換真 API |
@@ -77,7 +77,7 @@ flowchart TB
 |---|---|---|
 | `profiles` | `id`（= `auth.users.id`）、`display_name`、`default_prefs jsonb` | 預設偏好，開新房自動帶入 |
 | `rooms` | `id`、`code`（6 碼邀請碼，unique）、`host_id`、`status`、`center_lat/lng`、`exploration`（`familiar/balanced/explore`，房主於 lobby 設定） | 房間即一次決策；無跨房間群組概念（ADR-0002） |
-| `room_members` | `(room_id, user_id)` PK、`budget_max`（100–1600 的價位偏好刻度；非人均 TWD 保證）、`cuisines jsonb`、`dietary jsonb`（tag 層級禁忌，ADR-0001）、`max_distance_m`、`transport`（`walking/driving/transit`）、`ready` | 每位成員的條件 |
+| `room_members` | `(room_id, user_id)` PK、`budget_max`（100–1600 的價位偏好刻度；非人均 TWD 保證）、`cuisines jsonb`、`dietary jsonb`（B1 app contract 只寫具正向 tag 證據的 `vegetarian`；pre-B2 DB constraint 暫容 legacy string array；ADR-0001）、`max_distance_m`、`transport`（`walking/driving/transit`）、`ready` | 每位成員的條件 |
 | `restaurants` | `id`、`place_id`（unique）、`name`、`cuisine_tags jsonb`、`price_level`（0–4）、`lat/lng`、`address`、`opening_hours jsonb`、`rating`、`fetched_at` | Places 快取。遵守快取條款：`place_id` 可永存，其餘欄位以 `fetched_at` 為準 30 天內刷新 |
 | `room_candidates` | `(room_id, restaurant_id)` PK、`status`（`kept/excluded`）、`probability`、`weight_breakdown jsonb`、`exclusion_reason` | 每房每餐廳的機率與解釋 trace |
 | `votes` | `room_id`、`user_id`、`restaurant_id`、`kind`（`up/veto`）、unique(room_id, user_id, restaurant_id, kind) | 否決是可回收的排除 overlay，不會取代同店的贊成票；否決限額 = **現存**否決數（每人每房同時最多 2 個）；voting 期間可收回（`op: retract`，由 Go 只刪 veto 列）；限額由 Go 於 vote 交易內把關（`VetoQuota`，weights.go）。既有四欄 PK 已支援此語意，無 DB migration；表僅保留宣告式 invariant（PK/CHECK/FK/成員可讀 RLS），客戶端不直寫（D15） |
@@ -93,9 +93,11 @@ flowchart TB
 
 1. **取候選** — 搜尋半徑 = 全員 `max_distance_m` 的**最小值**（安全交集，不會有人被迫超出可接受範圍）。Places provider 介面回傳菜系標籤、價位、營業時間。
 2. **硬性過濾**（不可妥協，逐筆記中文排除原因）：
-   - 任一成員 `dietary` 禁忌與餐廳 `cuisine_tags` 衝突 → 排除（tag 層級判定；系統不處理過敏，ADR-0001）
+   - 任一成員選擇 `dietary:["vegetarian"]` 時，餐廳必須有 `vegetarian_friendly` canonical tag，否則排除；不以菜系／place type 推斷牛、豬或其他食材。相容期舊 unsupported 值安全忽略（ADR-0001）
    - 任一成員的 `budget_max` 映射為可接受的最高 Google `price_level`（100–200→1、300–400→2、500–800→3、900–1600→4）；較高的已知層級排除，層級 0 與未知價位保留。這是粗略價位層級，不保證人均 TWD 價格。
    - 目前未營業 → 排除（時間錨點 = 現在，見非目標）
+
+Stage B rollout gate：必須先部署並驗證 Pages 只產生 supported dietary 值、Render 可安全讀取 legacy rows，才可進行 B2 cleanup/constraint migration；在 deploy evidence 到位前 B2 blocked。
 3. **軟性計分** — 每家從 base 1.0 開始逐因素乘倍率，同步將 `{factor, mult, reason}` 追加進 trace：
 
 | 因素 | 邏輯（起始值，皆可調） | Phase |
@@ -190,7 +192,7 @@ API 層少量 `httptest`（JWT 驗證、房間 happy path、`POST /vote` 冪等�
 
 ## 12. 非目標與預留
 
-- 不處理過敏原：無過敏欄位、無「已排除過敏風險」暗示（ADR-0001）
+- 不處理過敏原或食材級禁忌：無過敏欄位、無「已排除過敏／食材風險」暗示；未來需菜單／食材資料（ADR-0001）
 - 只支援「現在出發」的即時決策；預約未來時段（含該時段的營業/天氣判定）不在範圍
 - 不自建導航（跳轉 Google Maps URL）
 - 不做原生 App 重寫（後期以 Capacitor 包裝）

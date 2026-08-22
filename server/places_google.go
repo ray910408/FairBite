@@ -45,11 +45,11 @@ var googleTypeTags = map[string][]string{
 	"sushi_restaurant":      {"japanese"}, // 不產 sushi：無消費端，見 tags_test.go 的 knownTagVocabulary
 	"korean_restaurant":     {"korean"},
 	"cantonese_restaurant":  {"cantonese"},
-	"dim_sum_restaurant":    {"cantonese", "dimsum"}, // dimsum 供 no_pork 硬排除比對（weights.go DietaryConflicts）
+	"dim_sum_restaurant":    {"cantonese"},
 	"hot_pot_restaurant":    {"hotpot"},
 	"indian_restaurant":     {"indian"}, // 不產 curry：無消費端，見 tags_test.go 的 knownTagVocabulary
 	"seafood_restaurant":    {"seafood"},
-	"steak_house":           {"steak", "western"},
+	"steak_house":           {"western"},
 	"american_restaurant":   {"western"},
 	"italian_restaurant":    {"western"},
 	"french_restaurant":     {"western"},

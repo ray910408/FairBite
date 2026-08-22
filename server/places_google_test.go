@@ -185,12 +185,10 @@ func TestGRestaurantKeepsEmptyCuisineTagsAsNonNilSlice(t *testing.T) {
 	}
 }
 
-func TestDimSumRestaurantTagsIncludeCuisineAndDietaryConflict(t *testing.T) {
+func TestDimSumRestaurantTagsIncludeCuisine(t *testing.T) {
 	tags := gTags(gPlace{Types: []string{"dim_sum_restaurant"}})
-	for _, want := range []string{"cantonese", "dimsum"} {
-		if !hasTag(tags, want) {
-			t.Errorf("dim_sum_restaurant 應產生 %q，got %v", want, tags)
-		}
+	if !hasTag(tags, "cantonese") {
+		t.Errorf("dim_sum_restaurant 應產生 cantonese，got %v", tags)
 	}
 }
 

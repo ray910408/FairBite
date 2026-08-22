@@ -186,9 +186,9 @@ func TestCuisineUnionIncludesStrictDietaryAsSearchTerm(t *testing.T) {
 	}
 }
 
-// 負向禁忌不需要召回：no_beef/no_pork 是排除條件，多撈牛肉麵店對它們毫無幫助，
-// 只會多花一次 Places 呼叫。只有 DietaryRequires 裡的嚴格禁忌才產生檢索詞。
-func TestCuisineUnionExcludesNegativeDietary(t *testing.T) {
+// 相容期的舊飲食值沒有可用的 Places 證據，完全忽略；只有 DietaryRequires
+// 裡的正向嚴格禁忌才產生檢索詞。
+func TestCuisineUnionIgnoresUnsupportedLegacyDietary(t *testing.T) {
 	members := []Member{
 		{UserID: "u1", Cuisines: []string{"ramen"}, Dietary: []string{"no_beef", "no_pork"}},
 	}
@@ -207,6 +207,8 @@ func TestStrictDietaryTerms(t *testing.T) {
 	}{
 		{"空輸入", nil, nil},
 		{"無嚴格禁忌", []string{"hotpot", "japanese"}, nil},
+		{"忽略舊 unsupported 值", []string{"no_beef", "no_pork"}, nil},
+		{"混合舊值只保留 vegetarian", []string{"no_beef", "no_pork", "vegetarian"}, []string{"vegetarian"}},
 		{"只有嚴格禁忌", []string{"vegetarian"}, []string{"vegetarian"}},
 		{"混合輸入維持排序", []string{"hotpot", "japanese", "vegetarian"}, []string{"vegetarian"}},
 	} {
@@ -233,6 +235,8 @@ func TestStrictDietaryUnderFetched(t *testing.T) {
 		{"只有菜系變動不算", []string{"korean"}, []string{"ramen"}, false},
 		{"從零到有", []string{"vegetarian"}, nil, true},
 		{"從有到零", nil, []string{"vegetarian"}, false},
+		{"新增舊值不算 under-fetch", []string{"no_beef", "no_pork"}, nil, false},
+		{"舊值混素食仍依素食判定", []string{"no_beef", "vegetarian"}, nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := strictDietaryUnderFetched(tc.reloaded, tc.fetched); got != tc.want {

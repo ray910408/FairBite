@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DIETARY_OPTIONS } from '../lib/labels'
 import type { MemberRow } from '../lib/types'
 
 const mocks = vi.hoisted(() => ({
@@ -204,6 +205,17 @@ describe('ConditionsForm 條件寫入防線', () => {
     expect(copy).not.toContain('NT$')
   })
 
+  it('飲食禁忌只提供有正向證據的素食選項', async () => {
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const copy = textContent(ConditionsForm({ me, isHost: false }))
+
+    expect(DIETARY_OPTIONS).toEqual([['vegetarian', '素食']])
+    expect(copy).toContain('飲食禁忌')
+    expect(copy).toContain('素食')
+    expect(copy).not.toContain('不吃牛')
+    expect(copy).not.toContain('不吃豬')
+  })
+
   it('legacy 無效價位偏好不誤顯示有效層級，仍可改回合法 slider 值', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
     const tree = ConditionsForm({ me: { ...me, budget_max: 50 }, isHost: false })
@@ -360,6 +372,34 @@ describe('ConditionsForm 條件寫入防線', () => {
     expect(options).toEqual({ count: 'exact' })
     expect(mocks.eqRoom).toHaveBeenCalledWith('room_id', 'room-1')
     expect(mocks.eqUser).toHaveBeenCalledWith('user_id', 'user-b')
+  })
+
+  it('legacy dietary 成員修改其他條件時只回寫 supported 值', async () => {
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me: { ...me, dietary: ['no_beef', 'no_pork'] }, isHost: false })
+    const budget = findInput(tree)
+    if (!budget.props?.onChange) throw new Error('找不到預算輸入')
+
+    budget.props.onChange({ target: { value: '900' } })
+    await vi.advanceTimersByTimeAsync(401)
+
+    expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({
+      budget_max: 900, dietary: [],
+    }), { count: 'exact' })
+  })
+
+  it('legacy dietary 成員切換素食時只回寫 vegetarian', async () => {
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me: { ...me, dietary: ['no_beef'] }, isHost: false })
+    const vegetarian = findButton(tree, '素食')
+    if (!vegetarian.props?.onClick) throw new Error('找不到素食選項')
+
+    vegetarian.props.onClick()
+    await vi.advanceTimersByTimeAsync(401)
+
+    expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({
+      dietary: ['vegetarian'],
+    }), { count: 'exact' })
   })
 
   it('ready 點擊立即走專用 count:exact 寫入，不等待 debounce', async () => {

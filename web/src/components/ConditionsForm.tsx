@@ -40,13 +40,14 @@ export default function ConditionsForm({ me, isHost, disabled = false, onFlushAv
     if (!pending) return writeChain.current
     pendingWrite.current = null
     const operation = writeChain.current.then(async () => {
+      const dietary = pending.value.dietary.filter(d => d === 'vegetarian')
       // count: 'exact'：RLS 凍結時 UPDATE 影響 0 列且回 204 無 error，只看 error 會誤判成功
       let failed = false
       try {
         const { error, count } = await supabase.from('room_members').update({
           budget_max: pending.value.budget_max,
           cuisines: pending.value.cuisines,
-          dietary: pending.value.dietary,
+          dietary,
           max_distance_m: pending.value.max_distance_m,
           transport: pending.value.transport,
         }, { count: 'exact' }).eq('room_id', me.room_id).eq('user_id', me.user_id)
@@ -63,7 +64,7 @@ export default function ConditionsForm({ me, isHost, disabled = false, onFlushAv
       } else {
         if (pending.generation > durableGeneration.current) {
           durableGeneration.current = pending.generation
-          savedRef.current = { ...pending.value, ready: savedRef.current.ready }
+          savedRef.current = { ...pending.value, dietary, ready: savedRef.current.ready }
         }
         // 只有失敗 generation 之後的成功，才解除 stale-search gate。
         if (pending.generation > failedGeneration.current) {

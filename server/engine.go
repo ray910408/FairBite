@@ -128,13 +128,7 @@ func hardExclude(r Restaurant, ms []Member, now time.Time, cuisineFilter bool) (
 				}
 				continue
 			}
-			for _, conflict := range DietaryConflicts[d] {
-				if hasTag(r.CuisineTags, conflict) {
-					addKind("dietary")
-					reasons = append(reasons, fmt.Sprintf("類型「%s」與 %s 的飲食禁忌（%s）衝突",
-						conflict, m.DisplayName, DietaryLabels[d]))
-				}
-			}
+			// 不在 DietaryRequires 的舊值沒有正向 Places 證據；相容期安全忽略。
 		}
 	}
 	minBudget, minName := ms[0].BudgetMax, ms[0].DisplayName
@@ -231,7 +225,6 @@ func lowestSatisfactionMember(in EngineInput) string {
 // cuisineUnion：本次搜尋要送出的定向檢索詞集合。除了成員勾選的菜系，還包含由嚴格飲食
 // 禁忌（DietaryRequires）推導的檢索詞——素食店在 nearby 的 20 筆熱門裡抽不到
 // （2026-08-16 實測台北車站 1.5km 為 0 家），沒有專屬支線就永遠進不了池。
-// 負向禁忌（DietaryConflicts）不列入：它們是排除條件，多召回無益只多花一次 Places 呼叫。
 // 回傳值同時是 freeze.go under-fetch 不變式的比對基準（freeze.go:46）與
 // memberCuisinesDrifted 的 409 判準（handlers.go:397）——三個呼叫端必須共用這一個函式。
 func cuisineUnion(ms []Member) []string {

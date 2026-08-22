@@ -32,11 +32,8 @@
 
 完整內容（含程式碼與 ADR 修訂文字）在 `docs/superpowers/plans/2026-08-16-cuisine-tag-accuracy.md` 的 Task 5／6。以下三項**不在** Task 1–4 的 PR 內。
 
-- **`beef_noodle` 沒有生產者，「不吃牛」對牛肉麵店完全失效**
-  - **What:** `weights.go:41` 的 `DietaryConflicts[no_beef]` 含 `beef_noodle`，但 `places_google.go` 全檔不產這個 tag（只有 `mockdata.go:21` 產）。線上勾「不吃牛」不會排除任何牛肉麵店。
-  - **Why:** Google 沒有牛肉麵 type，`noodle_shop` 與 `chinese_noodle_restaurant` 都涵蓋非牛肉麵店而不可對映。`tags_test.go:145` 曾明文豁免這條檢查，理由「負向排除不需要 tag 被產出」是錯的——負向排除更需要 tag 被產出。
-  - **Depends on:** 需修訂 ADR-0006（店名關鍵字規則的否決，其「若日後發現通用池漏標再議」的重啟條件已於 2026-08-16 觸發）。屬架構決策，要獨立一輪審查。
-  - **順帶清理:** `mockdata.go` 的 `noodle`（:12）與 `fried_chicken`（:16）兩個孤兒 tag，Google 產不出也沒有消費端。
+- ~~**`beef_noodle` 沒有生產者，「不吃牛」對牛肉麵店完全失效**~~ 已由 Task 7 Stage B1 結案（2026-08-22）：Google place types 不是食材證據，移除 `no_beef`／`no_pork` 的 UI、推斷與 orphan tags；legacy 值在 app 相容期安全忽略。
+  - Task 7 Stage B2 仍 blocked：先部署並驗證 Pages 只寫 supported dietary、Render 接受 legacy rows，才可做 cleanup/constraint migration。
 
 - **`western` 跨區 query match 誤放行尚未量化**
   - **What:** 「西式料理」的定向檢索會把泰式餐酒館、陝西餐館標成 western（`QueryMatches` 與 canonical tag 等權，`engine.go:234`）。

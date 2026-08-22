@@ -24,7 +24,7 @@ export const CUISINE_OPTIONS: [string, string][] = [
 export const CUISINE_LABEL = Object.fromEntries(CUISINE_OPTIONS)
 
 export const DIETARY_OPTIONS: [string, string][] = [
-  ['vegetarian', '素食'], ['no_beef', '不吃牛'], ['no_pork', '不吃豬'],
+  ['vegetarian', '素食'],
 ]
 
 export const DIETARY_LABEL = Object.fromEntries(DIETARY_OPTIONS)
