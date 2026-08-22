@@ -1,0 +1,42 @@
+error acquiring upload token: creating token file: open C:\Users\kenne\AppData\Roaming\go\telemetry\local\upload.token: Access is denied.
+2026/08/22 15:21:54 places provider: google
+2026/08/22 15:21:54 listening on :8787
+2026/08/22 16:02:19 weather provider failed, scoring without weather: dial tcp 188.40.99.226:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 16:02:19 Taiwanese text search "台式料理" page 1 failed: Post "https://places.googleapis.com/v1/places:searchText": dial tcp 172.217.112.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 16:02:19 Google Places 搜尋呼叫 nearby=2 text=2，部分失敗=1
+2026/08/22 16:02:19 places provider failed, falling back to cache: Post "https://places.googleapis.com/v1/places:searchNearby": dial tcp 172.217.112.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 16:02:22 weather provider failed, scoring without weather: open-meteo recently failed, backing off
+2026/08/22 16:02:22 Taiwanese text search "台式料理" page 1 failed: Post "https://places.googleapis.com/v1/places:searchText": dial tcp 172.217.112.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 16:02:22 Google Places 搜尋呼叫 nearby=2 text=2，部分失敗=1
+2026/08/22 16:02:22 places provider failed, falling back to cache: Post "https://places.googleapis.com/v1/places:searchNearby": dial tcp 172.217.112.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 16:02:36 weather provider failed, scoring without weather: open-meteo recently failed, backing off
+2026/08/22 16:03:39 weather provider failed, scoring without weather: dial tcp 188.40.99.226:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 16:03:39 Google Places 搜尋呼叫 nearby=2 text=0，部分失敗=0
+2026/08/22 16:03:39 places provider failed, falling back to cache: Post "https://places.googleapis.com/v1/places:searchNearby": dial tcp 172.217.112.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 17:21:54 ERROR Failed to refresh HTTP JWK Set from remote HTTP resource. error="failed to perform HTTP request for JWK Set refresh: Get \"http://127.0.0.1:54321/auth/v1/.well-known/jwks.json\": dial tcp 127.0.0.1:54321: connectex: No connection could be made because the target machine actively refused it." url=http://127.0.0.1:54321/auth/v1/.well-known/jwks.json
+2026/08/22 17:32:51 weather provider failed, scoring without weather: dial tcp 188.40.99.226:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 17:32:51 Taiwanese text search "台式料理" page 1 failed: Post "https://places.googleapis.com/v1/places:searchText": dial tcp 172.217.114.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 17:32:51 Google Places 搜尋呼叫 nearby=2 text=2，部分失敗=1
+2026/08/22 17:32:51 places provider failed, falling back to cache: Post "https://places.googleapis.com/v1/places:searchNearby": dial tcp 172.217.114.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 17:32:52 weather provider failed, scoring without weather: open-meteo recently failed, backing off
+2026/08/22 17:32:52 Taiwanese text search "台式料理" page 1 failed: Post "https://places.googleapis.com/v1/places:searchText": dial tcp 172.217.114.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 17:32:52 Google Places 搜尋呼叫 nearby=2 text=2，部分失敗=1
+2026/08/22 17:32:52 places provider failed, falling back to cache: Post "https://places.googleapis.com/v1/places:searchNearby": dial tcp 172.217.114.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 17:33:06 weather provider failed, scoring without weather: open-meteo recently failed, backing off
+2026/08/22 17:33:21 weather provider failed, scoring without weather: open-meteo recently failed, backing off
+2026/08/22 17:33:21 Google Places 搜尋呼叫 nearby=2 text=0，部分失敗=0
+2026/08/22 17:33:21 places provider failed, falling back to cache: Post "https://places.googleapis.com/v1/places:searchNearby": dial tcp 172.217.114.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 18:21:54 ERROR Failed to refresh HTTP JWK Set from remote HTTP resource. error="failed to perform HTTP request for JWK Set refresh: Get \"http://127.0.0.1:54321/auth/v1/.well-known/jwks.json\": dial tcp 127.0.0.1:54321: connectex: No connection could be made because the target machine actively refused it." url=http://127.0.0.1:54321/auth/v1/.well-known/jwks.json
+2026/08/22 19:18:28 weather provider failed, scoring without weather: dial tcp 188.40.99.226:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 19:18:28 Taiwanese text search "台式料理" page 1 failed: Post "https://places.googleapis.com/v1/places:searchText": dial tcp 172.217.117.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 19:18:28 Taiwanese text search "台灣小吃" page 1 failed: Post "https://places.googleapis.com/v1/places:searchText": dial tcp 172.217.117.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 19:18:28 Google Places 搜尋呼叫 nearby=2 text=2，部分失敗=2
+2026/08/22 19:18:28 places provider failed, falling back to cache: Post "https://places.googleapis.com/v1/places:searchNearby": dial tcp 172.217.117.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 19:18:30 weather provider failed, scoring without weather: open-meteo recently failed, backing off
+2026/08/22 19:18:30 Taiwanese text search "台式料理" page 1 failed: Post "https://places.googleapis.com/v1/places:searchText": dial tcp 172.217.117.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 19:18:30 Taiwanese text search "台灣小吃" page 1 failed: Post "https://places.googleapis.com/v1/places:searchText": dial tcp 172.217.117.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 19:18:30 Google Places 搜尋呼叫 nearby=2 text=2，部分失敗=2
+2026/08/22 19:18:30 places provider failed, falling back to cache: Post "https://places.googleapis.com/v1/places:searchNearby": dial tcp 172.217.117.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
+2026/08/22 19:18:57 weather provider failed, scoring without weather: open-meteo recently failed, backing off
+2026/08/22 19:18:57 Google Places 搜尋呼叫 nearby=2 text=0，部分失敗=0
+2026/08/22 19:18:57 places provider failed, falling back to cache: Post "https://places.googleapis.com/v1/places:searchNearby": dial tcp 172.217.117.4:443: connectex: An attempt was made to access a socket in a way forbidden by its access permissions.
