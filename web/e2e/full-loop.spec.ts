@@ -123,6 +123,41 @@ test('Realtime subscription readiness guard waits for postgres_changes system OK
   expect(roomRealtimeReady(systemReady)).toBe(true)
 })
 
+test('邀請碼由 browser native validation 阻擋無效 join_room RPC', async ({ page }) => {
+  const requests: Array<{ method: string; body: unknown }> = []
+  await page.route('**/rest/v1/rpc/join_room', async route => {
+    requests.push({
+      method: route.request().method(),
+      body: route.request().postDataJSON(),
+    })
+    await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
+  })
+
+  await signup(page, 'invite-native')
+  const input = page.getByLabel('邀請碼')
+  const submit = page.getByRole('button', { name: '加入', exact: true })
+  await expect(submit).toBeEnabled()
+
+  for (const invalid of ['', 'ABC123', 'GGGGGGGGGGGG']) {
+    await input.fill(invalid)
+    expect(await input.evaluate(el =>
+      (el as unknown as { checkValidity(): boolean }).checkValidity())).toBe(false)
+    await submit.click()
+  }
+  await page.waitForTimeout(100)
+  expect(requests).toHaveLength(0)
+
+  await input.fill('A1B2C3D4E5F6')
+  expect(await input.evaluate(el =>
+    (el as unknown as { checkValidity(): boolean }).checkValidity())).toBe(true)
+  await submit.click()
+  await expect.poll(() => requests.length).toBe(1)
+  expect(requests).toEqual([{
+    method: 'POST',
+    body: { p_code: 'A1B2C3D4E5F6' },
+  }])
+})
+
 // Round 5（ADR-0007 2026-08-16 修訂）：回首頁不再靜默退房——HomePage mount 查到房籍
 // 就跳確認，按下「離開房間」才真的退。「加入」只由 leavePending 閘門控制（「建立房間」
 // 還要有出發點，加入方沒有），拿它當 settle 訊號對兩邊都成立。

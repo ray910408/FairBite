@@ -286,7 +286,8 @@ export default function HomePage() {
           <form onSubmit={joinRoom} className="flex gap-2">
             <input className="field flex-1 font-mono text-lg tracking-[0.3em] uppercase"
               aria-label="邀請碼" placeholder="A1B2C3D4E5F6" autoCapitalize="characters"
-              value={code} onChange={e => setCode(e.target.value)} required maxLength={12} />
+              value={code} onChange={e => { setCode(e.target.value); setJoinError('') }}
+              required minLength={12} maxLength={12} pattern="[0-9A-Fa-f]{12}" />
             <button className="btn btn-quiet px-5" type="submit" disabled={busy || leavePending}>加入</button>
           </form>
           {joinError && (

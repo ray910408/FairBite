@@ -48,7 +48,12 @@ export default function AuthPage() {
               className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                 mode === m ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
               }`}
-              onClick={() => { setMode(m); setError('') }}>
+              onClick={() => {
+                if (mode === m) return
+                setMode(m)
+                setPassword('')
+                setError('')
+              }}>
               {m === 'login' ? '登入' : '註冊'}
             </button>
           ))}

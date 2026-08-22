@@ -234,6 +234,38 @@ function stubSuggestionQueries() {
   })
 }
 
+describe('HomePage 邀請碼 native validation', () => {
+  beforeEach(() => {
+    mocks.stateIndex = 0
+    mocks.refIndex = 0
+    mocks.refs = []
+    mocks.effects = []
+    mocks.stateValues = []
+    mocks.stateValues[0] = 'ABC'
+    mocks.stateValues[2] = '舊加入錯誤'
+    mocks.stateValues[12] = false
+    mocks.stateSetters = []
+  })
+
+  it('輸入使用原生十二碼 hex 約束，編輯時同步清除舊錯誤', async () => {
+    const { default: HomePage } = await import('./HomePage')
+    const input = findNode(HomePage(),
+      el => el.type === 'input' && el.props?.['aria-label'] === '邀請碼')
+    expect(input?.props?.required).toBe(true)
+    expect(input?.props?.minLength).toBe(12)
+    expect(input?.props?.maxLength).toBe(12)
+    expect(input?.props?.pattern).toBe('[0-9A-Fa-f]{12}')
+
+    const onChange = input?.props?.onChange as
+      ((event: { target: { value: string } }) => void) | undefined
+    expect(onChange).toBeTypeOf('function')
+    onChange?.({ target: { value: 'A1B2C3D4E5F6' } })
+
+    expect(mocks.stateSetters[0]).toHaveBeenCalledWith('A1B2C3D4E5F6')
+    expect(mocks.stateSetters[2]).toHaveBeenCalledWith('')
+  })
+})
+
 describe('HomePage 退房閘門', () => {
   beforeEach(() => {
     mocks.stateIndex = 0
