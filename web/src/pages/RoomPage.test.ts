@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   searchRoom: vi.fn(),
   editConditions: vi.fn(),
   members: {} as { data?: unknown; error?: unknown },
+  effects: [] as Array<() => void | (() => void)>,
 }))
 
 vi.mock('react', async importOriginal => {
@@ -29,7 +30,7 @@ vi.mock('react', async importOriginal => {
       return [value, setter]
     },
     useRef: (initial: unknown) => ({ current: initial }),
-    useEffect: vi.fn(),
+    useEffect: (effect: () => void | (() => void)) => { mocks.effects.push(effect) },
   }
 })
 
@@ -126,6 +127,7 @@ describe('RoomPage meal_time draft intent', () => {
     mocks.stateIndex = 0
     mocks.stateValues = [false, '', '', false, false, '', '']
     mocks.stateSetters = []
+    mocks.effects = []
     mocks.eq.mockReset().mockResolvedValue({ error: null, count: 1 })
     mocks.update.mockReset().mockReturnValue({ eq: mocks.eq })
     mocks.from.mockReset().mockReturnValue({ update: mocks.update })
@@ -269,6 +271,7 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     mocks.stateIndex = 0
     mocks.stateValues = [false, '', '', false, false, '', '']
     mocks.stateSetters = []
+    mocks.effects = []
     mocks.eq.mockReset().mockResolvedValue({ error: null, count: 1 })
     mocks.update.mockReset().mockReturnValue({ eq: mocks.eq })
     mocks.from.mockReset().mockReturnValue({ update: mocks.update })
@@ -278,6 +281,7 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
@@ -345,7 +349,65 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     childFlush.resolve(true)
     await searchDone
     expect(mocks.searchRoom).toHaveBeenCalledTimes(1)
-    expect(mocks.searchRoom).toHaveBeenCalledWith('room-1')
+    expect(mocks.searchRoom).toHaveBeenCalledWith('room-1', expect.objectContaining({
+      signal: expect.any(AbortSignal),
+      onRequestStart: expect.any(Function),
+    }))
+  })
+
+  it('preflight pending 時 unmount，晚到結果不送 search、不啟動 timer、不 setState', async () => {
+    const childFlush = deferred<boolean>()
+    const timerSpy = vi.spyOn(globalThis, 'setTimeout')
+    mocks.useRoom.mockReturnValue(roomState({ members: [hostMe, { ...memberB, ready: true }] }))
+    const tree = await renderRoomPage()
+    const cleanup = mocks.effects[2]?.()
+    if (typeof cleanup !== 'function') throw new Error('找不到 RoomPage lifecycle cleanup')
+
+    const conditions = findNode(tree, el => typeof el.props?.onFlushAvailable === 'function')
+    const register = conditions?.props?.onFlushAvailable as
+      ((flush: () => Promise<boolean>) => void) | undefined
+    register?.(() => childFlush.promise)
+    const searchDone = findButton(tree, '開始搜尋餐廳').props!.onClick!()
+    await Promise.resolve()
+    await Promise.resolve()
+    const callsBeforeUnmount = mocks.stateSetters.map(setter => setter.mock.calls.length)
+
+    cleanup()
+    childFlush.resolve(true)
+    await searchDone
+
+    expect(mocks.searchRoom).not.toHaveBeenCalled()
+    expect(timerSpy).not.toHaveBeenCalledWith(expect.any(Function), 3000)
+    expect(mocks.stateSetters.map(setter => setter.mock.calls.length))
+      .toEqual(callsBeforeUnmount)
+  })
+
+  it('request-start callback 精確在 3000ms 啟用慢搜尋狀態', async () => {
+    vi.useFakeTimers()
+    const result = deferred<{ error: null; warning: null }>()
+    const requestStarted = deferred<void>()
+    mocks.useRoom.mockReturnValue(roomState({ members: [hostMe, { ...memberB, ready: true }] }))
+    mocks.searchRoom.mockImplementation((_roomId: string, options: { onRequestStart(): void }) => {
+      options.onRequestStart()
+      requestStarted.resolve()
+      return result.promise
+    })
+    const tree = await renderRoomPage()
+    mocks.effects[2]?.()
+
+    const searchDone = findButton(tree, '開始搜尋餐廳').props!.onClick!()
+    await requestStarted.promise
+    expect(mocks.searchRoom).toHaveBeenCalledTimes(1)
+    expect(mocks.stateSetters[13]).not.toHaveBeenCalledWith(true)
+
+    await vi.advanceTimersByTimeAsync(2999)
+    expect(mocks.stateSetters[13]).not.toHaveBeenCalledWith(true)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(mocks.stateSetters[13]).toHaveBeenCalledWith(true)
+
+    result.resolve({ error: null, warning: null })
+    await searchDone
+    expect(mocks.stateSetters[13]).toHaveBeenLastCalledWith(false)
   })
 
   it('欄位 A 寫入失敗後，欄位 B 成功仍阻擋搜尋，直到 A 重試成功', async () => {
@@ -364,6 +426,13 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     await findButton(tree, '熟悉').props!.onClick!()
     await findButton(tree, '開始搜尋餐廳').props!.onClick!()
     expect(mocks.searchRoom).toHaveBeenCalledTimes(1)
+  })
+
+  it('搜尋 POST 超過三秒時顯示 truthful status copy', async () => {
+    mocks.stateValues[13] = true
+    const tree = await renderRoomPage()
+    const status = findNode(tree, el => el.props?.role === 'status')
+    expect(textContent(status)).toBe('搜尋仍在進行；首次使用可能需要約 15 秒。')
   })
 
   it('searching=true 時按鈕 disabled 顯示「搜尋中…」', async () => {

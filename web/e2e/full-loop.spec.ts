@@ -219,6 +219,120 @@ async function retractVeto(page: Page, restaurantName: string) {
   await expect(excludedRow(page, restaurantName)).toHaveCount(0)
 }
 
+test('Task 10 慢搜尋提示、卸載清理與登出閘門', async ({ browser }) => {
+  const ctx = await browser.newContext({
+    viewport: { width: 375, height: 812 },
+    geolocation: { latitude: 25.0478, longitude: 121.517 },
+    permissions: ['geolocation'],
+  })
+  const page = await ctx.newPage()
+
+  try {
+    await signup(page, 'task10')
+    await page.getByRole('button', { name: '選擇出發點' }).click()
+    await page.getByRole('button', { name: '使用目前位置' }).click()
+    await page.getByRole('button', { name: '完成' }).click()
+    await page.getByRole('button', { name: '建立房間' }).click()
+    await expect(page.getByText('成員（1）')).toBeVisible()
+
+    let searchArrivedResolve: (() => void) | undefined
+    let releaseSearch: (() => void) | undefined
+    const armSearch = () => new Promise<void>(resolve => { searchArrivedResolve = resolve })
+    await page.route('**/api/rooms/*/search', async route => {
+      searchArrivedResolve?.()
+      searchArrivedResolve = undefined
+      await new Promise<void>(resolve => { releaseSearch = resolve })
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ degraded: false }),
+      })
+    })
+
+    const search = page.getByRole('button', { name: '開始搜尋餐廳' })
+    const slowStatus = page.locator('[role="status"]')
+      .filter({ hasText: '搜尋仍在進行；首次使用可能需要約 15 秒。' })
+    let searchArrived = armSearch()
+    await search.click()
+    await searchArrived
+    await page.waitForTimeout(2500)
+    await expect(slowStatus).toHaveCount(0)
+    await expect(slowStatus).toBeVisible({ timeout: 1500 })
+    releaseSearch?.()
+    await expect(slowStatus).toHaveCount(0)
+    await expect(search).toBeEnabled()
+
+    await page.evaluate(() => {
+      type Task10Window = {
+        setTimeout(handler: () => void, timeout?: number, ...args: unknown[]): number
+        clearTimeout(id?: number): void
+        __task10Timer?: { tracked: number; cleared: boolean }
+      }
+      const taskWindow = globalThis as unknown as Task10Window
+      const originalSet = taskWindow.setTimeout.bind(taskWindow)
+      const originalClear = taskWindow.clearTimeout.bind(taskWindow)
+      const state = { tracked: -1, cleared: false }
+      taskWindow.__task10Timer = state
+      taskWindow.setTimeout = (handler, timeout, ...args) => {
+        const id = originalSet(handler, timeout, ...args)
+        if (timeout === 3000) {
+          state.tracked = id
+          state.cleared = false
+        }
+        return id
+      }
+      taskWindow.clearTimeout = id => {
+        if (id === state.tracked) state.cleared = true
+        originalClear(id)
+      }
+    })
+
+    let membershipArrivedResolve!: () => void
+    let releaseMembership!: () => void
+    const membershipArrived = new Promise<void>(resolve => { membershipArrivedResolve = resolve })
+    const membershipRelease = new Promise<void>(resolve => { releaseMembership = resolve })
+    await page.route('**/rest/v1/room_members*', async route => {
+      if (route.request().method() !== 'GET') return route.continue()
+      membershipArrivedResolve()
+      await membershipRelease
+      await route.continue()
+    })
+
+    searchArrived = armSearch()
+    await search.click()
+    await searchArrived
+    await page.evaluate(() => {
+      const browserGlobal = globalThis as unknown as {
+        history: { pushState(data: unknown, unused: string, url?: string): void }
+        dispatchEvent(event: unknown): boolean
+        PopStateEvent: new (type: string) => unknown
+      }
+      browserGlobal.history.pushState(null, '', '/')
+      browserGlobal.dispatchEvent(new browserGlobal.PopStateEvent('popstate'))
+    })
+    await membershipArrived
+
+    const logout = page.getByRole('button', { name: '登出' })
+    await expect(logout).toBeDisabled()
+    await expect(page.locator('[role="status"]')
+      .filter({ hasText: '正在確認房間狀態，確認後才能登出' })).toBeVisible()
+    expect(await page.evaluate(() =>
+      (globalThis as unknown as { __task10Timer?: { cleared: boolean } })
+        .__task10Timer?.cleared)).toBe(true)
+
+    await page.waitForTimeout(3200)
+    await expect(slowStatus).toHaveCount(0)
+    releaseSearch?.()
+    releaseMembership()
+    await expect(page.getByRole('dialog', { name: '你還在房間裡' })).toBeVisible()
+    await expect(logout).toBeDisabled()
+    await page.getByRole('button', { name: '離開房間' }).click()
+    await expect(logout).toBeEnabled()
+  } finally {
+    await ctx.close()
+  }
+})
+
 test('雙使用者完整閉環（投票版）', async ({ browser }) => {
   const ctxA = await browser.newContext({
     viewport: { width: 375, height: 812 },
@@ -511,7 +625,7 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
 
     // A 啟動轉盤 → 兩邊最終都看到真實結果卡導航文字。
     await a.getByRole('button', { name: '啟動轉盤' }).click()
-    const navigationName = /^用 Google Maps 導航（.+）$/
+    const navigationName = /^從目前位置用 Google Maps 導航（.+）$/
     await expect(a.getByRole('link', { name: navigationName })).toBeVisible({ timeout: 30_000 })
     await expect(b.getByRole('link', { name: navigationName })).toBeVisible({ timeout: 30_000 })
 

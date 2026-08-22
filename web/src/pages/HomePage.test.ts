@@ -331,8 +331,11 @@ describe('HomePage 登出閘門', () => {
     return HomePage()
   }
 
-  it('查房籍未 settle 前登出禁用（此時登出＝伺服器端留下幽靈房籍）', async () => {
-    expect(findButtonAnywhere(await render(true), '登出').props.disabled).toBe(true)
+  it('查房籍未 settle 前登出禁用並就地說明原因', async () => {
+    const tree = await render(true)
+    expect(findButtonAnywhere(tree, '登出').props.disabled).toBe(true)
+    const status = findNode(tree, el => el.props?.role === 'status')
+    expect(textContent(status)).toBe('正在確認房間狀態，確認後才能登出')
   })
 
   it('離席確認 dialog 開著時登出仍禁用（使用者還沒決定要不要退房）', async () => {

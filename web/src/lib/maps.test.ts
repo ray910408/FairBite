@@ -8,6 +8,7 @@ describe('buildMapsUrl', () => {
     expect(url).toContain('destination=25.05%2C121.52')
     expect(url).toContain('destination_place_id=abc123')
     expect(url).toContain('travelmode=transit')
+    expect(url).not.toContain('origin=')
   })
   it('mock 出身的 place_id 不進 URL（非真實 Google Place ID）', () => {
     const url = buildMapsUrl(25.05, 121.52, 'mock-008', 'mock', 'walking')

@@ -24,6 +24,8 @@ const STEPS = [
   { key: 'decided', label: '定案' },
 ] as const
 
+const SEARCH_SLOW_STATUS_MS = 3000
+
 function Stepper({ status }: { status: Room['status'] }) {
   const current = STEPS.findIndex(s => s.key === status)
   return (
@@ -65,6 +67,7 @@ export default function RoomPage() {
   const [leaveChecking, setLeaveChecking] = useState(false)
   const [roomSettingsBlocked, setRoomSettingsBlocked] = useState(false)
   const [editingConditions, setEditingConditions] = useState(false)
+  const [searchSlow, setSearchSlow] = useState(false)
   const leaveTriggerRef = useRef<HTMLAnchorElement>(null)
   // 房籍查詢自己的世代（比照 HistoryPage）：aria-busy 擋不住點擊，兩次點擊之間房籍
   // 還可能在別的分頁被改，只有最後一次點擊的回應能生效
@@ -82,6 +85,10 @@ export default function RoomPage() {
   const conditionsFlush = useRef<() => Promise<boolean>>(async () => true)
   const guestsReadyRef = useRef(true)
   const searchInFlight = useRef(false)
+  const searchSlowTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const searchMounted = useRef(true)
+  const searchGeneration = useRef(0)
+  const searchAbort = useRef<AbortController | undefined>(undefined)
   const startVotingInFlight = useRef(false)
   const editConditionsInFlight = useRef(false)
   useEffect(() => {
@@ -92,6 +99,24 @@ export default function RoomPage() {
   useEffect(() => {
     durableMealTime.current = room?.meal_time ?? null
   }, [room?.id, room?.meal_time])
+  useEffect(() => {
+    const mounted = searchMounted
+    const generation = searchGeneration
+    const abort = searchAbort
+    const inFlight = searchInFlight
+    const slowTimer = searchSlowTimer
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      generation.current++
+      abort.current?.abort()
+      abort.current = undefined
+      inFlight.current = false
+      const timer = slowTimer.current
+      slowTimer.current = undefined
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [])
   if (!room) {
     if (loadError) return (
       <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
@@ -511,6 +536,11 @@ export default function RoomPage() {
             onClick={async () => {
               if (searchInFlight.current || !guestsReadyRef.current) return
               searchInFlight.current = true
+              const generation = ++searchGeneration.current
+              const controller = new AbortController()
+              searchAbort.current = controller
+              const isCurrent = () => searchMounted.current &&
+                searchGeneration.current === generation && !controller.signal.aborted
               setSearching(true)
               setActionError('')
               try {
@@ -518,19 +548,49 @@ export default function RoomPage() {
                   conditionsFlush.current(),
                   flushRoomWrites(),
                 ])
-                if (!conditionsOK || !roomSettingsOK || !guestsReadyRef.current) return
-                const o = await import('../lib/api').then(m => m.searchRoom(room.id))
+                if (!isCurrent() || !conditionsOK || !roomSettingsOK || !guestsReadyRef.current) return
+                const { searchRoom } = await import('../lib/api')
+                if (!isCurrent()) return
+                const o = await searchRoom(room.id, {
+                  signal: controller.signal,
+                  onRequestStart: () => {
+                    if (!isCurrent()) return
+                    const slowTimer = setTimeout(() => {
+                      if (searchSlowTimer.current === slowTimer && isCurrent()) setSearchSlow(true)
+                    }, SEARCH_SLOW_STATUS_MS)
+                    searchSlowTimer.current = slowTimer
+                  },
+                })
+                if (!isCurrent()) return
                 setActionError(o.error ?? '')
                 setActionWarning(o.warning ?? '')
               } catch {
+                if (!isCurrent()) return
                 setActionError('搜尋失敗：無法連線到伺服器')
               } finally {
-                searchInFlight.current = false
-                setSearching(false)
+                const currentRequest = isCurrent()
+                if (searchAbort.current === controller) {
+                  searchAbort.current = undefined
+                  searchInFlight.current = false
+                }
+                if (currentRequest) {
+                  const timer = searchSlowTimer.current
+                  searchSlowTimer.current = undefined
+                  if (timer !== undefined) {
+                    clearTimeout(timer)
+                    setSearchSlow(false)
+                  }
+                  setSearching(false)
+                }
               }
             }}>
             {searching ? <><Spinner className="h-5 w-5" />搜尋中…</> : '開始搜尋餐廳'}
           </button>
+        )}
+        {searchSlow && (
+          <p role="status" className="text-center text-sm text-fg-muted">
+            搜尋仍在進行；首次使用可能需要約 15 秒。
+          </p>
         )}
         {room.status === 'candidates' && (
           <>

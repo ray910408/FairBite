@@ -212,8 +212,9 @@ export default function HomePage() {
           <Logo className="h-8 w-8" />
           <span className="text-lg font-bold">今天吃什麼</span>
         </div>
-        <div className="flex items-center gap-2">
-          <Link to="/history" className="btn btn-quiet min-h-11 px-3 text-sm">足跡</Link>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-2">
+            <Link to="/history" className="btn btn-quiet min-h-11 px-3 text-sm">足跡</Link>
           {/* 登出走同一道 leavePending 閘門（比照建房/加入）：查房籍還在飛、或確認 dialog
               開著時登出，App.tsx 的 auth listener 會卸載本頁，doLeave() 永遠不會執行，
               伺服器端房籍留著——該使用者變成幽靈成員，條件與票繼續約束房間盤面。
@@ -224,6 +225,12 @@ export default function HomePage() {
             <LogOut className="h-4 w-4" />
             登出
           </button>
+          </div>
+          {leavePending && (
+            <p role="status" className="max-w-52 text-right text-xs text-fg-muted">
+              正在確認房間狀態，確認後才能登出
+            </p>
+          )}
         </div>
       </header>
 

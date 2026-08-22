@@ -2,6 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ getSession: vi.fn() }))
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(r => { resolve = r })
+  return { promise, resolve }
+}
+
 vi.mock('./supabase', () => ({
   supabase: { auth: { getSession: mocks.getSession } },
 }))
@@ -94,6 +100,47 @@ describe('searchRoom', () => {
       error: '此位置附近沒有餐廳資料',
       warning: degradedWarning,
     })
+  })
+
+  it('auth 完成後才在 fetch 邊界通知 request start', async () => {
+    const auth = deferred<{ data: { session: { access_token: string } } }>()
+    const onRequestStart = vi.fn()
+    const fetchStub = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ degraded: false })))
+    mocks.getSession.mockReturnValue(auth.promise)
+    vi.stubGlobal('fetch', fetchStub)
+
+    const request = searchRoom('room-boundary', { onRequestStart })
+    await Promise.resolve()
+    expect(onRequestStart).not.toHaveBeenCalled()
+    expect(fetchStub).not.toHaveBeenCalled()
+
+    auth.resolve({ data: { session: { access_token: 'token' } } })
+    await expect(request).resolves.toEqual({ error: null, warning: null })
+    expect(onRequestStart).toHaveBeenCalledTimes(1)
+    expect(fetchStub).toHaveBeenCalledTimes(1)
+    expect(onRequestStart.mock.invocationCallOrder[0])
+      .toBeLessThan(fetchStub.mock.invocationCallOrder[0])
+  })
+
+  it('auth pending 時 abort，完成後不通知也不 fetch', async () => {
+    const auth = deferred<{ data: { session: { access_token: string } } }>()
+    const onRequestStart = vi.fn()
+    const fetchStub = vi.fn()
+    const controller = new AbortController()
+    mocks.getSession.mockReturnValue(auth.promise)
+    vi.stubGlobal('fetch', fetchStub)
+
+    const request = searchRoom('room-abort', {
+      signal: controller.signal,
+      onRequestStart,
+    })
+    controller.abort()
+    auth.resolve({ data: { session: { access_token: 'token' } } })
+
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    expect(onRequestStart).not.toHaveBeenCalled()
+    expect(fetchStub).not.toHaveBeenCalled()
   })
 })
 
