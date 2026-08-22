@@ -60,6 +60,7 @@ export default function HomePage() {
   // 離席確認的對象（ADR-0007 2026-08-16 修訂）——新 state 一律接在最後，
   // HomePage.test.ts 依 useState 呼叫順序 mock
   const [leaveTarget, setLeaveTarget] = useState<LeaveTarget | null>(null)
+  const [suggestionLoadError, setSuggestionLoadError] = useState('')
   const location = useLocation()
   // 每次 mount 只做一次離席決策：消耗旗標的 replace 會讓 location 變、下面的 effect
   // 重跑，沒有這道閘就會在 doLeave() 還在飛的時候又走一次查房籍→開 dialog
@@ -76,8 +77,11 @@ export default function HomePage() {
     setSuggestion([]) // 評分後先撤下舊快照，避免 refetch 完成前仍可採納已失效建議
     const uid = await getUid()
     if (!uid || request !== suggestionRequest.current) return
-    setDeparture(prev => prev ?? loadLastDeparture(uid))
-    const [{ data: profile }, { data: history }, { data: lowRows }] = await Promise.all([
+    const [
+      { data: profile, error: profileError },
+      { data: history, error: historyError },
+      { data: lowRows, error: lowRowsError },
+    ] = await Promise.all([
       supabase.from('profiles').select('default_prefs').eq('id', uid).single(),
       supabase.from('dining_history')
         .select('rating, restaurants(cuisine_tags)')
@@ -85,15 +89,22 @@ export default function HomePage() {
       supabase.from('dining_history')
         .select('rating, restaurants(cuisine_tags)').lte('rating', 2),
     ])
-    if (request !== suggestionRequest.current || !profile) return
-    const dp = (profile?.default_prefs ?? {}) as Record<string, unknown>
+    if (request !== suggestionRequest.current || !suggestionsMounted.current) return
+    if (profileError || historyError || lowRowsError) {
+      setSuggestionLoadError('口味建議暫時載入失敗；不影響建房與本次房內條件')
+      return
+    }
+    if (!profile) return
+    const dp = (profile.default_prefs ?? {}) as Record<string, unknown>
     const current = Array.isArray(dp.cuisines) ? (dp.cuisines as string[]) : []
     const tags = suggestCuisines([...(lowRows ?? []), ...(history ?? [])] as unknown as HistoryRow[], current,
       CUISINE_OPTIONS.map(([k]) => k))
     const dismissed = (localStorage.getItem(`prefs-suggest-dismissed:${uid}`) ?? '').split(',')
+    setDeparture(prev => prev ?? loadLastDeparture(uid))
     setMyUserId(uid)
     setPrefs(dp)
     setSuggestion(tags.filter(t => !dismissed.includes(t)))
+    setSuggestionLoadError('')
   }, [])
 
   const cancelSuggestionLoads = useCallback(() => {
@@ -333,6 +344,13 @@ export default function HomePage() {
               }}>忽略</button>
             </div>
           </section>
+        )}
+
+        {suggestionLoadError && (
+          <p role="status" className="banner bg-warn-soft text-warn">
+            <Alert className="h-5 w-5 shrink-0" />
+            <span>{suggestionLoadError}</span>
+          </p>
         )}
 
         <RecentRatingPrompt onRated={loadSuggestions} />
