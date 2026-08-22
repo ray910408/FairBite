@@ -43,8 +43,12 @@ function mealTimeForE2E(now = new Date()): string | null {
   return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
 }
 
-async function signup(page: Page, name: string) {
+async function signup(page: Page, name: string, verifyTouch = false) {
   await page.goto('/')
+  if (verifyTouch) {
+    await expect375Layout(page)
+    await expectButtonsAtLeast44px(page, ['登入', '註冊'])
+  }
   await page.getByRole('button', { name: '註冊', exact: true }).click()
   await page.getByLabel('顯示名稱').fill(name)
   await page.getByLabel('Email').fill(`e2e-${name}-${run}@test.dev`)
@@ -53,8 +57,9 @@ async function signup(page: Page, name: string) {
   await expect(page.getByRole('button', { name: '建立房間' })).toBeVisible()
 }
 
-async function createAndJoinRoom(a: Page, b: Page) {
+async function createAndJoinRoom(a: Page, b: Page, verifyTouch = false) {
   const aRealtimeReady = waitForRoomRealtime(a)
+  if (verifyTouch) await expectButtonsAtLeast44px(a, ['馬上出發', '自訂時間'])
   await a.getByRole('button', { name: '選擇出發點' }).click()
   await a.getByRole('button', { name: '使用目前位置' }).click()
   await expect(a.getByText('目前位置', { exact: true })).toBeVisible()
@@ -79,8 +84,32 @@ async function createAndJoinRoom(a: Page, b: Page) {
   await expect(b.getByText('成員（2）')).toBeVisible()
   await bRealtimeReady
   await expect(a.getByText('成員（2）')).toBeVisible()
+  if (verifyTouch) {
+    await expect375Layout(a)
+    await expectButtonsAtLeast44px(a, [
+      '熟悉', '平均', '探索', '馬上出發', '自訂時間', '關閉', '開啟',
+      '步行', '開車', '大眾運輸',
+    ])
+  }
   const expected = hhmm ? `今天 ${hhmm}` : '馬上出發'
   await expect(b.getByText(expected)).toBeVisible() // meal_time 經 Realtime 同步到加入方
+}
+
+async function expectButtonsAtLeast44px(page: Page, labels: string[]) {
+  for (const label of labels) {
+    const geometry = await page.locator('button[aria-pressed]').filter({ hasText: label })
+      .evaluate(button => ({
+        height: button.getBoundingClientRect().height,
+        minHeight: button.ownerDocument.defaultView?.getComputedStyle(button).minHeight,
+      }))
+    expect(geometry.minHeight, `${label} computed min-height`).toBe('44px')
+    expect(geometry.height, `${label} touch target`).toBeGreaterThanOrEqual(44 - 0.001)
+  }
+}
+
+async function expect375Layout(page: Page) {
+  expect(page.viewportSize()?.width).toBe(375)
+  expect(await page.locator('html').evaluate(html => html.scrollWidth <= 375)).toBe(true)
 }
 
 test('Realtime subscription readiness guard waits for postgres_changes system OK', () => {
@@ -113,15 +142,15 @@ function canFocusBackground(page: Page, label: string) {
   })
 }
 
-async function setConditions(page: Page, budget: number) {
-  await page.getByRole('slider', { name: /每人預算上限/ }).fill(String(budget))
-  await expect(page.getByText(`NT$${budget}`, { exact: true })).toBeVisible()
-  await page.getByRole('slider', { name: /距離偏好/ }).fill('3000')
-  await expect(page.getByText('3000 公尺', { exact: true })).toBeVisible()
+async function setConditions(page: Page, budget: number, distance = 3000) {
+  await page.getByRole('slider', { name: /價位偏好/ }).fill(String(budget))
+  await expect(page.getByText(`偏好刻度 ${budget}`, { exact: true })).toBeVisible()
+  await page.getByRole('slider', { name: /距離偏好/ }).fill(String(distance))
+  await expect(page.getByText(`${distance} 公尺`, { exact: true })).toBeVisible()
 }
 
-async function setConditionsAndReady(page: Page, budget: number) {
-  await setConditions(page, budget)
+async function setConditionsAndReady(page: Page, budget: number, distance = 3000) {
+  await setConditions(page, budget, distance)
   await page.getByRole('button', { name: '我準備好了' }).click()
   await expect(page.getByRole('button', { name: '已準備（點擊取消）' })).toBeVisible()
 }
@@ -157,19 +186,20 @@ async function retractVeto(page: Page, restaurantName: string) {
 
 test('雙使用者完整閉環（投票版）', async ({ browser }) => {
   const ctxA = await browser.newContext({
+    viewport: { width: 375, height: 812 },
     geolocation: { latitude: 25.0478, longitude: 121.517 },
     permissions: ['geolocation'],
   })
-  const ctxB = await browser.newContext({ permissions: [] })
+  const ctxB = await browser.newContext({ viewport: { width: 375, height: 812 }, permissions: [] })
   const a = await ctxA.newPage()
   const b = await ctxB.newPage()
 
   try {
-    await signup(a, 'hostA')
+    await signup(a, 'hostA', true)
     await signup(b, 'memberB')
 
     // A 建房、B 以十二碼邀請碼加入；雙方都看到 2 位成員。
-    await createAndJoinRoom(a, b)
+    await createAndJoinRoom(a, b, true)
 
     // D10 #3：房主切到探索；成員同步看到狀態與說明，且不能更改。
     await a.getByRole('button', { name: '探索', exact: true }).click()
@@ -477,15 +507,19 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await expect(firstRow).toContainText(winnerName)
     // 未評列預設收合為 chip，點擊展開 StarRow（design review D4）
     await firstRow.getByRole('button', { name: '尚未評分 · 補評' }).click()
-    await firstRow.getByRole('button', { name: '4 顆星' }).click()
-    await expect(firstRow.getByLabel('已評 4 顆星')).toBeVisible()
+    await firstRow.getByRole('button', { name: '3 顆星' }).click()
+    const ratingStars = firstRow.getByLabel('已評 3 顆星').locator('svg')
+    await expect(ratingStars).toHaveCount(5)
+    for (let i = 0; i < 5; i++) {
+      await expect(ratingStars.nth(i)).toHaveAttribute('fill', i < 3 ? 'currentColor' : 'none')
+    }
     // hero 彙總卡：主數字「1 餐」驗 count:'exact' 接線；已評行驗本地補列重算
     await expect(a.getByText(/^1 餐$/)).toBeVisible()
-    await expect(a.getByText('已評 1 筆 · 平均 4.0 ★')).toBeVisible()
+    await expect(a.getByText('已評 1 筆 · 平均 3.0 ★')).toBeVisible()
     // 房內 RatingPrompt 的已評靜態分支：goBack 一次回房（history 由房內進入）
     await a.goBack()
     // 回房是真重載：轉盤重播 SPIN_MS+200≈4.2s 後 RatingPrompt 才回讀，預設 10s expect 預算吃掉近半——放寬（final review）
-    await expect(a.getByText('已評分 4 顆星')).toBeVisible({ timeout: 15_000 })
+    await expect(a.getByText('已評分 3 顆星')).toBeVisible({ timeout: 15_000 })
 
     // Round 4 退房全鏈：A（末位成員）回首頁 → 房被刪 → 重訪房間 URL 得 not-found。
     await leaveViaHome(a)
@@ -511,9 +545,9 @@ test('全否決擋抽選（嚴格條件房）', async ({ browser }) => {
     await signup(b, 'strictMemberB')
     await createAndJoinRoom(a, b)
 
-    await setConditions(a, 1600)
-    // Slider minimum NT$100 only admits price level 0 (PriceLevelMaxTWD[0] == 100).
-    await setConditionsAndReady(b, 100)
+    // Budget 100 maps to level 1. At 500m the mock fixture stays within the room's four-veto quota.
+    await setConditions(a, 1600, 500)
+    await setConditionsAndReady(b, 100, 500)
     await expect(a.getByText('已準備', { exact: true })).toHaveCount(1)
 
     const searchResponsePromise = a.waitForResponse(response =>
@@ -526,6 +560,7 @@ test('全否決擋抽選（嚴格條件房）', async ({ browser }) => {
     const candidateHeadingB = b.getByText(/候選餐廳（\d+）/)
     await expect(candidateHeadingA).toBeVisible()
     await expect(candidateHeadingB).toBeVisible()
+    await expect(b.getByText('餐廳資料 Powered by Google', { exact: true })).toHaveCount(0)
     const restaurantNames = await b
       .locator('div.card.animate-rise.space-y-2.p-3 span.flex-1.font-semibold')
       .allInnerTexts()

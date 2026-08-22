@@ -89,6 +89,21 @@ export function useRoom(roomId: string) {
     }
   }, [roomId, refetch])
 
+  useEffect(() => {
+    if (room?.status !== 'lobby') return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout>
+    const poll = async () => {
+      await refetch().catch(() => undefined)
+      if (!cancelled) timer = setTimeout(poll, 5_000)
+    }
+    timer = setTimeout(poll, 5_000)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [room?.status, refetch])
+
   const voteInFlight = useRef(false)
   // 投票唯一入口：算 op、打 API、成功才做本地鏡射；失敗回伺服器訊息字串給呼叫端顯示
   async function toggleVote(restaurantId: string, kind: 'up' | 'veto'): Promise<string | null> {

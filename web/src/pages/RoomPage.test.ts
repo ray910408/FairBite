@@ -56,7 +56,7 @@ vi.mock('../lib/api', () => ({
 
 type ElementLike = {
   type?: unknown
-  props?: { children?: unknown; disabled?: boolean; onClick?: () => void | Promise<void> }
+  props?: { children?: unknown; disabled?: boolean; onClick?: () => void | Promise<void>; className?: string }
 }
 
 function textContent(node: unknown): string {
@@ -296,6 +296,13 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     mocks.useRoom.mockReturnValue(roomState({ members: [hostMe, { ...memberB, ready: true }] }))
     const tree = await renderRoomPage()
     expect(findButton(tree, '開始搜尋餐廳').props?.disabled).toBe(false)
+  })
+
+  it('房內四組 segmented control 都有至少 44px 的 class', async () => {
+    const tree = await renderRoomPage()
+    for (const label of ['熟悉', '平均', '探索', '馬上出發', '自訂時間', '關閉', '開啟']) {
+      expect(findButton(tree, label).props?.className).toContain('min-h-11')
+    }
   })
 
   it('任一非房主未 ready 時搜尋鈕 disabled，直接呼叫 stale handler 也不送 /search', async () => {

@@ -198,7 +198,7 @@ export default function ConditionsForm({ me, isHost, disabled = false, onFlushAv
             <button key={v} type="button" aria-pressed={form.transport === v}
               disabled={frozen}
               className={`chip flex-1 justify-center ${form.transport === v
-                ? 'border-fg bg-fg text-white hover:bg-fg' : ''}`}
+                ? 'border-brand bg-brand text-white hover:bg-brand-strong' : ''}`}
               onClick={() => save({ transport: v })}>{label}</button>
           ))}
         </div>

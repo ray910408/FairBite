@@ -239,7 +239,7 @@ export default function HomePage() {
             <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
               {([['now', '馬上出發'], ['custom', '自訂時間']] as const).map(([key, label]) => (
                 <button key={key} type="button" aria-pressed={mealMode === key}
-                  className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                  className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                     mealMode === key ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                   }`}
                   onClick={() => { setMealMode(key); setCreateError('') }}>

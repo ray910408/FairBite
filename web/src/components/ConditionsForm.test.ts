@@ -44,6 +44,7 @@ type ElementLike = {
     min?: number
     max?: number
     step?: number
+    className?: string
   }
 }
 
@@ -482,5 +483,23 @@ describe('ConditionsForm 凍結（準備／搜尋中）', () => {
     const states = collectDisabledStates(tree)
     expect(states.some(s => !s)).toBe(true)
     expect(states.filter(s => s)).toHaveLength(0)
+  })
+})
+
+describe('ConditionsForm 選取樣式', () => {
+  beforeEach(() => {
+    mocks.stateIndex = 0
+    mocks.stateValues = []
+    mocks.stateSetters = []
+    mocks.effects = []
+    mocks.refs = []
+  })
+
+  it('選取的交通方式使用既有品牌色 classes', async () => {
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const walking = findButton(ConditionsForm({ me, isHost: true }), '步行')
+    expect(walking.props?.className).toContain(
+      'border-brand bg-brand text-white hover:bg-brand-strong',
+    )
   })
 })

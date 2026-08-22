@@ -405,7 +405,7 @@ export default function RoomPage() {
               {EXPLORATION_OPTIONS.map(([key, label]) => (
                 <button key={key} type="button" aria-pressed={room.exploration === key}
                   disabled={!isHost || searching}
-                  className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                  className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                     room.exploration === key ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                   } disabled:cursor-default`}
                   onClick={() => saveRoomSetting({ exploration: key }, '探索檔位更新失敗')}>
@@ -427,7 +427,7 @@ export default function RoomPage() {
                 <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
                   <button type="button" aria-pressed={room.meal_time === null && !editingCustom}
                     disabled={searching}
-                    className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                    className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                       room.meal_time === null && !editingCustom
                         ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                     }`}
@@ -436,7 +436,7 @@ export default function RoomPage() {
                   </button>
                   <button type="button" aria-pressed={room.meal_time !== null || editingCustom}
                     disabled={searching}
-                    className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                    className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                       room.meal_time !== null || editingCustom
                         ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                     }`}
@@ -493,7 +493,7 @@ export default function RoomPage() {
               {([[false, '關閉'], [true, '開啟']] as const).map(([value, label]) => (
                 <button key={label} type="button" aria-pressed={room.cuisine_filter === value}
                   disabled={!isHost || searching}
-                  className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                  className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                     room.cuisine_filter === value ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                   } disabled:cursor-default`}
                   onClick={() => saveRoomSetting({ cuisine_filter: value }, '菜系過濾更新失敗')}>

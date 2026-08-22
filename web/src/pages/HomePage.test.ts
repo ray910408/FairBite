@@ -59,7 +59,7 @@ vi.mock('../lib/departure', async importOriginal => {
 
 type ElementLike = {
   type?: unknown
-  props?: { children?: unknown; onClick?: () => void | Promise<void> }
+  props?: { children?: unknown; onClick?: () => void | Promise<void>; className?: string }
 }
 
 function textContent(node: unknown): string {
@@ -146,6 +146,14 @@ describe('HomePage persistRoom', () => {
       getItem: vi.fn(() => '1'),
       setItem: vi.fn(),
     })
+  })
+
+  it('用餐時間 segmented control 有至少 44px 的 class', async () => {
+    const { default: HomePage } = await import('./HomePage')
+    const tree = HomePage()
+    for (const label of ['馬上出發', '自訂時間']) {
+      expect(findButton(tree, label).props?.className).toContain('min-h-11')
+    }
   })
 
   afterEach(() => {
