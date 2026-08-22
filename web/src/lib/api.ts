@@ -11,7 +11,7 @@ async function post(path: string, body?: unknown, options: PostOptions = {}): Pr
   options.signal?.throwIfAborted()
   const token = data.session?.access_token ?? ''
   options.onRequestStart?.()
-  return fetch(`${import.meta.env.VITE_API_URL}${path}`, {
+  return fetch(`${import.meta.env.VITE_API_URL ?? ''}${path}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
