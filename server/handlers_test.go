@@ -2650,6 +2650,96 @@ func TestEditConditions(t *testing.T) {
 	})
 }
 
+func TestEditConditionsFormerHostRejectedAfterLockedSuccession(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Fatal("TEST_DATABASE_URL is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Close() })
+	f := seedEditConditionsFixture(t, ctx, pool, 7, "candidates", true)
+	h := newTestApp(t, pool)
+
+	// Keep rooms -> room_members lock order while the old host still passes loadHostRoom's plain read.
+	succession, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer succession.Rollback(ctx)
+	if _, err := succession.Exec(ctx, `select id from public.rooms where id = $1 for update`, f.roomID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := succession.Exec(ctx, `delete from public.room_members where room_id = $1 and user_id = $2`, f.roomID, f.hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := succession.Exec(ctx, `update public.rooms set host_id = $2 where id = $1`, f.roomID, f.guestID); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		r := httptest.NewRequest("POST", "/api/rooms/"+f.roomID+"/edit-conditions", nil)
+		r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", f.hostID))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		done <- w
+	}()
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting bool
+		if err := pool.QueryRow(ctx, `select exists (
+			select 1 from pg_stat_activity
+			where datname = current_database() and pid <> pg_backend_pid()
+			  and wait_event_type = 'Lock'
+			  and query like 'update rooms set status = $3 where id = $1 and status = $2%'
+		)`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("edit conditions did not block on the room row lock")
+		case <-ticker.C:
+		}
+	}
+	if err := succession.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var w *httptest.ResponseRecorder
+	select {
+	case w = <-done:
+	case <-ctx.Done():
+		t.Fatal("edit conditions did not complete after host succession")
+	}
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("former host: want 403 got %d body %s", w.Code, w.Body.String())
+	}
+	var status, hostID string
+	var candidates, ready int
+	if err := pool.QueryRow(ctx, `select status, host_id from public.rooms where id = $1`, f.roomID).Scan(&status, &hostID); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select count(*) from public.room_candidates where room_id = $1`, f.roomID).Scan(&candidates); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select count(*) filter (where ready) from public.room_members where room_id = $1`, f.roomID).Scan(&ready); err != nil {
+		t.Fatal(err)
+	}
+	if status != "candidates" || hostID != f.guestID || candidates != 1 || ready != 1 {
+		t.Fatalf("former host mutated state: status=%s host=%s candidates=%d ready=%d", status, hostID, candidates, ready)
+	}
+}
+
 func TestEditConditionsRacesStartVoting(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -2711,7 +2801,16 @@ func TestEditConditionsRacesStartVoting(t *testing.T) {
 	if err := gate.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	r1, r2 := <-done, <-done
+	receive := func() result {
+		select {
+		case r := <-done:
+			return r
+		case <-ctx.Done():
+			t.Fatal("transition did not complete after room row lock release")
+			return result{}
+		}
+	}
+	r1, r2 := receive(), receive()
 	results := []result{r1, r2}
 	successes, conflicts := 0, 0
 	for _, r := range results {

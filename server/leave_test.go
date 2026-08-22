@@ -644,7 +644,11 @@ func TestSearchHostValidationHoldsRoomLockThroughTransition(t *testing.T) {
 		h.ServeHTTP(w, r)
 		done <- w
 	}()
-	<-providerStarted
+	select {
+	case <-providerStarted:
+	case <-ctx.Done():
+		t.Fatal("search did not reach provider before context deadline")
+	}
 	close(releaseProvider)
 
 	// 不用 sleep 猜時序：等 search backend 確實卡在 rooms row lock，再 commit 繼任。
@@ -671,7 +675,12 @@ func TestSearchHostValidationHoldsRoomLockThroughTransition(t *testing.T) {
 	if err := succession.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	w := <-done
+	var w *httptest.ResponseRecorder
+	select {
+	case w = <-done:
+	case <-ctx.Done():
+		t.Fatal("search did not complete after host succession")
+	}
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("host 驗證與轉場必須共用 room lock：got %d body=%s", w.Code, w.Body.String())
 	}

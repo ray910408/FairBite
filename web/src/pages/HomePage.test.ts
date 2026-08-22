@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   suggestCuisines: vi.fn(),
   navigate: vi.fn(),
   saveLastDeparture: vi.fn(),
+  loadLastDeparture: vi.fn(),
   leaveRooms: vi.fn(),
   fetchLeaveRooms: vi.fn(),
   locationState: null as unknown,
@@ -56,7 +57,11 @@ vi.mock('../lib/roomMembership', () => ({ fetchLeaveRooms: mocks.fetchLeaveRooms
 
 vi.mock('../lib/departure', async importOriginal => {
   const actual = await importOriginal<typeof import('../lib/departure')>()
-  return { ...actual, saveLastDeparture: mocks.saveLastDeparture }
+  return {
+    ...actual,
+    loadLastDeparture: mocks.loadLastDeparture,
+    saveLastDeparture: mocks.saveLastDeparture,
+  }
 })
 
 type ElementLike = {
@@ -296,6 +301,7 @@ describe('HomePage 口味建議查詢失敗（Task 11）', () => {
     mocks.stateValues[11] = ['thai']
     mocks.stateSetters = []
     mocks.getUid.mockReset().mockResolvedValue('user-1')
+    mocks.loadLastDeparture.mockReset().mockReturnValue({ lat: 25.0478, lng: 121.517, label: '台北車站' })
     mocks.from.mockReset()
     mocks.suggestCuisines.mockReset().mockReturnValue(['thai'])
     mocks.fetchLeaveRooms.mockReset().mockResolvedValue([])
@@ -313,7 +319,7 @@ describe('HomePage 口味建議查詢失敗（Task 11）', () => {
     ['low ratings 單獨失敗', [2]],
     ['任意兩筆失敗', [0, 1]],
     ['三筆全部失敗', [0, 1, 2]],
-  ])('%s：清掉舊建議、顯示非阻擋訊息，且不以缺資料推論', async (_name, failed) => {
+  ])('%s：還原出發點、清掉舊建議、顯示非阻擋訊息，且不以缺資料推論', async (_name, failed) => {
     const results = okSuggestionResults().map((result, index) =>
       failed.includes(index) ? { data: null, error: new Error('query failed') } : result)
     const { cleanup } = await renderSuggestionLoader(results)
@@ -322,9 +328,20 @@ describe('HomePage 口味建議查詢失敗（Task 11）', () => {
       expect(mocks.stateSetters[SUGGESTION_ERROR]).toHaveBeenCalledWith(SUGGESTION_LOAD_ERROR))
     expect(mocks.stateSetters[11]).toHaveBeenCalledWith([])
     expect(mocks.suggestCuisines).not.toHaveBeenCalled()
-    expect(mocks.stateSetters[4]).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[4]).toHaveBeenCalledWith(expect.any(Function))
     expect(mocks.stateSetters[9]).not.toHaveBeenCalled()
     expect(mocks.stateSetters[10]).not.toHaveBeenCalled()
+    if (typeof cleanup === 'function') cleanup()
+  })
+
+  it('任一查詢失敗仍先還原上次出發點', async () => {
+    const results = okSuggestionResults()
+    results[0] = { data: null, error: new Error('profile failed') }
+    const { cleanup } = await renderSuggestionLoader(results)
+
+    const restore = mocks.stateSetters[4].mock.calls.find(([value]) => typeof value === 'function')?.[0]
+    expect(restore?.(null)).toEqual({ lat: 25.0478, lng: 121.517, label: '台北車站' })
+    expect(mocks.loadLastDeparture).toHaveBeenCalledWith('user-1')
     if (typeof cleanup === 'function') cleanup()
   })
 

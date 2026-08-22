@@ -76,7 +76,9 @@ export default function HomePage() {
     const request = ++suggestionRequest.current
     setSuggestion([]) // 評分後先撤下舊快照，避免 refetch 完成前仍可採納已失效建議
     const uid = await getUid()
-    if (!uid || request !== suggestionRequest.current) return
+    if (!uid || request !== suggestionRequest.current || !suggestionsMounted.current) return
+    // 口味查詢是附加功能；上次出發點先還原，任一查詢失敗也不能阻擋建房。
+    setDeparture(prev => prev ?? loadLastDeparture(uid))
     const [
       { data: profile, error: profileError },
       { data: history, error: historyError },
@@ -100,7 +102,6 @@ export default function HomePage() {
     const tags = suggestCuisines([...(lowRows ?? []), ...(history ?? [])] as unknown as HistoryRow[], current,
       CUISINE_OPTIONS.map(([k]) => k))
     const dismissed = (localStorage.getItem(`prefs-suggest-dismissed:${uid}`) ?? '').split(',')
-    setDeparture(prev => prev ?? loadLastDeparture(uid))
     setMyUserId(uid)
     setPrefs(dp)
     setSuggestion(tags.filter(t => !dismissed.includes(t)))

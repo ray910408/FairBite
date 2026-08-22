@@ -76,7 +76,7 @@ flowchart TB
 | 表 | 關鍵欄位 | 說明 |
 |---|---|---|
 | `profiles` | `id`（= `auth.users.id`）、`display_name`、`default_prefs jsonb` | 預設偏好，開新房自動帶入 |
-| `rooms` | `id`、`code`（6 碼邀請碼，unique）、`host_id`、`status`、`center_lat/lng`、`exploration`（`familiar/balanced/explore`，房主於 lobby 設定） | 房間即一次決策；無跨房間群組概念（ADR-0002） |
+| `rooms` | `id`、`code`（12 碼 hexadecimal 邀請碼，unique）、`host_id`、`status`、`center_lat/lng`、`exploration`（`familiar/balanced/explore`，房主於 lobby 設定） | 房間即一次決策；無跨房間群組概念（ADR-0002） |
 | `room_members` | `(room_id, user_id)` PK、`budget_max`（100–1600 的價位偏好刻度；非人均 TWD 保證）、`cuisines jsonb`、`dietary jsonb`（B1 app contract 只寫具正向 tag 證據的 `vegetarian`；pre-B2 DB constraint 暫容 legacy string array；ADR-0001）、`max_distance_m`、`transport`（`walking/driving/transit`）、`ready` | 每位成員的條件 |
 | `restaurants` | `id`、`place_id`（unique）、`name`、`cuisine_tags jsonb`、`price_level`（0–4）、`lat/lng`、`address`、`opening_hours jsonb`、`rating`、`fetched_at` | Places 快取。遵守快取條款：`place_id` 可永存，其餘欄位以 `fetched_at` 為準 30 天內刷新 |
 | `room_candidates` | `(room_id, restaurant_id)` PK、`status`（`kept/excluded`）、`probability`、`weight_breakdown jsonb`、`exclusion_reason` | 每房每餐廳的機率與解釋 trace |
@@ -91,7 +91,7 @@ flowchart TB
 
 ## 5. 決策引擎（Go pipeline，六步）
 
-1. **取候選** — 搜尋半徑 = 全員 `max_distance_m` 的**最小值**（安全交集，不會有人被迫超出可接受範圍）。Places provider 介面回傳菜系標籤、價位、營業時間。
+1. **取候選** — 搜尋半徑 = 全員 `max_distance_m` 的**平均值**（整數公尺截斷）；距離是偏好而非個人硬上限，超出個別設定的候選仍由距離/交通軟性權重處理。Places provider 介面回傳菜系標籤、價位、營業時間。
 2. **硬性過濾**（不可妥協，逐筆記中文排除原因）：
    - 任一成員選擇 `dietary:["vegetarian"]` 時，餐廳必須有 `vegetarian_friendly` canonical tag，否則排除；不以菜系／place type 推斷牛、豬或其他食材。相容期舊 unsupported 值安全忽略（ADR-0001）
    - 任一成員的 `budget_max` 映射為可接受的最高 Google `price_level`（100–200→1、300–400→2、500–800→3、900–1600→4）；較高的已知層級排除，層級 0 與未知價位保留。這是粗略價位層級，不保證人均 TWD 價格。
@@ -140,7 +140,7 @@ lobby ──房主觸發搜尋──▶ candidates ──房主開始投票─�
   └────── 房主修改條件 ─────┘
 ```
 
-- `lobby`：憑邀請碼加入（RLS 限制僅此狀態可加入）、設定條件、按 ready；搜尋零候選時停留在此
+- `lobby`：憑邀請碼加入（RLS 限制僅此狀態可加入）、設定條件；房主不用 ready，所有非房主成員的最新條件都 durable 寫入後才能 ready。房主搜尋前會 flush 客戶端條件寫入；伺服器在付費檢索前與交易內各重查一次此不變式。搜尋零候選時停留在此
 - `candidates`：全員即時看到候選清單、機率、trace chips；房主可開始投票，或確認後修改條件回 `lobby`
 - `voting`（P2）：投票、否決與收回（皆走 `POST /vote`），每個動作在同一交易內重算，機率即時更新
 - `decided`：顯示中選餐廳與機率快照；Google Maps 導航連結以成員自己的 `transport` 預選 travelmode；為每位成員寫入 `dining_history` 並更新 `exposure_stats`
