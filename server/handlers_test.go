@@ -1403,18 +1403,18 @@ func TestSearchEdgeCases(t *testing.T) {
 		 on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	// budget_max=50：所有 price level 換算金額都 >50 → 全數排除 → 422
+	// budget_max=100（最低合法偏好＝Google level 1）對上 level 4 餐廳 → 全數排除 → 422
 	if _, err = pool.Exec(ctx,
 		`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
-		 values ($1, $2, 50, '["japanese"]', 2000, 'walking')
-		 on conflict (room_id, user_id) do update set budget_max = 50`, roomID, hostID); err != nil {
+		 values ($1, $2, 100, '["japanese"]', 2000, 'walking')
+		 on conflict (room_id, user_id) do update set budget_max = 100`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID) })
 
 	persistedPlaceID := "mock-cache-persistence-422"
 	strictRestaurant := Restaurant{
-		PlaceID: persistedPlaceID, Name: "零候選快取測試", PrimaryType: "restaurant", PriceLevel: 0,
+		PlaceID: persistedPlaceID, Name: "零候選快取測試", PrimaryType: "restaurant", PriceLevel: 4,
 		Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
 	}
 	if _, err := pool.Exec(ctx, `delete from public.exposure_stats
@@ -1470,7 +1470,7 @@ func TestSearchEdgeCases(t *testing.T) {
 	}
 	cuisineApp := newTestAppWithProvider(t, pool, fixedProvider{{
 		PlaceID: persistedPlaceID, Name: "台菜測試餐廳", PrimaryType: "restaurant",
-		CuisineTags: []string{"taiwanese"}, PriceLevel: 1,
+		CuisineTags: []string{"taiwanese"}, PriceLevel: 4,
 		Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
 	}})
 	cuisineRequest := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
@@ -1819,12 +1819,12 @@ func TestSearchFallbackAllExcludedIncludesDegraded(t *testing.T) {
 	}
 	if _, err = pool.Exec(ctx, `insert into public.room_members
 		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
-		values ($1, $2, 50, '[]', 2000, 'walking') on conflict do nothing`, roomID, hostID); err != nil {
+		values ($1, $2, 100, '[]', 2000, 'walking') on conflict do nothing`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(ctx, `insert into public.restaurants
 		(place_id, name, primary_type, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
-		values ($1, '降級全排除快取', 'restaurant', '[]', 1, 23.9911, 121.6112,
+		values ($1, '降級全排除快取', 'restaurant', '[]', 4, 23.9911, 121.6112,
 		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'google', now())
 		on conflict (place_id) do update set primary_type = excluded.primary_type, fetched_at = now()`, placeID); err != nil {
 		t.Fatal(err)
@@ -1878,10 +1878,10 @@ func TestSearchUnfulfilledDietaryTermsInBoth422Paths(t *testing.T) {
 		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	// budget_max 50 讓唯一一家餐廳必被 kind "budget" 排除 → 走 no_candidates 那條 422。
+	// budget_max=100（Google level 1）對上 level 4 的餐廳，必被 kind "budget" 排除 → 走 no_candidates 那條 422。
 	if _, err = pool.Exec(ctx, `insert into public.room_members
 		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
-		values ($1, $2, 50, '[]', 2000, 'walking')
+		values ($1, $2, 100, '[]', 2000, 'walking')
 		on conflict (room_id, user_id) do update set budget_max = excluded.budget_max,
 			cuisines = excluded.cuisines, max_distance_m = excluded.max_distance_m`,
 		roomID, hostID); err != nil {
@@ -1914,7 +1914,7 @@ func TestSearchUnfulfilledDietaryTermsInBoth422Paths(t *testing.T) {
 	code, got, kind := doSearch(t, PlacesSearchResult{
 		Restaurants: []Restaurant{{
 			PlaceID: placeID, Name: "全被預算排除", PrimaryType: "restaurant",
-			CuisineTags: []string{}, PriceLevel: 1, Lat: 23.9911, Lng: 121.6112,
+			CuisineTags: []string{}, PriceLevel: 4, Lat: 23.9911, Lng: 121.6112,
 			Hours: daily([2]int{0, 1440}), Rating: 4,
 		}},
 		UnfulfilledTerms: unfulfilled,
