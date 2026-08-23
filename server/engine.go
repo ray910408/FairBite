@@ -138,7 +138,9 @@ func hardExclude(r Restaurant, ms []Member, now time.Time, cuisineFilter bool) (
 		}
 	}
 	maxPriceLevel := BudgetMaxGooglePriceLevel(minBudget)
-	if r.PriceLevel >= 0 && r.PriceLevel > maxPriceLevel {
+	// 偏好為 PriceLevelUnknown＝未設定，依常數契約不參與硬排除；
+	// 少了這道守衛，-1 會排掉所有已知價位（含免費的 0）。
+	if r.PriceLevel >= 0 && maxPriceLevel != PriceLevelUnknown && r.PriceLevel > maxPriceLevel {
 		priceLabel := GooglePriceLevelLabels[r.PriceLevel]
 		if priceLabel == "" {
 			priceLabel = "未設定"

@@ -127,6 +127,23 @@ func TestBudgetGoogleFreePriceLevelNeverExcludes(t *testing.T) {
 	}
 }
 
+func TestUnsetBudgetPreferenceNeverExcludes(t *testing.T) {
+	// legacy budget_max < 100 對應 PriceLevelUnknown＝未設定，UI 也顯示「未設定」。
+	// 未設定不得參與硬排除，否則 -1 會排掉每一個已知價位（含免費的 0）。
+	for level := 0; level <= 4; level++ {
+		t.Run(fmt.Sprintf("level%d", level), func(t *testing.T) {
+			res := Evaluate(EngineInput{
+				Restaurants: []Restaurant{rest(func(r *Restaurant) { r.PriceLevel = level })},
+				Members:     []Member{member(func(m *Member) { m.BudgetMax = 50 })},
+				Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+			})
+			if len(res.Kept) != 1 {
+				t.Fatalf("未設定價位偏好不應排除 Google level %d，got excluded=%+v", level, res.Excluded)
+			}
+		})
+	}
+}
+
 func TestHardFilterCollectsAllReasons(t *testing.T) {
 	r := rest(func(r *Restaurant) {
 		r.CuisineTags = []string{"steak"}
