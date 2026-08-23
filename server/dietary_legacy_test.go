@@ -65,3 +65,32 @@ func TestDietaryLegacyHalalFromDatabaseIsIgnored(t *testing.T) {
 			result.Kept, result.Excluded)
 	}
 }
+
+func TestLegacyUnsupportedDietaryValuesAreIgnored(t *testing.T) {
+	restaurant := Restaurant{
+		PlaceID: "legacy-compatible", Name: "一般餐廳",
+		CuisineTags: []string{"steak", "beef_noodle", "ramen", "dimsum"},
+		PriceLevel: 1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
+	}
+	for _, tc := range []struct {
+		name    string
+		dietary []string
+	}{
+		{"only_no_beef", []string{"no_beef"}},
+		{"only_no_pork", []string{"no_pork"}},
+		{"mixed_no_beef_no_pork", []string{"no_beef", "no_pork"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := Evaluate(EngineInput{
+				Restaurants: []Restaurant{restaurant},
+				Members: []Member{{UserID: "legacy", DisplayName: "舊資料", BudgetMax: 1600,
+					Dietary: tc.dietary, MaxDistanceM: 3000, Transport: "walking"}},
+				Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+			})
+			if len(result.Kept) != 1 || len(result.Excluded) != 0 {
+				t.Fatalf("舊 unsupported dietary 值須安全忽略：dietary=%v kept=%+v excluded=%+v",
+					tc.dietary, result.Kept, result.Excluded)
+			}
+		})
+	}
+}

@@ -21,3 +21,23 @@
 - 快取 fallback（無查詢過程）query_matches 為空，降級模式只剩 types 加分（已接受）。
 - 同一家店在不同房間可有不同菜系證據——這是特性不是 bug（房間各自的檢索脈絡）。
 - LLM 分類與店名關鍵字規則的否決理由見上節；決策來源為 spec 2026-08-14 決策 #2 與 §9。
+
+## Retrieval radius boundary
+
+Nearby 與 Text Search 一律以 3000m、`rankPreference: "DISTANCE"` 向 Google 取回同一個 provider envelope；
+解碼後再以呼叫端的房間半徑做 Haversine 硬過濾。因此，在同一份 Google 回應快照內，較小半徑的
+本地結果是較大半徑結果的子集。這不保證跨不同時間的 Google 呼叫仍單調：Google 的排序與可回傳地點
+會變動，重複搜尋可能得到不同快照。
+
+## 2026-08-20 dessert 與 Taiwanese retrieval 邊界
+
+`dessert` Text hit 採負向衝突閘門：只有 canonical `CuisineTags` 與 `HotMealCuisines`
+相交才拒絕該筆 room-scoped match。它不要求 canonical dessert tag，所以 cafe 與通用
+restaurant 的無衝突命中保留；被拒的是 evidence，不是 Nearby/general 候選，也不把 bakery
+納入 meal gate。連鎖去重後同樣以留存分店的 canonical tags 重跑這個閘門。
+
+Taiwanese retrieval 固定查 `台式料理` 與 `台灣小吃`，每詞最多兩頁、沒有 retry，故 Text
+呼叫上限為四。page-one failure 跳過該詞 page two 但繼續另一詞；page-two failure 留住 page
+one。空白、重複 token 或取消即停止，只有兩詞都沒有成功解碼頁面才回報 `taiwanese`
+unfulfilled。`nextPageToken` 只列入 Text Search field mask；Nearby 保持原 mask。麵店／水餃
+等召回仍只寫 `room_candidates.query_matches=["taiwanese"]`，絕不改寫 canonical tags。

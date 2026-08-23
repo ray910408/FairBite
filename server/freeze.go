@@ -12,6 +12,9 @@ import (
 // ErrMembersChanged：tx 內重讀發現成員條件已放寬（fetch envelope under-fetch），host 需重搜。
 var ErrMembersChanged = errors.New("member conditions changed during search")
 
+// ErrNotReady：非房主在 search preflight 後取消 ready；deferred rollback 留在 lobby。
+var ErrNotReady = errors.New("guest not ready")
+
 // 成員條件凍結（search 交易半場）——條件凍結不變式的 Go 半場唯一所在。
 // SQL 半場（勿在別處重複解釋）：0001 members_update RLS 僅限 lobby + guard_room_columns
 // 凍結 room 欄位、0003 擴充 guard 至 exploration、0005 is_room_lobby_locked 與
@@ -24,15 +27,17 @@ var ErrMembersChanged = errors.New("member conditions changed during search")
 // 搜尋期間不可能被挪走。
 // 成功時就地更新 room.Exploration、room.MealTime 與 room.CuisineFilter 並回傳權威成員與存活的 found。
 func freezeAndLoadMembers(ctx context.Context, tx pgx.Tx, room *RoomRow, fetchedRadius int, fetchedCuisines []string, found []Restaurant) ([]Member, []Restaurant, error) {
+	// handleSearch 已由 assertHostInTx 取得 rooms row lock；TransitionRoom 沿用同一鎖，
+	// 再由 LoadMembersForUpdate 依 user_id 取得 member locks（rooms → members）。
 	if err := TransitionRoom(ctx, tx, room.ID, "lobby", "candidates"); err != nil {
 		// ErrConflict 原樣透傳，呼叫端據以回 409。
 		return nil, nil, err
 	}
-	// exploration/meal_time/cuisine_filter 在 lobby 可變（房主自己調），鎖定後重讀
+	// host_id 可能在 provider call 期間因房主離席而繼任；連同 lobby 可變設定一起鎖定後重讀。
 	if err := tx.QueryRow(ctx,
-		`select exploration, meal_time, cuisine_filter from rooms where id = $1`,
-		room.ID).Scan(&room.Exploration, &room.MealTime, &room.CuisineFilter); err != nil {
-		return nil, nil, fmt.Errorf("凍結重讀 exploration/meal_time/cuisine_filter: %w", err)
+		`select host_id, exploration, meal_time, cuisine_filter from rooms where id = $1`,
+		room.ID).Scan(&room.HostID, &room.Exploration, &room.MealTime, &room.CuisineFilter); err != nil {
+		return nil, nil, fmt.Errorf("凍結重讀 host_id/exploration/meal_time/cuisine_filter: %w", err)
 	}
 	members, err := LoadMembersForUpdate(ctx, tx, room.ID)
 	if err != nil {
@@ -40,6 +45,9 @@ func freezeAndLoadMembers(ctx context.Context, tx pgx.Tx, room *RoomRow, fetched
 	}
 	if len(members) == 0 {
 		return nil, nil, fmt.Errorf("凍結重讀成員: 房間無成員")
+	}
+	if !allGuestsReady(members, room.HostID) {
+		return nil, nil, ErrNotReady
 	}
 	// 檢索詞聯集在檢索後、凍結前被改動＝定向檢索 under-fetch（比照半徑放大的 ErrMembersChanged 語意）。
 	// 菜系部分只在硬過濾開啟時阻斷：此時聯集是入池門檻，漏檢索的菜系會造成一次性池的永久漏召回；

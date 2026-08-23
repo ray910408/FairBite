@@ -1,16 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { MemberRow } from '../lib/types'
-import { CUISINE_OPTIONS, DIETARY_OPTIONS, TRANSPORT_LABELS } from '../lib/labels'
+import { budgetTierLabel, CUISINE_OPTIONS, DIETARY_OPTIONS, TRANSPORT_LABELS } from '../lib/labels'
 import { Alert, Check } from './icons'
 
 const TRANSPORTS = Object.entries(TRANSPORT_LABELS) as [MemberRow['transport'], string][]
 
-export default function ConditionsForm({ me, isHost, disabled = false }:
-  { me: MemberRow; isHost: boolean; disabled?: boolean }) {
+export default function ConditionsForm({ me, isHost, disabled = false, onFlushAvailable }:
+  { me: MemberRow; isHost: boolean; disabled?: boolean;
+    onFlushAvailable?: (flush: (() => Promise<boolean>) | null) => void }) {
   const [form, setForm] = useState(me)
   const [saveError, setSaveError] = useState('')
   const savedRef = useRef(me)   // 最後一次確認寫入成功的值（失敗時還原用）
+  const editGeneration = useRef(0)
+  const durableGeneration = useRef(0)
+  const failedGeneration = useRef(0)
+  const writesValid = useRef(true)
+  const pendingWrite = useRef<{ generation: number; value: MemberRow } | null>(null)
+  const writeChain = useRef(Promise.resolve(true))
   // 凍結（CONTEXT.md「準備」）：房主端搜尋 in-flight（disabled prop）或成員已按準備。
   // ready 鈕不受 frozen 影響——取消準備即解凍。
   const frozen = disabled || (!isHost && form.ready)
@@ -28,27 +35,72 @@ export default function ConditionsForm({ me, isHost, disabled = false }:
     savedRef.current = { ...savedRef.current, ready: me.ready }
   }, [me.ready])
 
+  function enqueuePending() {
+    const pending = pendingWrite.current
+    if (!pending) return writeChain.current
+    pendingWrite.current = null
+    const operation = writeChain.current.then(async () => {
+      const dietary = pending.value.dietary.filter(d => d === 'vegetarian')
+      // count: 'exact'：RLS 凍結時 UPDATE 影響 0 列且回 204 無 error，只看 error 會誤判成功
+      let failed = false
+      try {
+        const { error, count } = await supabase.from('room_members').update({
+          budget_max: pending.value.budget_max,
+          cuisines: pending.value.cuisines,
+          dietary,
+          max_distance_m: pending.value.max_distance_m,
+          transport: pending.value.transport,
+        }, { count: 'exact' }).eq('room_id', me.room_id).eq('user_id', me.user_id)
+        failed = !!error || count === 0
+      } catch {
+        failed = true
+      }
+      if (failed) {
+        failedGeneration.current = Math.max(failedGeneration.current, pending.generation)
+        writesValid.current = false
+        // 舊 request 失敗只能立 error gate，不能抹掉更新 generation 的畫面。
+        if (pending.generation === editGeneration.current) setForm(savedRef.current)
+        setSaveError('儲存失敗：房間可能已開始選餐，條件已凍結')
+      } else {
+        if (pending.generation > durableGeneration.current) {
+          durableGeneration.current = pending.generation
+          savedRef.current = { ...pending.value, dietary, ready: savedRef.current.ready }
+        }
+        // 只有失敗 generation 之後的成功，才解除 stale-search gate。
+        if (pending.generation > failedGeneration.current) {
+          writesValid.current = true
+          setSaveError('')
+        }
+      }
+      return !failed
+    })
+    writeChain.current = operation
+    return operation
+  }
+
+  async function flushPending() {
+    clearTimeout(pushTimer.current)
+    pushTimer.current = undefined
+    enqueuePending()
+    await writeChain.current
+    return writesValid.current
+  }
+
+  useEffect(() => {
+    onFlushAvailable?.(flushPending)
+    return () => onFlushAvailable?.(null)
+  })
+
   // debounce 400ms：slider 拖曳每格都會觸發 onChange，直接連發 update 會逆序落庫
   function save(patch: Partial<MemberRow>) {
     const next = { ...form, ...patch }
+    const generation = ++editGeneration.current
     setForm(next)
+    pendingWrite.current = { generation, value: next }
     clearTimeout(pushTimer.current)
-    pushTimer.current = setTimeout(async () => {
-      // count: 'exact'：RLS 凍結時 UPDATE 影響 0 列且回 204 無 error，只看 error 會誤判成功
-      const { error, count } = await supabase.from('room_members').update({
-        budget_max: next.budget_max,
-        cuisines: next.cuisines,
-        dietary: next.dietary,
-        max_distance_m: next.max_distance_m,
-        transport: next.transport,
-      }, { count: 'exact' }).eq('room_id', me.room_id).eq('user_id', me.user_id)
-      if (error || count === 0) {
-        setForm(savedRef.current) // RLS 拒絕（如房間已離開 lobby）→ 還原，不讓 UI 與 DB 分歧
-        setSaveError('儲存失敗：房間可能已開始選餐，條件已凍結')
-      } else {
-        savedRef.current = { ...next, ready: savedRef.current.ready }
-        setSaveError('')
-      }
+    pushTimer.current = setTimeout(() => {
+      pushTimer.current = undefined
+      void enqueuePending()
     }, 400)
   }
 
@@ -56,6 +108,7 @@ export default function ConditionsForm({ me, isHost, disabled = false }:
   // 夾帶 stale ready（PR #16 review 第二輪）。即時寫、失敗還原＋橫幅（count:exact 防 RLS 靜默）。
   async function toggleReady() {
     const next = !form.ready
+    if (next && !await flushPending()) return
     setForm(f => ({ ...f, ready: next }))
     const { error, count } = await supabase.from('room_members')
       .update({ ready: next }, { count: 'exact' })
@@ -65,7 +118,8 @@ export default function ConditionsForm({ me, isHost, disabled = false }:
       setSaveError('儲存失敗：房間可能已開始選餐，條件已凍結')
     } else {
       savedRef.current = { ...savedRef.current, ready: next }
-      setSaveError('')
+      // ready=false 只解除凍結；不能掩蓋仍未由較新 condition generation 修復的 failure gate。
+      if (writesValid.current) setSaveError('')
     }
   }
 
@@ -86,13 +140,15 @@ export default function ConditionsForm({ me, isHost, disabled = false }:
 
       <label className="block space-y-1">
         <span className="flex items-baseline justify-between">
-          <span className="label">每人預算上限</span>
-          <span className="font-mono text-sm font-semibold text-brand">NT${form.budget_max}</span>
+          <span className="label">價位偏好</span>
+          <span className="text-sm font-semibold text-brand">{budgetTierLabel(form.budget_max)}</span>
         </span>
+        <span className="block text-xs text-fg-muted">偏好刻度 {form.budget_max}</span>
         <input type="range" min={100} max={1600} step={100} className="h-6 w-full"
           disabled={frozen}
           value={form.budget_max}
           onChange={e => save({ budget_max: +e.target.value })} />
+        <span className="block text-xs text-fg-muted">Google 提供粗略價位層級，不保證每人實際 TWD 價格。</span>
       </label>
 
       <div role="group" aria-labelledby="cuisine-label">
@@ -142,7 +198,7 @@ export default function ConditionsForm({ me, isHost, disabled = false }:
             <button key={v} type="button" aria-pressed={form.transport === v}
               disabled={frozen}
               className={`chip flex-1 justify-center ${form.transport === v
-                ? 'border-fg bg-fg text-white hover:bg-fg' : ''}`}
+                ? 'border-brand bg-brand text-white hover:bg-brand-strong' : ''}`}
               onClick={() => save({ transport: v })}>{label}</button>
           ))}
         </div>

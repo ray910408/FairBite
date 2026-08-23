@@ -60,6 +60,7 @@ export default function HomePage() {
   // 離席確認的對象（ADR-0007 2026-08-16 修訂）——新 state 一律接在最後，
   // HomePage.test.ts 依 useState 呼叫順序 mock
   const [leaveTarget, setLeaveTarget] = useState<LeaveTarget | null>(null)
+  const [suggestionLoadError, setSuggestionLoadError] = useState('')
   const location = useLocation()
   // 每次 mount 只做一次離席決策：消耗旗標的 replace 會讓 location 變、下面的 effect
   // 重跑，沒有這道閘就會在 doLeave() 還在飛的時候又走一次查房籍→開 dialog
@@ -75,9 +76,14 @@ export default function HomePage() {
     const request = ++suggestionRequest.current
     setSuggestion([]) // 評分後先撤下舊快照，避免 refetch 完成前仍可採納已失效建議
     const uid = await getUid()
-    if (!uid || request !== suggestionRequest.current) return
+    if (!uid || request !== suggestionRequest.current || !suggestionsMounted.current) return
+    // 口味查詢是附加功能；上次出發點先還原，任一查詢失敗也不能阻擋建房。
     setDeparture(prev => prev ?? loadLastDeparture(uid))
-    const [{ data: profile }, { data: history }, { data: lowRows }] = await Promise.all([
+    const [
+      { data: profile, error: profileError },
+      { data: history, error: historyError },
+      { data: lowRows, error: lowRowsError },
+    ] = await Promise.all([
       supabase.from('profiles').select('default_prefs').eq('id', uid).single(),
       supabase.from('dining_history')
         .select('rating, restaurants(cuisine_tags)')
@@ -85,8 +91,13 @@ export default function HomePage() {
       supabase.from('dining_history')
         .select('rating, restaurants(cuisine_tags)').lte('rating', 2),
     ])
-    if (request !== suggestionRequest.current || !profile) return
-    const dp = (profile?.default_prefs ?? {}) as Record<string, unknown>
+    if (request !== suggestionRequest.current || !suggestionsMounted.current) return
+    if (profileError || historyError || lowRowsError) {
+      setSuggestionLoadError('口味建議暫時載入失敗；不影響建房與本次房內條件')
+      return
+    }
+    if (!profile) return
+    const dp = (profile.default_prefs ?? {}) as Record<string, unknown>
     const current = Array.isArray(dp.cuisines) ? (dp.cuisines as string[]) : []
     const tags = suggestCuisines([...(lowRows ?? []), ...(history ?? [])] as unknown as HistoryRow[], current,
       CUISINE_OPTIONS.map(([k]) => k))
@@ -94,6 +105,7 @@ export default function HomePage() {
     setMyUserId(uid)
     setPrefs(dp)
     setSuggestion(tags.filter(t => !dismissed.includes(t)))
+    setSuggestionLoadError('')
   }, [])
 
   const cancelSuggestionLoads = useCallback(() => {
@@ -212,8 +224,9 @@ export default function HomePage() {
           <Logo className="h-8 w-8" />
           <span className="text-lg font-bold">今天吃什麼</span>
         </div>
-        <div className="flex items-center gap-2">
-          <Link to="/history" className="btn btn-quiet min-h-11 px-3 text-sm">足跡</Link>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-2">
+            <Link to="/history" className="btn btn-quiet min-h-11 px-3 text-sm">足跡</Link>
           {/* 登出走同一道 leavePending 閘門（比照建房/加入）：查房籍還在飛、或確認 dialog
               開著時登出，App.tsx 的 auth listener 會卸載本頁，doLeave() 永遠不會執行，
               伺服器端房籍留著——該使用者變成幽靈成員，條件與票繼續約束房間盤面。
@@ -224,6 +237,12 @@ export default function HomePage() {
             <LogOut className="h-4 w-4" />
             登出
           </button>
+          </div>
+          {leavePending && (
+            <p role="status" className="max-w-52 text-right text-xs text-fg-muted">
+              正在確認房間狀態，確認後才能登出
+            </p>
+          )}
         </div>
       </header>
 
@@ -239,7 +258,7 @@ export default function HomePage() {
             <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
               {([['now', '馬上出發'], ['custom', '自訂時間']] as const).map(([key, label]) => (
                 <button key={key} type="button" aria-pressed={mealMode === key}
-                  className={`min-h-10 rounded-lg text-sm font-semibold transition-colors duration-150 ${
+                  className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
                     mealMode === key ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
                   }`}
                   onClick={() => { setMealMode(key); setCreateError('') }}>
@@ -286,7 +305,8 @@ export default function HomePage() {
           <form onSubmit={joinRoom} className="flex gap-2">
             <input className="field flex-1 font-mono text-lg tracking-[0.3em] uppercase"
               aria-label="邀請碼" placeholder="A1B2C3D4E5F6" autoCapitalize="characters"
-              value={code} onChange={e => setCode(e.target.value)} required maxLength={12} />
+              value={code} onChange={e => { setCode(e.target.value); setJoinError('') }}
+              required minLength={12} maxLength={12} pattern="[0-9A-Fa-f]{12}" />
             <button className="btn btn-quiet px-5" type="submit" disabled={busy || leavePending}>加入</button>
           </form>
           {joinError && (
@@ -325,6 +345,13 @@ export default function HomePage() {
               }}>忽略</button>
             </div>
           </section>
+        )}
+
+        {suggestionLoadError && (
+          <p role="status" className="banner bg-warn-soft text-warn">
+            <Alert className="h-5 w-5 shrink-0" />
+            <span>{suggestionLoadError}</span>
+          </p>
         )}
 
         <RecentRatingPrompt onRated={loadSuggestions} />

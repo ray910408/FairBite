@@ -45,7 +45,7 @@ func LoadRoom(ctx context.Context, q querier, roomID string) (RoomRow, error) {
 
 // user_id 排序是鎖順序 pin：room_members FOR UPDATE 與後續 exposure_stats upsert 都沿用。
 const loadMembersSQL = `select rm.user_id, coalesce(nullif(p.display_name, ''), '成員'), rm.budget_max,
-       rm.cuisines, rm.dietary, rm.max_distance_m, rm.transport
+       rm.cuisines, rm.dietary, rm.max_distance_m, rm.transport, rm.ready
 from room_members rm join profiles p on p.id = rm.user_id
 where rm.room_id = $1
 order by rm.user_id`
@@ -71,7 +71,7 @@ func loadMembers(ctx context.Context, q querier, roomID, query string) ([]Member
 		var m Member
 		var cuisines, dietary []byte
 		if err := rows.Scan(&m.UserID, &m.DisplayName, &m.BudgetMax, &cuisines, &dietary,
-			&m.MaxDistanceM, &m.Transport); err != nil {
+			&m.MaxDistanceM, &m.Transport, &m.Ready); err != nil {
 			return nil, err
 		}
 		// 信任邊界：JSON shape 異常是錯誤，不靜默當空值

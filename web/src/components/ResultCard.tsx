@@ -24,7 +24,7 @@ export default function ResultCard({ draw, candidates, me }: {
         href={buildMapsUrl(r.lat, r.lng, r.place_id, r.source, me?.transport ?? 'walking')}
         target="_blank" rel="noreferrer">
         <MapPin className="h-5 w-5" />
-        用 Google Maps 導航（{TRANSPORT_LABELS[me?.transport ?? 'walking']}）
+        從目前位置用 Google Maps 導航（{TRANSPORT_LABELS[me?.transport ?? 'walking']}）
       </a>
     </div>
   )

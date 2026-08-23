@@ -12,8 +12,10 @@ const mocks = vi.hoisted(() => ({
   getUid: vi.fn(),
   rpc: vi.fn(),
   from: vi.fn(),
+  suggestCuisines: vi.fn(),
   navigate: vi.fn(),
   saveLastDeparture: vi.fn(),
+  loadLastDeparture: vi.fn(),
   leaveRooms: vi.fn(),
   fetchLeaveRooms: vi.fn(),
   locationState: null as unknown,
@@ -48,18 +50,23 @@ vi.mock('../lib/supabase', () => ({
   supabase: { auth: { signOut: vi.fn() }, rpc: mocks.rpc, from: mocks.from },
 }))
 vi.mock('../lib/uid', () => ({ getUid: mocks.getUid }))
+vi.mock('../lib/prefsLearning', () => ({ suggestCuisines: mocks.suggestCuisines }))
 vi.mock('../lib/api', () => ({ leaveRooms: mocks.leaveRooms }))
 // 房籍查詢本體（lib/roomMembership）由 HistoryPage.test.ts 從頁面端整條打過，這裡只驗分支
 vi.mock('../lib/roomMembership', () => ({ fetchLeaveRooms: mocks.fetchLeaveRooms }))
 
 vi.mock('../lib/departure', async importOriginal => {
   const actual = await importOriginal<typeof import('../lib/departure')>()
-  return { ...actual, saveLastDeparture: mocks.saveLastDeparture }
+  return {
+    ...actual,
+    loadLastDeparture: mocks.loadLastDeparture,
+    saveLastDeparture: mocks.saveLastDeparture,
+  }
 })
 
 type ElementLike = {
   type?: unknown
-  props?: { children?: unknown; onClick?: () => void | Promise<void> }
+  props?: { children?: unknown; onClick?: () => void | Promise<void>; className?: string }
 }
 
 function textContent(node: unknown): string {
@@ -148,6 +155,14 @@ describe('HomePage persistRoom', () => {
     })
   })
 
+  it('用餐時間 segmented control 有至少 44px 的 class', async () => {
+    const { default: HomePage } = await import('./HomePage')
+    const tree = HomePage()
+    for (const label of ['馬上出發', '自訂時間']) {
+      expect(findButton(tree, label).props?.className).toContain('min-h-11')
+    }
+  })
+
   afterEach(() => {
     vi.unstubAllGlobals()
   })
@@ -226,6 +241,240 @@ function stubSuggestionQueries() {
   })
 }
 
+const SUGGESTION_LOAD_ERROR = '口味建議暫時載入失敗；不影響建房與本次房內條件'
+const SUGGESTION_ERROR = 14
+type SuggestionQueryResult = { data: unknown; error: unknown }
+
+function okSuggestionResults(): SuggestionQueryResult[] {
+  return [
+    { data: { default_prefs: { cuisines: [] } }, error: null },
+    { data: [{ rating: 5, restaurants: { cuisine_tags: ['thai'] } }], error: null },
+    { data: [], error: null },
+  ]
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(done => { resolve = done })
+  return { promise, resolve }
+}
+
+function stubSuggestionResults(
+  results: Array<SuggestionQueryResult | Promise<SuggestionQueryResult>>,
+) {
+  let resultIndex = 0
+  mocks.from.mockImplementation(() => {
+    const result = results[resultIndex++]
+    return {
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({ single: vi.fn(() => result) }),
+        order: vi.fn().mockReturnValue({ limit: vi.fn(() => result) }),
+        lte: vi.fn(() => result),
+      }),
+    }
+  })
+}
+
+async function renderSuggestionLoader(
+  results: Array<SuggestionQueryResult | Promise<SuggestionQueryResult>>,
+) {
+  stubSuggestionResults(results)
+  const { default: HomePage } = await import('./HomePage')
+  const tree = HomePage()
+  const cleanup = mocks.effects[0]?.()
+  return { tree, cleanup }
+}
+
+function ratingReload(tree: unknown) {
+  const prompt = findNode(tree, el => typeof el.props?.onRated === 'function')
+  if (!prompt) throw new Error('找不到評分完成 reload callback')
+  return prompt.props?.onRated as () => Promise<void>
+}
+
+describe('HomePage 口味建議查詢失敗（Task 11）', () => {
+  beforeEach(() => {
+    mocks.stateIndex = 0
+    mocks.refIndex = 0
+    mocks.refs = []
+    mocks.effects = []
+    mocks.stateValues = []
+    mocks.stateValues[11] = ['thai']
+    mocks.stateSetters = []
+    mocks.getUid.mockReset().mockResolvedValue('user-1')
+    mocks.loadLastDeparture.mockReset().mockReturnValue({ lat: 25.0478, lng: 121.517, label: '台北車站' })
+    mocks.from.mockReset()
+    mocks.suggestCuisines.mockReset().mockReturnValue(['thai'])
+    mocks.fetchLeaveRooms.mockReset().mockResolvedValue([])
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn(() => ''),
+      setItem: vi.fn(),
+    })
+  })
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it.each([
+    ['profile 單獨失敗', [0]],
+    ['recent history 單獨失敗', [1]],
+    ['low ratings 單獨失敗', [2]],
+    ['任意兩筆失敗', [0, 1]],
+    ['三筆全部失敗', [0, 1, 2]],
+  ])('%s：還原出發點、清掉舊建議、顯示非阻擋訊息，且不以缺資料推論', async (_name, failed) => {
+    const results = okSuggestionResults().map((result, index) =>
+      failed.includes(index) ? { data: null, error: new Error('query failed') } : result)
+    const { cleanup } = await renderSuggestionLoader(results)
+
+    await vi.waitFor(() =>
+      expect(mocks.stateSetters[SUGGESTION_ERROR]).toHaveBeenCalledWith(SUGGESTION_LOAD_ERROR))
+    expect(mocks.stateSetters[11]).toHaveBeenCalledWith([])
+    expect(mocks.suggestCuisines).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[4]).toHaveBeenCalledWith(expect.any(Function))
+    expect(mocks.stateSetters[9]).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[10]).not.toHaveBeenCalled()
+    if (typeof cleanup === 'function') cleanup()
+  })
+
+  it('任一查詢失敗仍先還原上次出發點', async () => {
+    const results = okSuggestionResults()
+    results[0] = { data: null, error: new Error('profile failed') }
+    const { cleanup } = await renderSuggestionLoader(results)
+
+    const restore = mocks.stateSetters[4].mock.calls.find(([value]) => typeof value === 'function')?.[0]
+    expect(restore?.(null)).toEqual({ lat: 25.0478, lng: 121.517, label: '台北車站' })
+    expect(mocks.loadLastDeparture).toHaveBeenCalledWith('user-1')
+    if (typeof cleanup === 'function') cleanup()
+  })
+
+  it('失敗訊息不阻擋建房或加入，並以 status 呈現 exact copy', async () => {
+    mocks.stateValues[4] = { lat: 25.0478, lng: 121.517, label: '台北車站' }
+    mocks.stateValues[PENDING] = false
+    mocks.stateValues[SUGGESTION_ERROR] = SUGGESTION_LOAD_ERROR
+    const { default: HomePage } = await import('./HomePage')
+    const tree = HomePage()
+    const message = findNode(tree, el =>
+      el.props?.role === 'status' && textContent(el) === SUGGESTION_LOAD_ERROR)
+
+    expect(message).toBeDefined()
+    expect(findButtonAnywhere(tree, '建立房間').props.disabled).toBe(false)
+    expect(findButtonAnywhere(tree, '加入').props.disabled).toBe(false)
+  })
+
+  it('後續成功 reload 完成前保留舊訊息，完成後才清除並正常產生建議', async () => {
+    const gate = deferred<SuggestionQueryResult>()
+    const firstFailure = okSuggestionResults()
+    firstFailure[1] = { data: null, error: new Error('recent failed') }
+    const { tree, cleanup } = await renderSuggestionLoader([
+      ...firstFailure,
+      gate.promise,
+      ...okSuggestionResults().slice(1),
+    ])
+    await vi.waitFor(() =>
+      expect(mocks.stateSetters[SUGGESTION_ERROR]).toHaveBeenCalledWith(SUGGESTION_LOAD_ERROR))
+
+    mocks.stateSetters[SUGGESTION_ERROR].mockClear()
+    const reload = ratingReload(tree)
+    const pendingReload = reload()
+    await vi.waitFor(() => expect(mocks.from).toHaveBeenCalledTimes(6))
+    expect(mocks.stateSetters[SUGGESTION_ERROR]).not.toHaveBeenCalled()
+
+    gate.resolve(okSuggestionResults()[0])
+    await pendingReload
+    expect(mocks.suggestCuisines).toHaveBeenCalledTimes(1)
+    expect(mocks.stateSetters[11]).toHaveBeenLastCalledWith(['thai'])
+    expect(mocks.stateSetters[SUGGESTION_ERROR]).toHaveBeenCalledWith('')
+    if (typeof cleanup === 'function') cleanup()
+  })
+
+  it('較舊 failure 晚到時不覆蓋較新 success', async () => {
+    const oldGate = deferred<SuggestionQueryResult>()
+    const { tree, cleanup } = await renderSuggestionLoader([
+      oldGate.promise,
+      ...okSuggestionResults().slice(1),
+      ...okSuggestionResults(),
+    ])
+    await vi.waitFor(() => expect(mocks.from).toHaveBeenCalledTimes(3))
+
+    await ratingReload(tree)()
+    expect(mocks.stateSetters[SUGGESTION_ERROR]).toHaveBeenCalledWith('')
+    mocks.stateSetters[SUGGESTION_ERROR].mockClear()
+
+    oldGate.resolve({ data: null, error: new Error('old failure') })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(mocks.stateSetters[SUGGESTION_ERROR]).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[11]).toHaveBeenLastCalledWith(['thai'])
+    if (typeof cleanup === 'function') cleanup()
+  })
+
+  it('較舊 success 晚到時不清除較新 failure', async () => {
+    const oldGate = deferred<SuggestionQueryResult>()
+    const laterFailure = okSuggestionResults()
+    laterFailure[2] = { data: null, error: new Error('new failure') }
+    const { tree, cleanup } = await renderSuggestionLoader([
+      oldGate.promise,
+      ...okSuggestionResults().slice(1),
+      ...laterFailure,
+    ])
+    await vi.waitFor(() => expect(mocks.from).toHaveBeenCalledTimes(3))
+
+    await ratingReload(tree)()
+    expect(mocks.stateSetters[SUGGESTION_ERROR]).toHaveBeenCalledWith(SUGGESTION_LOAD_ERROR)
+    mocks.stateSetters[SUGGESTION_ERROR].mockClear()
+
+    oldGate.resolve(okSuggestionResults()[0])
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(mocks.stateSetters[SUGGESTION_ERROR]).not.toHaveBeenCalled()
+    expect(mocks.suggestCuisines).not.toHaveBeenCalled()
+    if (typeof cleanup === 'function') cleanup()
+  })
+
+  it('unmount 後查詢完成不再 setState', async () => {
+    const gate = deferred<SuggestionQueryResult>()
+    const { cleanup } = await renderSuggestionLoader([
+      gate.promise,
+      ...okSuggestionResults().slice(1),
+    ])
+    await vi.waitFor(() => expect(mocks.from).toHaveBeenCalledTimes(3))
+    if (typeof cleanup === 'function') cleanup()
+    for (const setter of mocks.stateSetters) setter.mockClear()
+
+    gate.resolve(okSuggestionResults()[0])
+    await new Promise(resolve => setTimeout(resolve, 0))
+    for (const setter of mocks.stateSetters) expect(setter).not.toHaveBeenCalled()
+  })
+})
+
+describe('HomePage 邀請碼 native validation', () => {
+  beforeEach(() => {
+    mocks.stateIndex = 0
+    mocks.refIndex = 0
+    mocks.refs = []
+    mocks.effects = []
+    mocks.stateValues = []
+    mocks.stateValues[0] = 'ABC'
+    mocks.stateValues[2] = '舊加入錯誤'
+    mocks.stateValues[12] = false
+    mocks.stateSetters = []
+  })
+
+  it('輸入使用原生十二碼 hex 約束，編輯時同步清除舊錯誤', async () => {
+    const { default: HomePage } = await import('./HomePage')
+    const input = findNode(HomePage(),
+      el => el.type === 'input' && el.props?.['aria-label'] === '邀請碼')
+    expect(input?.props?.required).toBe(true)
+    expect(input?.props?.minLength).toBe(12)
+    expect(input?.props?.maxLength).toBe(12)
+    expect(input?.props?.pattern).toBe('[0-9A-Fa-f]{12}')
+
+    const onChange = input?.props?.onChange as
+      ((event: { target: { value: string } }) => void) | undefined
+    expect(onChange).toBeTypeOf('function')
+    onChange?.({ target: { value: 'A1B2C3D4E5F6' } })
+
+    expect(mocks.stateSetters[0]).toHaveBeenCalledWith('A1B2C3D4E5F6')
+    expect(mocks.stateSetters[2]).toHaveBeenCalledWith('')
+  })
+})
+
 describe('HomePage 退房閘門', () => {
   beforeEach(() => {
     mocks.stateIndex = 0
@@ -291,8 +540,11 @@ describe('HomePage 登出閘門', () => {
     return HomePage()
   }
 
-  it('查房籍未 settle 前登出禁用（此時登出＝伺服器端留下幽靈房籍）', async () => {
-    expect(findButtonAnywhere(await render(true), '登出').props.disabled).toBe(true)
+  it('查房籍未 settle 前登出禁用並就地說明原因', async () => {
+    const tree = await render(true)
+    expect(findButtonAnywhere(tree, '登出').props.disabled).toBe(true)
+    const status = findNode(tree, el => el.props?.role === 'status')
+    expect(textContent(status)).toBe('正在確認房間狀態，確認後才能登出')
   })
 
   it('離席確認 dialog 開著時登出仍禁用（使用者還沒決定要不要退房）', async () => {

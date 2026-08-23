@@ -22,8 +22,8 @@ type VoteCommand struct {
 	Op           string `json:"op"`   // cast|retract
 }
 
-// castVote：在呼叫端交易內執行投票命令的全部不變式——候選驗證、互斥
-//（cast 某 kind 自動撤同店另一 kind）、否決限額（現存 veto ≤ VetoQuota）、
+// castVote：在呼叫端交易內執行投票命令的全部不變式——候選驗證、
+// 否決限額（現存 veto ≤ VetoQuota）、
 // 冪等寫入/收回——並回傳該成員剩餘否決額度。
 // 前置：呼叫端已持有 room row lock 並驗過階段（TransitionRoom voting→voting）。
 func castVote(ctx context.Context, tx pgx.Tx, roomID, uid string, cmd VoteCommand) (vetoesRemaining int, err error) {
@@ -47,15 +47,6 @@ func castVote(ctx context.Context, tx pgx.Tx, roomID, uid string, cmd VoteComman
 		return 0, ErrNotCandidate
 	}
 	if cmd.Op == "cast" {
-		other := "veto"
-		if cmd.Kind == "veto" {
-			other = "up"
-		}
-		if _, err := tx.Exec(ctx, `delete from votes
-			where room_id = $1 and user_id = $2 and restaurant_id = $3 and kind = $4`,
-			roomID, uid, cmd.RestaurantID, other); err != nil {
-			return 0, fmt.Errorf("互斥撤票: %w", err)
-		}
 		if cmd.Kind == "veto" {
 			// 排除同店：重複 cast 既有否決不吃額度
 			var vetoes int

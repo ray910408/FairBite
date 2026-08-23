@@ -13,3 +13,5 @@ supabase/.temp/
 docs/superpowers/
 .gstack/
 design-system/
+CLAUDE.md
+.cache/

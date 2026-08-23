@@ -4,6 +4,16 @@ export const TRANSPORT_LABELS: Record<MemberRow['transport'], string> = {
   walking: '步行', driving: '開車', transit: '大眾運輸',
 }
 
+const BUDGET_TIER_LABELS = ['', '平價', '中等', '偏高', '高價']
+
+export function budgetTierLabel(budgetMax: number) {
+  if (budgetMax < 100 || budgetMax > 1600) return '未設定'
+  if (budgetMax <= 200) return BUDGET_TIER_LABELS[1]
+  if (budgetMax <= 400) return BUDGET_TIER_LABELS[2]
+  if (budgetMax <= 800) return BUDGET_TIER_LABELS[3]
+  return BUDGET_TIER_LABELS[4]
+}
+
 export const CUISINE_OPTIONS: [string, string][] = [
   ['taiwanese', '台式'], ['japanese', '日式'], ['korean', '韓式'],
   ['cantonese', '港式'], ['western', '西式'], ['fast_food', '速食'], ['indian', '印度'],
@@ -14,7 +24,7 @@ export const CUISINE_OPTIONS: [string, string][] = [
 export const CUISINE_LABEL = Object.fromEntries(CUISINE_OPTIONS)
 
 export const DIETARY_OPTIONS: [string, string][] = [
-  ['vegetarian', '素食'], ['no_beef', '不吃牛'], ['no_pork', '不吃豬'],
+  ['vegetarian', '素食'],
 ]
 
 export const DIETARY_LABEL = Object.fromEntries(DIETARY_OPTIONS)
