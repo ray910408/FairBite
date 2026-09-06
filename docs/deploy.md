@@ -101,6 +101,14 @@ Go 若先啟動而配額 schema 尚未存在，搜尋會回 503（fail closed）
 - Migration `20260905000100` 驗證既有名字與偏好：名稱 1–80 字／最多 320 bytes；
   菜系最多 20 項、dietary 最多 10 項，每項最多 64 bytes，僅允許目前詞彙且不得重複。
   違規舊資料會阻擋 migration；先由擁有者明確修正，不自動刪除／截斷飲食選擇。
+  2026-09-06 已確認 production 僅一筆舊 `["no_pork"]`（現行引擎已忽略此選項）。
+  經擁有者同意，可先執行 `supabase db query --linked --file supabase/repairs/20260906_legacy_dietary.sql`，
+  再重跑失敗的 Deploy web。此 SQL 在同一原子操作內將原值存至
+  `private_member_repairs.dietary_20260906` 後改為 `[]`，不改其他偏好或既有 migrations。
+  備份僅 DB owner 可讀，不隨房間刪除；重跑不覆寫原值。若相符資料超過一筆則停止，需重新確認。
+  當日已執行：備份／修復各 1 筆，會員總數仍為 5；Deploy web run `34007525252`
+  第 2 次執行成功，3 個安全 migrations 與 Pages 部署完成。新增回歸測試為
+  `server/dietary_repair_test.go`，隔離 DB 的 Go vet／race 與 119 項 pgTAP 均通過。
 - 配額存在 `public.resource_quota_limits`，僅管理員可調整：建房 5 次／10 分鐘、
   20 次／UTC 日、最多 5 個活躍房（逾 24 小時 lobby 不計入，不刪除）；
   搜尋 5 次／10 分鐘、30 次／UTC 日；Google 最壞呼叫預留每帳號 120 次／日、
