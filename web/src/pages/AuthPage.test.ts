@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { renderToStaticMarkup } from 'react-dom/server'
 
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -49,6 +50,12 @@ function findButton(node: unknown, label: string): NodeLike | undefined {
 }
 
 describe('AuthPage segmented control', () => {
+  it('bounds the registration name at the database character limit', async () => {
+    mocks.stateValues = ['register']
+    const { default: AuthPage } = await import('./AuthPage')
+    const html = renderToStaticMarkup(AuthPage())
+    expect(html).toMatch(/id="displayName"[^>]*maxLength="80"/i)
+  })
   beforeEach(() => {
     mocks.navigate.mockReset()
     mocks.stateIndex = 0

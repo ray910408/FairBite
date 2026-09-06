@@ -1,0 +1,14 @@
+begin;
+create extension if not exists pgtap with schema extensions;
+select no_plan();
+select ok(not has_schema_privilege('authenticated','private_scoring','usage'), 'members cannot access legacy archive schema');
+select ok(not has_schema_privilege('anon','private_scoring','usage'), 'anonymous cannot access legacy archive schema');
+select ok(not has_table_privilege('authenticated','private_scoring.legacy_draws','select'), 'members cannot read old private draw odds');
+select ok(not has_table_privilege('authenticated','private_scoring.legacy_room_candidates','select'), 'members cannot read old private traces');
+select ok(not has_table_privilege('service_role','private_scoring.legacy_draws','select'), 'REST service role cannot read old private draw odds');
+select ok((select relrowsecurity from pg_class where oid='private_scoring.legacy_draws'::regclass), 'archive draw RLS enabled');
+set local role authenticated;
+select throws_like($$select * from private_scoring.legacy_draws$$, '%permission denied%', 'direct legacy read denied');
+reset role;
+select * from finish();
+rollback;

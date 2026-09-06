@@ -18,10 +18,9 @@ select results_eq(
       ('dining_history','SELECT'),
       ('draws','SELECT'),
       ('exposure_stats','SELECT'),
-      ('profiles','SELECT'), ('profiles','UPDATE'),
       ('restaurants','SELECT'),
       ('room_candidates','SELECT'),
-      ('room_members','SELECT'), ('room_members','UPDATE'),
+      ('room_members','SELECT'),
       -- rooms 兩種權限都已是欄級（SELECT 見 0015、UPDATE 見 0003），
       -- 欄級 grant 不會出現在 role_table_grants，改由下面兩條 role_column_grants 釘住
       ('votes','SELECT')
@@ -402,6 +401,12 @@ select is(
 -- ============ 0019：清除既存 sichuan 選項 ============
 -- 與 0016/0018 段同款：複製 migration 的 UPDATE 驗邏輯，改一邊要改兩邊。
 reset role;
+-- Recreate the pre-20260905000100 historical state only for the old migration fixture;
+-- restore the exact current constraint immediately after its cleanup runs.
+create temp table cuisine_constraint_definition as
+  select pg_get_constraintdef(oid) as definition from pg_constraint
+  where conrelid='public.room_members'::regclass and conname='room_members_cuisines_bounds';
+alter table public.room_members drop constraint room_members_cuisines_bounds;
 insert into public.rooms (id, host_id, center_lat, center_lng) values
   ('88888888-8888-8888-8888-888888888901', '00000000-0000-0000-0000-0000000000a1', 25.04, 121.51);
 insert into public.room_members (room_id, user_id) values
@@ -434,6 +439,10 @@ select is(
     where room_id = '88888888-8888-8888-8888-888888888901'
       and user_id = '00000000-0000-0000-0000-0000000000a1'),
   '["japanese"]'::jsonb, 'room_members.cuisines 清掉 sichuan 並保留其餘選項');
+do $$ begin
+  execute 'alter table public.room_members add constraint room_members_cuisines_bounds ' ||
+    (select definition from cuisine_constraint_definition);
+end $$;
 select is(
   (select default_prefs->'cuisines' from public.profiles
     where id = '00000000-0000-0000-0000-0000000000a1'),

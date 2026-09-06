@@ -12,13 +12,15 @@ export default function ResultCard({ draw, candidates, me }: {
   const winner = candidates.find(c => c.restaurant_id === draw.winner_restaurant_id)
   if (!winner) return null
   const r = winner.restaurants
-  const prob = draw.probabilities[draw.winner_restaurant_id] ?? 0
+  const prob = draw.probabilities[draw.winner_restaurant_id]
   return (
     <div className="card animate-rise space-y-4 border-brand bg-linear-to-b from-brand-soft to-surface p-6 text-center">
       <p className="text-sm font-medium tracking-wide text-brand-strong">今天就吃</p>
       <h2 className="text-3xl font-bold tracking-tight">{r.name}</h2>
       <p className="text-sm text-fg-muted">
-        抽中機率 <span className="font-mono font-semibold text-fg">{formatPercent(prob)}</span>
+        {prob == null ? '歷史機率已隱藏，以保護成員隱私；原抽選結果保留' : <>
+          抽中機率 <span className="font-mono font-semibold text-fg">{formatPercent(prob)}</span>
+        </>}
       </p>
       <a className="btn btn-accent w-full"
         href={buildMapsUrl(r.lat, r.lng, r.place_id, r.source, me?.transport ?? 'walking')}

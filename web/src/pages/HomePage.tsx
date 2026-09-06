@@ -13,6 +13,8 @@ import { LeaveConfirm } from '../components/LeaveConfirm'
 import LocationPicker from '../components/LocationPicker'
 import { RecentRatingPrompt } from '../components/RatingPrompt'
 
+type PrivatePrefs = { default_prefs: Record<string, unknown> }
+
 // default_prefs 帶入（spec §4；eng review D18 客戶端直寫版，取代 RPC 五欄位框架）：
 // 建/加成功後、導頁前，若有預設偏好就寫進自己的 member row（lobby 的 members_update
 // RLS 本來就允許）。失敗只影響預設值（罕見：搜尋凍結競態），靜默接受不擋導頁。
@@ -21,8 +23,7 @@ async function applyDefaultPrefs(roomId: string) {
   if (!uid) return
   const appliedKey = `prefs-applied:${roomId}:${uid}`
   if (localStorage.getItem(appliedKey)) return
-  const { data: profile, error: profileError } = await supabase.from('profiles')
-    .select('default_prefs').eq('id', uid).single()
+  const { data: profile, error: profileError } = await supabase.rpc('get_my_default_prefs').single<PrivatePrefs>()
   if (profileError) return
   const raw = (profile?.default_prefs as { cuisines?: string[] } | null)?.cuisines
   // 詞彙可能收縮（如 2026-08-13 移除 sichuan）：只帶入仍在選單上的 tag，
@@ -84,7 +85,7 @@ export default function HomePage() {
       { data: history, error: historyError },
       { data: lowRows, error: lowRowsError },
     ] = await Promise.all([
-      supabase.from('profiles').select('default_prefs').eq('id', uid).single(),
+      supabase.rpc('get_my_default_prefs').single<PrivatePrefs>(),
       supabase.from('dining_history')
         .select('rating, restaurants(cuisine_tags)')
         .order('decided_at', { ascending: false }).limit(50),

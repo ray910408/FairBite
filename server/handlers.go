@@ -21,26 +21,47 @@ import (
 )
 
 type limiterStore struct {
-	mu     sync.Mutex
-	m      map[string]*rate.Limiter
-	perSec rate.Limit
-	burst  int
+	mu        sync.Mutex
+	m         map[string]*limiterEntry
+	perSec    rate.Limit
+	burst     int
+	nextSweep time.Time
 }
+
+type limiterEntry struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+const limiterMaxEntries = 10000
 
 func newLimiterStore(perSec rate.Limit, burst int) *limiterStore {
-	return &limiterStore{m: map[string]*rate.Limiter{}, perSec: perSec, burst: burst}
+	return &limiterStore{m: map[string]*limiterEntry{}, perSec: perSec, burst: burst}
 }
 
-// ponytail: map 無上限成長，P2 部署時加 TTL 清理
 func (s *limiterStore) allow(uid string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := clockNow()
+	if !now.Before(s.nextSweep) {
+		s.nextSweep = now.Add(time.Minute)
+		for id, entry := range s.m {
+			// Reclaim only idle, fully replenished buckets: no reset-to-burst bypass.
+			if now.Sub(entry.lastSeen) >= time.Minute && entry.limiter.TokensAt(now) >= float64(s.burst) {
+				delete(s.m, id)
+			}
+		}
+	}
 	l, ok := s.m[uid]
 	if !ok {
-		l = rate.NewLimiter(s.perSec, s.burst)
+		if len(s.m) >= limiterMaxEntries {
+			return false
+		}
+		l = &limiterEntry{limiter: rate.NewLimiter(s.perSec, s.burst)}
 		s.m[uid] = l
 	}
-	return l.Allow()
+	l.lastSeen = now
+	return l.limiter.AllowN(now, 1)
 }
 
 func rateLimit(store *limiterStore, next http.Handler) http.Handler {
@@ -65,7 +86,7 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, weather
 		handleSearch(w, r, pool, places, weather, &searchInFlight)
 	})
 	api.HandleFunc("POST /api/rooms/{id}/start-voting", func(w http.ResponseWriter, r *http.Request) {
-		handleStartVoting(w, r, pool)
+		handleStartVoting(w, r, pool, weather)
 	})
 	api.HandleFunc("POST /api/rooms/{id}/edit-conditions", func(w http.ResponseWriter, r *http.Request) {
 		handleEditConditions(w, r, pool)
@@ -191,7 +212,7 @@ func loadMemberRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) 
 	return room, true
 }
 
-func handleStartVoting(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
+func handleStartVoting(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weather WeatherProvider) {
 	ctx := r.Context()
 	room, ok := loadHostRoom(w, r, pool)
 	if !ok {
@@ -218,6 +239,22 @@ func handleStartVoting(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 		}
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
+	}
+	// Migration 20260905000300 hides legacy odds rather than fabricating an old draw. Restore
+	// active candidates once, under the same room lock, before opening voting.
+	var redacted bool
+	if err := tx.QueryRow(ctx, `select exists (select 1 from room_candidates
+		where room_id=$1 and status='kept' and probability is null)`, room.ID).Scan(&redacted); err != nil {
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	if redacted {
+		wx := loadWeatherCached(weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
+		if _, _, err := rescoreRoom(ctx, tx, room, wx); err != nil {
+			log.Printf("legacy candidates rescore failed: %v", err)
+			jsonError(w, http.StatusInternalServerError, "重算失敗，請稍後再試")
+			return
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
@@ -453,7 +490,10 @@ func memberCuisinesDrifted(ctx context.Context, pool *pgxpool.Pool, roomID strin
 }
 
 func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider, inFlight *sync.Map) {
-	ctx := r.Context()
+	// Must finish before the durable 60-second concurrency lease expires.
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	r = r.WithContext(ctx)
 	room, ok := loadHostRoom(w, r, pool)
 	if !ok {
 		return
@@ -478,11 +518,32 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusConflict, searchNotReadyMessage)
 		return
 	}
+	fetchedRadius := averageMemberRadius(members)
+	fetchedCuisines := cuisineUnion(members)
+	paidCalls := 0
+	if places.Source() == "google" {
+		paidCalls = googleSearchRequestBudget(fetchedCuisines)
+	}
+	lease, err := reserveSearchQuota(ctx, pool, UserID(r), room.ID, paidCalls)
+	if err != nil {
+		if errors.Is(err, ErrSearchQuota) {
+			w.Header().Set("Retry-After", "60")
+			jsonError(w, http.StatusTooManyRequests, "搜尋額度已用完或系統忙碌，請稍後再試")
+		} else {
+			jsonError(w, http.StatusServiceUnavailable, "搜尋額度檢查失敗，請稍後再試")
+		}
+		return
+	}
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cleanupCancel()
+		if _, err := pool.Exec(cleanupCtx, `select public.release_search_quota($1)`, lease); err != nil {
+			log.Printf("search quota lease release failed: %v", err)
+		}
+	}()
 	// wx 用 pre-tx 的 roomEvalTime(room) 取（凍結重讀前）；host 在按鈕與凍結之間改時間的競態
 	// 只影響天氣取樣的小時，屬可接受誤差（exploration 的 pre-tx 讀取同款先例）。
 	wx := loadWeather(ctx, weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
-	fetchedRadius := averageMemberRadius(members)
-	fetchedCuisines := cuisineUnion(members)
 	// Provider fetch envelope 採 call-time 成員平均距離；tx 內重讀若縮小，會在 Evaluate 前重濾。
 	// 若期間放寬，既有 fetch envelope 只會 under-fetch，不會錯誤納入更遠餐廳（freeze.go 回 409）。
 	searchResult, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, fetchedRadius, fetchedCuisines)

@@ -45,11 +45,19 @@ export default function Wheel({ rows, winnerId, onDone }: {
     if (!winnerId) return
     const s = slicesRef.current.find(x => x.c.restaurant_id === winnerId)
     if (!s) return
+    if (slicesRef.current.some(x => x.c.probability == null)) {
+      doneRef.current()
+      return
+    }
     const center = (s.start + s.end) / 2
     setRotation(5 * 360 + (360 - center)) // 指針固定在 12 點鐘，轉輪本體旋轉
     const t = setTimeout(() => doneRef.current(), prefersReduced() ? 700 : SPIN_MS + 200)
     return () => clearTimeout(t)
   }, [winnerId]) // slices/onDone 走 ref：realtime refetch 不會重設計時器
+
+  if (kept.some(c => c.probability == null)) {
+    return <p role="status">歷史機率已隱藏，以保護成員隱私</p>
+  }
 
   return (
     <div className="card animate-rise space-y-4">

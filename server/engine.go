@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Member struct {
@@ -311,10 +312,7 @@ func prefFactor(r Restaurant, in EngineInput) TraceEntry {
 	mult := PrefMultMin + (PrefMultMax-PrefMultMin)*ratio
 	reason := fmt.Sprintf("%d/%d 位成員偏好命中", hits, len(in.Members))
 	if lowest != "" {
-		// 匿名（eng review D7）：公開「有校正」維持可解釋性，
-		// 但不公開誰的滿足度最低——那是個人資料，點名有社交成本。
-		// 2026-08-11 task5 review 裁定：D7 = 不點名；小房間可由 mult 反推是
-		// 任何可見公平效果的數學必然（藏標記只會變成無解釋的 ×1.20），接受。
+		// Evaluate only enables private-history corrections in groups of four or more.
 		reason += "（已套用成員公平校正）"
 	}
 	return TraceEntry{"preference", mult, reason}
@@ -512,34 +510,35 @@ func exposureFactor(r Restaurant, in EngineInput) TraceEntry {
 	if frac > 1 {
 		frac = 1
 	}
+	frac = math.Round(frac*2) / 2 // coarse group statistic, never publish exact counts
 	mult := 1 - (1-ChosenPenaltyMult)*frac*penaltyScale
-	return TraceEntry{"exposure", mult, fmt.Sprintf("房內累計中選 %d 人次，稍作降權", c.Chosen)}
+	return TraceEntry{"exposure", mult, "依群體曝光概況調整"}
 }
 
 func recencyFactor(r Restaurant, in EngineInput) TraceEntry {
-	c := in.Recency[rkey(r)]
-	if c.Fresh == 0 && c.Fading == 0 {
-		return TraceEntry{"recency", 1.0, "近 30 天無成員造訪"}
+	if in.Recency == nil {
+		return TraceEntry{Mult: 1.0}
 	}
+	c := in.Recency[rkey(r)]
 	eff := (float64(c.Fresh) + RecencyFadingWeight*float64(c.Fading)) / float64(len(in.Members))
+	eff = math.Round(eff*2) / 2
 	scale := gearScale(RecencyPenaltyScale, in.Exploration)
 	mult := 1 - (1-RecencyFloorMult)*eff*scale
 	if mult < RecencyMinMult {
 		mult = RecencyMinMult
 	}
-	var parts []string
-	if c.Fresh > 0 {
-		parts = append(parts, fmt.Sprintf("%d 位成員 14 天內造訪過", c.Fresh))
-	}
-	if c.Fading > 0 {
-		parts = append(parts, fmt.Sprintf("%d 位成員 15–30 天前造訪過", c.Fading))
-	}
-	return TraceEntry{"recency", mult, strings.Join(parts, "；")}
+	return TraceEntry{"recency", mult, "依群體近期用餐概況調整"}
 }
 
 var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor, exposureFactor, rainFactor, timeSlotFactor}
 
 func Evaluate(in EngineInput) EngineResult {
+	// Gate the inputs, not just traces: score/probability and persisted draws are
+	// public too. This boundary covers search, vote, draw and leave rescoring.
+	// k=4 plus coarse statistics reduces inference; it is not differential privacy.
+	if len(in.Members) < 4 {
+		in.Recency, in.Exposure, in.Satisfaction = nil, nil, nil
+	}
 	var res EngineResult
 	survivors := make([]Restaurant, 0, len(in.Restaurants))
 	for _, r := range in.Restaurants {
@@ -571,6 +570,16 @@ func Evaluate(in EngineInput) EngineResult {
 		res.Kept = append(res.Kept, c)
 	}
 	normalize(res.Kept)
+	for i := range res.Excluded {
+		reason := res.Excluded[i].Reason
+		if len(reason) > 2048 {
+			end := 2048 - len("…")
+			for !utf8.RuneStart(reason[end]) {
+				end--
+			}
+			res.Excluded[i].Reason = reason[:end] + "…"
+		}
+	}
 	return res
 }
 

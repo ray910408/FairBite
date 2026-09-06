@@ -232,6 +232,9 @@ const TARGET = 13
 const inRoom = { id: 'room-1', code: 'ABC123', status: 'lobby', memberCount: 2, isHost: false }
 
 function stubSuggestionQueries() {
+  mocks.rpc.mockImplementation((name: string) => name === 'get_my_default_prefs'
+    ? { single: vi.fn().mockResolvedValue({ data: null }) }
+    : Promise.resolve({ data: 'room-1', error: null }))
   mocks.from.mockReset().mockReturnValue({
     select: vi.fn().mockReturnValue({
       eq: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: null }) }),
@@ -263,6 +266,11 @@ function stubSuggestionResults(
   results: Array<SuggestionQueryResult | Promise<SuggestionQueryResult>>,
 ) {
   let resultIndex = 0
+  mocks.rpc.mockImplementation((name: string) => {
+    if (name !== 'get_my_default_prefs') throw new Error(`Unexpected RPC: ${name}`)
+    const result = results[resultIndex++]
+    return { single: vi.fn(() => result) }
+  })
   mocks.from.mockImplementation(() => {
     const result = results[resultIndex++]
     return {
@@ -292,6 +300,11 @@ function ratingReload(tree: unknown) {
 }
 
 describe('HomePage 口味建議查詢失敗（Task 11）', () => {
+  it('loads private preferences through the caller-bound RPC', async () => {
+    await renderSuggestionLoader(okSuggestionResults())
+    await vi.waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith('get_my_default_prefs'))
+    expect(mocks.from).not.toHaveBeenCalledWith('profiles')
+  })
   beforeEach(() => {
     mocks.stateIndex = 0
     mocks.refIndex = 0
@@ -374,7 +387,7 @@ describe('HomePage 口味建議查詢失敗（Task 11）', () => {
     mocks.stateSetters[SUGGESTION_ERROR].mockClear()
     const reload = ratingReload(tree)
     const pendingReload = reload()
-    await vi.waitFor(() => expect(mocks.from).toHaveBeenCalledTimes(6))
+    await vi.waitFor(() => expect(mocks.from).toHaveBeenCalledTimes(4))
     expect(mocks.stateSetters[SUGGESTION_ERROR]).not.toHaveBeenCalled()
 
     gate.resolve(okSuggestionResults()[0])
@@ -392,7 +405,7 @@ describe('HomePage 口味建議查詢失敗（Task 11）', () => {
       ...okSuggestionResults().slice(1),
       ...okSuggestionResults(),
     ])
-    await vi.waitFor(() => expect(mocks.from).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() => expect(mocks.from).toHaveBeenCalledTimes(2))
 
     await ratingReload(tree)()
     expect(mocks.stateSetters[SUGGESTION_ERROR]).toHaveBeenCalledWith('')
@@ -414,7 +427,7 @@ describe('HomePage 口味建議查詢失敗（Task 11）', () => {
       ...okSuggestionResults().slice(1),
       ...laterFailure,
     ])
-    await vi.waitFor(() => expect(mocks.from).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() => expect(mocks.from).toHaveBeenCalledTimes(2))
 
     await ratingReload(tree)()
     expect(mocks.stateSetters[SUGGESTION_ERROR]).toHaveBeenCalledWith(SUGGESTION_LOAD_ERROR)
@@ -433,7 +446,7 @@ describe('HomePage 口味建議查詢失敗（Task 11）', () => {
       gate.promise,
       ...okSuggestionResults().slice(1),
     ])
-    await vi.waitFor(() => expect(mocks.from).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() => expect(mocks.from).toHaveBeenCalledTimes(2))
     if (typeof cleanup === 'function') cleanup()
     for (const setter of mocks.stateSetters) setter.mockClear()
 

@@ -648,7 +648,7 @@ export default function RoomPage() {
         )}
         {room.status === 'decided' && draw && (
           <div className="space-y-4">
-            {!spun ? (
+            {!spun && draw.probabilities[draw.winner_restaurant_id] != null ? (
               <Wheel rows={candidates} winnerId={draw.winner_restaurant_id}
                 onDone={() => setSpun(true)} />
             ) : (

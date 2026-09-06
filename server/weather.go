@@ -24,16 +24,19 @@ type WeatherProvider interface {
 }
 
 // Open-Meteo：免費免金鑰（spec §2）。快取 15 分鐘：每次投票 rescore 都會查天氣，
-// 天氣變化也用不到更細的粒度。小時桶 key 讓「座標格有限」不再能約束 map 大小，
-// 因此成功寫入時惰性淘汰；serve-stale 只需涵蓋投票時長，保留 24 小時已綽綽有餘。
+// 天氣變化也用不到更細的粒度。成功與失敗快取各有硬上限，過期清理最多每分鐘一次。
+// 滿載時不接納新 key，避免高基數流量驅逐投票仍在使用的 serve-stale 值。
 type openMeteoProvider struct {
 	baseURL string
 	client  *http.Client
 
-	mu     sync.Mutex
-	cache  map[string]weatherEntry
-	failAt map[string]time.Time // negative cache：最近一次抓取失敗的時間（D24）
+	mu        sync.Mutex
+	cache     map[string]weatherEntry
+	failAt    map[string]time.Time // negative cache：最近一次抓取失敗的時間（D24）
+	nextSweep time.Time
 }
+
+const weatherCacheMaxEntries = 4096
 
 type weatherEntry struct {
 	w  Weather
@@ -133,9 +136,16 @@ func (p *openMeteoProvider) Current(ctx context.Context, lat, lng float64, at ti
 	}
 	now := clockNow()
 	p.mu.Lock()
-	p.cache[key] = weatherEntry{w: w, at: now}
-	delete(p.failAt, key)
 	p.evictStaleLocked()
+	if _, exists := p.cache[key]; exists || len(p.cache) < weatherCacheMaxEntries {
+		p.cache[key] = weatherEntry{w: w, at: now}
+	} else {
+		// Keep search/draw consistent with cached-only votes: data we cannot retain
+		// must be neutral everywhere, not a one-request weather multiplier.
+		p.mu.Unlock()
+		return Weather{}, fmt.Errorf("open-meteo cache capacity reached")
+	}
+	delete(p.failAt, key)
 	p.mu.Unlock()
 	return w, nil
 }
@@ -143,6 +153,10 @@ func (p *openMeteoProvider) Current(ctx context.Context, lat, lng float64, at ti
 // evictStaleLocked 清理小時桶累積的舊狀態；呼叫者必須持有 p.mu。
 func (p *openMeteoProvider) evictStaleLocked() {
 	now := clockNow()
+	if now.Before(p.nextSweep) {
+		return
+	}
+	p.nextSweep = now.Add(time.Minute)
 	for cacheKey, e := range p.cache {
 		if now.Sub(e.at) > 24*time.Hour {
 			delete(p.cache, cacheKey)
@@ -158,7 +172,9 @@ func (p *openMeteoProvider) evictStaleLocked() {
 func (p *openMeteoProvider) markFail(key string, err error) error {
 	p.mu.Lock()
 	p.evictStaleLocked()
-	p.failAt[key] = clockNow()
+	if _, exists := p.failAt[key]; exists || len(p.failAt) < weatherCacheMaxEntries {
+		p.failAt[key] = clockNow()
+	}
 	p.mu.Unlock()
 	return err
 }

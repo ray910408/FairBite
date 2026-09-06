@@ -14,6 +14,7 @@ type VotingProps = {
 
 export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; voting?: VotingProps }) {
   const kept = sortKept(rows)
+  const oddsKnown = kept.every(c => c.probability != null)
   const percents = formatPercents(kept.map(c => c.probability ?? 0))
   const excluded = sortExcluded(rows)
   const max = Math.max(...kept.map(c => c.probability ?? 0), 0.0001)
@@ -32,12 +33,12 @@ export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; 
           <div className="flex items-baseline gap-2">
             <span aria-hidden="true" className="font-mono text-xs text-fg-muted">{ci + 1}</span>
             <span className="flex-1 font-semibold">{c.restaurants.name}</span>
-            <span className="font-mono text-sm font-semibold text-brand">{percents[ci]}</span>
+            <span className="font-mono text-sm font-semibold text-brand">{oddsKnown ? percents[ci] : '機率未提供'}</span>
           </div>
-          <div aria-hidden="true" className="h-1.5 overflow-hidden rounded-full bg-brand-soft">
+          {oddsKnown && <div aria-hidden="true" className="h-1.5 overflow-hidden rounded-full bg-brand-soft">
             <div className="h-full rounded-full bg-brand"
               style={{ width: `${((c.probability ?? 0) / max) * 100}%` }} />
-          </div>
+          </div>}
           <div className="flex flex-wrap gap-1">
             {c.weight_breakdown.map((e, i) => (
               <span key={i}

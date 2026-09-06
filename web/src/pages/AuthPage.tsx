@@ -64,7 +64,7 @@ export default function AuthPage() {
             <div className="space-y-1">
               <label className="label" htmlFor="displayName">顯示名稱</label>
               <input id="displayName" className="field" placeholder="房間裡看到的名字"
-                value={displayName} onChange={e => setDisplayName(e.target.value)} required />
+                value={displayName} onChange={e => setDisplayName(e.target.value)} required maxLength={80} />
             </div>
           )}
           <div className="space-y-1">

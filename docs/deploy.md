@@ -90,6 +90,32 @@ push 到 `main` 時 `deploy-pages.yml` 的 `migrate` job 會自動 `supabase db 
 > 教訓（2026-08-14 QA）：Round 1 的 0017 沒推上線，前端照常自動部署，
 > 線上建房/進房整整壞了一天——`column rooms.meal_time does not exist`。
 
+## 2026-09 安全修復部署閘門
+
+這次 migrations `20260905000100`–`20260905000300` **不是新舊版本完全相容的更新**。
+部署時先暫停舊 Go API 寫入／Render auto-deploy，備份資料庫，再依序套用 migrations、
+部署新 Go 與 Web，最後恢復服務；不可讓舊評分程式在快照清理後重新寫入私人統計。
+舊 SPA 需重新載入：`profiles.default_prefs` 改由只讀本人的 `get_my_default_prefs()` RPC 取得。
+Go 若先啟動而配額 schema 尚未存在，搜尋會回 503（fail closed），不會先呼叫付費 API。
+
+- Migration `20260905000100` 驗證既有名字與偏好：名稱 1–80 字／最多 320 bytes；
+  菜系最多 20 項、dietary 最多 10 項，每項最多 64 bytes，僅允許目前詞彙且不得重複。
+  違規舊資料會阻擋 migration；先由擁有者明確修正，不自動刪除／截斷飲食選擇。
+- 配額存在 `public.resource_quota_limits`，僅管理員可調整：建房 5 次／10 分鐘、
+  20 次／UTC 日、最多 5 個活躍房（逾 24 小時 lobby 不計入，不刪除）；
+  搜尋 5 次／10 分鐘、30 次／UTC 日；Google 最壞呼叫預留每帳號 120 次／日、
+  全站 10000 次／日；跨 instances 最多 4 個搜尋，45 秒 deadline／60 秒失效 lease。
+  window 為固定起算 10 分鐘；失敗或未用完的預留不退款，重啟／刪房不重設帳號額度。
+  單次目前最多預留 32 個 HTTP calls。預算是 request 數，不是固定貨幣金額。
+- 未滿 4 人的房間不使用 recency／exposure／satisfaction 計分；4 人以上使用粗化統計，
+  不再顯示精確人次，但不承諾對串通成員提供不可推論性或 differential privacy。
+- Migration `20260905000300` 先鎖定並封存所有原始候選／抽選資料至 `private_scoring`，
+  再隱藏公開舊機率與權重。winner、seed 不變，舊機率不被偽造或重算；
+  原始稽核僅資料庫 owner 可存取，不公開給 REST service role。
+  未完成房間在開始投票／投票／抽選時恢復新規則機率；已抽選 UI 顯示「歷史機率已隱藏」。
+- 新 migrations 使用 timestamp，避免與本機曾出現、但不在此 checkout 的 `0026_search_calls`
+  版本號衝突。部署前仍須比對目標 migration history；本次只驗證隔離 DB，沒有修改 production。
+
 ## 換網域或改服務名時
 
 CORS 只允許單一來源。改前端網域時要同時改兩處，少一處就整站 API 全部被瀏覽器擋：

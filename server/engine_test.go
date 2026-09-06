@@ -250,8 +250,8 @@ func TestScoringFactors(t *testing.T) {
 	var sum float64
 	for _, c := range res.Kept {
 		sum += c.Probability
-		if len(c.Trace) != 5 {
-			t.Errorf("%s trace 應有 5 個因素，got %d", c.PlaceID, len(c.Trace))
+		if len(c.Trace) != 4 {
+			t.Errorf("%s trace 應有 4 個公開因素，got %d", c.PlaceID, len(c.Trace))
 		}
 		for _, e := range c.Trace {
 			if e.Reason == "" || e.Mult <= 0 {
@@ -497,8 +497,8 @@ func TestVoteFactor(t *testing.T) {
 		t.Errorf("2 張贊成票應 ×%.1f：got %f want %f", 1+2*VoteBoostPerUp, got, want)
 	}
 	for _, c := range res.Kept {
-		if len(c.Trace) != 5 {
-			t.Errorf("%s trace 應有 5 個因素，got %d", c.PlaceID, len(c.Trace))
+		if len(c.Trace) != 4 {
+			t.Errorf("%s trace 應有 4 個公開因素，got %d", c.PlaceID, len(c.Trace))
 		}
 	}
 }
@@ -594,7 +594,7 @@ func TestRecencyReason(t *testing.T) {
 	res := Evaluate(recencyIn(RecencyCount{Fresh: 1, Fading: 2}, "balanced", 4))
 	for _, e := range res.Kept[0].Trace {
 		if e.Factor == "recency" {
-			if e.Reason != "1 位成員 14 天內造訪過；2 位成員 15–30 天前造訪過" {
+			if e.Reason != "依群體近期用餐概況調整" {
 				t.Errorf("reason 格式不符：%q", e.Reason)
 			}
 			return
@@ -607,7 +607,7 @@ func TestRecencyReason(t *testing.T) {
 // 全場皆新時會被正規化抵銷、應為中性（D21）——單獨測 p1 時需要這個對照組。
 func exposureIn(c ExposureCount, exploration string) EngineInput {
 	old := rest(func(r *Restaurant) { r.PlaceID = "p-old" })
-	return EngineInput{Restaurants: []Restaurant{rest(nil), old}, Members: []Member{member(nil)},
+	return EngineInput{Restaurants: []Restaurant{rest(nil), old}, Members: []Member{member(nil), member(nil), member(nil), member(nil)},
 		Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
 		Exposure:    map[string]ExposureCount{"p1": c, "p-old": {Recommended: 3}},
 		Exploration: exploration}
@@ -639,10 +639,10 @@ func TestExposureFactor(t *testing.T) {
 		{"新店_explore加倍", ExposureCount{}, "explore", 1.2, true},
 		{"新店_familiar關閉", ExposureCount{}, "familiar", 1.0, false},
 		{"推薦過未中選_中性", ExposureCount{Recommended: 3}, "balanced", 1.0, true},
-		{"熟店_內插", ExposureCount{Recommended: 9, Chosen: 2}, "balanced", 0.96, true}, // 單人房：2/(5*1)=0.4
-		{"熟店_達門檻", ExposureCount{Recommended: 9, Chosen: 5}, "balanced", 0.9, true},
-		{"熟店_explore加重", ExposureCount{Recommended: 9, Chosen: 5}, "explore", 0.85, true},
-		{"熟店_familiar關閉", ExposureCount{Recommended: 9, Chosen: 5}, "familiar", 1.0, false},
+		{"熟店_粗分組", ExposureCount{Recommended: 30, Chosen: 8}, "balanced", 0.95, true}, // 4 人房 8/20 -> 0.5 bucket
+		{"熟店_達門檻", ExposureCount{Recommended: 30, Chosen: 20}, "balanced", 0.9, true},
+		{"熟店_explore加重", ExposureCount{Recommended: 30, Chosen: 20}, "explore", 0.85, true},
+		{"熟店_familiar關閉", ExposureCount{Recommended: 30, Chosen: 20}, "familiar", 1.0, false},
 		{"未知檔位當balanced", ExposureCount{}, "", 1.1, true},
 	}
 	for _, c := range cases {
@@ -684,8 +684,7 @@ func TestExposureAllNewSurvivorsNeutralWhenOldCandidateExcluded(t *testing.T) {
 }
 
 func TestExposureBaselineTreatsOwnSearchAsNew(t *testing.T) {
-	in := exposureIn(ExposureCount{Recommended: 2}, "balanced")
-	in.Members = append(in.Members, member(func(m *Member) { m.UserID = "u2" }))
+	in := exposureIn(ExposureCount{Recommended: 4}, "balanced")
 	in.ExposureCounted = map[string]bool{"p1": true}
 	got, hasTrace := exposureMult(t, in)
 	if !hasTrace || got != 1.1 {
@@ -708,16 +707,14 @@ func TestExposureBaselineDoesNotSubtractCandidateExcludedAtSearch(t *testing.T) 
 // 五人房吃過一次 ≠ 吃滿懲罰（D21/OV#5：人均門檻）
 func TestChosenPenaltyIsPerCapita(t *testing.T) {
 	in := exposureIn(ExposureCount{Recommended: 9, Chosen: 1}, "balanced")
-	for i := 2; i <= 5; i++ {
-		in.Members = append(in.Members, member(func(m *Member) { m.UserID = fmt.Sprintf("u%d", i) }))
-	}
+	in.Members = append(in.Members, member(func(m *Member) { m.UserID = "u5" }))
 	got, hasTrace := exposureMult(t, in)
-	want := 1 - 0.1*(1.0/25.0) // 1/(5*5) = 0.04 → 0.996
+	want := 1.0 // 1/(5*5) = 0.04 -> neutral coarse bucket
 	if !hasTrace || got < want-1e-9 || got > want+1e-9 {
 		t.Fatalf("五人房 Chosen=1 應僅極輕降權：got %v want %v", got, want)
 	}
-	if entry := exposureFactor(in.Restaurants[0], in); entry.Reason != "房內累計中選 1 人次，稍作降權" {
-		t.Fatalf("中選 trace 應使用人次：got %q", entry.Reason)
+	if entry := exposureFactor(in.Restaurants[0], in); entry.Reason != "依群體曝光概況調整" {
+		t.Fatalf("中選 trace 不應公開精確人次：got %q", entry.Reason)
 	}
 }
 
@@ -852,17 +849,10 @@ func TestPrefFairnessBoost(t *testing.T) {
 		Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
 	}
 	prefMult := func(in EngineInput) (float64, string) {
-		res := Evaluate(in)
-		if len(res.Kept) != 1 {
-			t.Fatalf("應保留，got %+v", res.Excluded)
-		}
-		for _, e := range res.Kept[0].Trace {
-			if e.Factor == "preference" {
-				return e.Mult, e.Reason
-			}
-		}
-		t.Fatal("缺 preference trace")
-		return 0, ""
+		// Factor arithmetic is tested directly; Evaluate's k=4 gate is covered
+		// separately by TestSmallGroupPrivateHistoryNoninterference.
+		e := prefFactor(in.Restaurants[0], in)
+		return e.Mult, e.Reason
 	}
 	// 無滿足度資料：一半命中 → 0.6 + 0.9*0.5 = 1.05
 	if m, reason := prefMult(in); m < 1.049 || m > 1.051 || strings.Contains(reason, "公平") {
@@ -914,7 +904,7 @@ func TestNewFactorsChangeOutcome(t *testing.T) {
 	near := rest(func(r *Restaurant) { r.PlaceID = "near" })
 	far := rest(func(r *Restaurant) { r.PlaceID = "far"; r.Lat = 25.0586 }) // ~1.2km
 	base := func() EngineInput {
-		return EngineInput{Restaurants: []Restaurant{near, far}, Members: []Member{member(nil)},
+		return EngineInput{Restaurants: []Restaurant{near, far}, Members: []Member{member(nil), member(nil), member(nil), member(nil)},
 			Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170}
 	}
 
@@ -935,7 +925,7 @@ func TestNewFactorsChangeOutcome(t *testing.T) {
 	})
 	t.Run("人均熟店降權 ≥2%（spec 輕降權）", func(t *testing.T) {
 		off, on := base(), base()
-		on.Exposure = map[string]ExposureCount{"near": {Recommended: 9, Chosen: 5}, "far": {Recommended: 9}}
+		on.Exposure = map[string]ExposureCount{"near": {Recommended: 30, Chosen: 20}, "far": {Recommended: 30}}
 		if diff := probOf(off, "near") - probOf(on, "near"); diff < 0.02 {
 			t.Fatalf("chosen-penalty 位移不足：%v", diff)
 		}
@@ -950,18 +940,20 @@ func TestNewFactorsChangeOutcome(t *testing.T) {
 			t.Fatalf("timeslot 位移不足：%v", diff)
 		}
 	})
-	t.Run("公平校正拉抬最低者偏好 ≥5%", func(t *testing.T) {
+	t.Run("四人房公平校正拉抬最低者偏好 ≥4%", func(t *testing.T) {
 		jp := rest(func(r *Restaurant) { r.PlaceID = "jp" })
 		tw := rest(func(r *Restaurant) { r.PlaceID = "tw"; r.CuisineTags = []string{"taiwanese"} })
 		mk := func() EngineInput {
 			return EngineInput{Restaurants: []Restaurant{jp, tw},
 				Members: []Member{member(nil),
+					member(func(m *Member) { m.UserID = "u3" }),
+					member(func(m *Member) { m.UserID = "u4"; m.Cuisines = []string{"taiwanese"} }),
 					member(func(m *Member) { m.UserID = "u2"; m.Cuisines = []string{"taiwanese"} })},
 				Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170}
 		}
 		off, on := mk(), mk()
 		on.Satisfaction = map[string]float64{"u1": 0.2, "u2": 0.8}
-		if diff := probOf(on, "jp") - probOf(off, "jp"); diff < 0.05 {
+		if diff := probOf(on, "jp") - probOf(off, "jp"); diff < 0.04 {
 			t.Fatalf("fairness 位移不足：%v", diff)
 		}
 	})

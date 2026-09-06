@@ -19,34 +19,43 @@ func TestDietaryLegacyHalalFromDatabaseIsIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
+	// Simulate pre-20260905000100 legacy storage only inside this rollback-only transaction.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+	if _, err := tx.Exec(ctx, `alter table public.room_members drop constraint room_members_dietary_bounds`); err != nil {
+		t.Fatal(err)
+	}
 
 	const (
 		userID = "83838383-8383-4383-8383-838383838383"
 		roomID = "84848484-8484-4484-8484-848484848484"
 	)
-	if _, err := pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID); err != nil {
+	if _, err := tx.Exec(ctx, `delete from public.rooms where id = $1`, roomID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `delete from auth.users where id = $1`, userID); err != nil {
+	if _, err := tx.Exec(ctx, `delete from auth.users where id = $1`, userID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `insert into auth.users (id, email) values ($1, 'legacy-halal@test.dev')`, userID); err != nil {
+	if _, err := tx.Exec(ctx, `insert into auth.users (id, email) values ($1, 'legacy-halal@test.dev')`, userID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status) values ($1, $2, 'lobby')`, roomID, userID); err != nil {
+	if _, err := tx.Exec(ctx, `insert into public.rooms (id, host_id, status) values ($1, $2, 'lobby')`, roomID, userID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `insert into public.room_members
+	if _, err := tx.Exec(ctx, `insert into public.room_members
 		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
 		values ($1, $2, 500, '[]', '["halal"]', 2000, 'walking')`, roomID, userID); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
-		_, _ = pool.Exec(ctx, `delete from auth.users where id = $1`, userID)
+		_, _ = tx.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+		_, _ = tx.Exec(ctx, `delete from auth.users where id = $1`, userID)
 	})
 
-	members, err := LoadMembers(ctx, pool, roomID)
+	members, err := LoadMembers(ctx, tx, roomID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +79,7 @@ func TestLegacyUnsupportedDietaryValuesAreIgnored(t *testing.T) {
 	restaurant := Restaurant{
 		PlaceID: "legacy-compatible", Name: "一般餐廳",
 		CuisineTags: []string{"steak", "beef_noodle", "ramen", "dimsum"},
-		PriceLevel: 1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
+		PriceLevel:  1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
 	}
 	for _, tc := range []struct {
 		name    string

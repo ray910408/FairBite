@@ -755,6 +755,11 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 		{name: "過濾關閉且取消素食且零結果", removeVegetarian: true, empty: true, wantStatus: http.StatusUnprocessableEntity},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Each condition-drift case starts independently; the production quota is
+			// covered by quota_test.go rather than consumed across these eight cases.
+			if _, err := pool.Exec(ctx, `delete from public.account_resource_usage where user_id = $1`, hostID); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := pool.Exec(ctx,
 				`update public.rooms set status = 'lobby', cuisine_filter = $2 where id = $1`, roomID, tc.filterEnabled); err != nil {
 				t.Fatal(err)
@@ -1136,6 +1141,7 @@ func TestSearchAndDrawHappyPathExposureBaseline(t *testing.T) {
 		roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
+	addHistoryScoringPeers(t, ctx, pool, roomID)
 	t.Cleanup(func() {
 		pool.Exec(ctx, `delete from public.dining_history where room_id = $1`, roomID)
 		pool.Exec(ctx, `delete from public.dining_history where user_id = $1 and room_id is null`, hostID)
@@ -1298,9 +1304,10 @@ func TestVotePreservesExcludedAtSearchExposureBaseline(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `insert into public.exposure_stats
 		(user_id, restaurant_id, recommended_count)
-		values ($1, $2, 1), ($1, $3, 3)`, hostID, targetID, anchorID); err != nil {
+		values ($1, $2, 1), ($1, $3, 6)`, hostID, targetID, anchorID); err != nil {
 		t.Fatal(err)
 	}
+	addHistoryScoringPeers(t, ctx, pool, roomID)
 	t.Cleanup(func() {
 		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
 		pool.Exec(ctx, `delete from auth.users where id = $1`, hostID)
@@ -1408,6 +1415,10 @@ func TestSearchEdgeCases(t *testing.T) {
 		`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
 		 values ($1, $2, 100, '["japanese"]', 2000, 'walking')
 		 on conflict (room_id, user_id) do update set budget_max = 100`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	// Each test run owns a fresh account budget; production quotas remain durable.
+	if _, err := pool.Exec(ctx, `delete from public.account_resource_usage where user_id=$1`, hostID); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID) })
@@ -1887,6 +1898,10 @@ func TestSearchUnfulfilledDietaryTermsInBoth422Paths(t *testing.T) {
 		roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
+	// Each test run owns a fresh account budget; production quotas remain durable.
+	if _, err := pool.Exec(ctx, `delete from public.account_resource_usage where user_id=$1`, hostID); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		pool.Exec(ctx, `delete from public.restaurants where place_id = $1`, placeID)
 		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
@@ -2271,6 +2286,10 @@ func TestVotingFlow(t *testing.T) {
 			roomID, uid, ready); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Each test run owns a fresh account budget; production quotas remain durable.
+	if _, err := pool.Exec(ctx, `delete from public.account_resource_usage where user_id=$1`, hostID); err != nil {
+		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		pool.Exec(ctx, `delete from public.dining_history where room_id = $1`, roomID)
@@ -2989,6 +3008,7 @@ func TestSearchExposureOrderingNewStoreBonus(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	addHistoryScoringPeers(t, ctx, pool, roomA, roomB)
 	t.Cleanup(func() {
 		pool.Exec(ctx, `delete from public.rooms where id = any($1::uuid[])`, []string{roomA, roomB})
 		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
