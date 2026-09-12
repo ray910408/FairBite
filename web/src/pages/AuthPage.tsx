@@ -16,6 +16,11 @@ export default function AuthPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
+    // type="email" accepts single-label domains such as 1@1; registration needs a full domain.
+    if (mode === 'register' && !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i.test(email)) {
+      setError('請輸入完整的 Email，例如 you@example.com')
+      return
+    }
     setBusy(true)
     try {
       const { error } =

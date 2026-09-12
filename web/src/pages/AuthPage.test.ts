@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { supabase } from '../lib/supabase'
+import { AuthError } from '@supabase/supabase-js'
 
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -49,6 +51,23 @@ function findButton(node: unknown, label: string): NodeLike | undefined {
   return findButton(element.props?.children, label)
 }
 
+function findForm(node: unknown): NodeLike | undefined {
+  if (Array.isArray(node)) return node.map(findForm).find(Boolean)
+  if (!node || typeof node !== 'object') return undefined
+  const element = node as NodeLike
+  return element.type === 'form' ? element : findForm(element.props?.children)
+}
+
+async function submitAuth(mode: 'login' | 'register', email: string) {
+  mocks.stateValues = [mode, email, 'password123', '顯示名', '', false]
+  const { default: AuthPage } = await import('./AuthPage')
+  const form = findForm(AuthPage())
+  if (!form?.props?.onSubmit) throw new Error('找不到登入／註冊表單')
+  await (form.props.onSubmit as (event: { preventDefault: () => void }) => Promise<void>)({
+    preventDefault: vi.fn(),
+  })
+}
+
 describe('AuthPage segmented control', () => {
   it('bounds the registration name at the database character limit', async () => {
     mocks.stateValues = ['register']
@@ -57,10 +76,42 @@ describe('AuthPage segmented control', () => {
     expect(html).toMatch(/id="displayName"[^>]*maxLength="80"/i)
   })
   beforeEach(() => {
+    vi.mocked(supabase.auth.signUp).mockReset().mockResolvedValue({ data: { user: null, session: null }, error: null })
+    vi.mocked(supabase.auth.signInWithPassword).mockReset()
     mocks.navigate.mockReset()
     mocks.stateIndex = 0
     mocks.stateValues = []
     mocks.stateSetters = []
+  })
+
+  it.each(['1@1', 'person@localhost', '1\\@1', 'person@@example.com', 'person @example.com', 'person@example..com', 'person@-example.com', 'person@example.com.'])('註冊拒絕不完整或錯誤的 Email：%s', async email => {
+    await submitAuth('register', email)
+
+    expect(supabase.auth.signUp).not.toHaveBeenCalled()
+    expect(supabase.auth.signInWithPassword).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[4]).toHaveBeenLastCalledWith('請輸入完整的 Email，例如 you@example.com')
+    expect(mocks.stateSetters[5]).not.toHaveBeenCalledWith(true)
+    expect(mocks.navigate).not.toHaveBeenCalled()
+  })
+
+  it.each(['person@example.com', 'person+tag@mail.example.com.tw', 'USER@EXAMPLE.COM', '1@1.com'])('正常 Email 可以註冊：%s', async email => {
+    await submitAuth('register', email)
+
+    expect(supabase.auth.signUp).toHaveBeenCalledExactlyOnceWith({
+      email, password: 'password123', options: { data: { display_name: '顯示名' } },
+    })
+    expect(mocks.navigate).toHaveBeenCalledWith('/')
+  })
+
+  it('新註冊規則不阻擋既有帳號登入', async () => {
+    vi.mocked(supabase.auth.signInWithPassword).mockResolvedValue({
+      data: { user: null, session: null }, error: new AuthError('Invalid login credentials', 400, 'invalid_credentials'),
+    })
+    await submitAuth('login', '1@1')
+
+    expect(supabase.auth.signInWithPassword).toHaveBeenCalledExactlyOnceWith({ email: '1@1', password: 'password123' })
+    expect(supabase.auth.signUp).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[4]).toHaveBeenLastCalledWith('Email 或密碼錯誤')
   })
 
   it('登入與註冊按鈕都有至少 44px 的 class', async () => {
