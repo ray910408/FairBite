@@ -84,7 +84,14 @@ describe('AuthPage segmented control', () => {
     mocks.stateSetters = []
   })
 
-  it.each(['1@1', 'person@localhost', '1\\@1', 'person@@example.com', 'person @example.com', 'person@example..com', 'person@-example.com', 'person@example.com.'])('註冊拒絕不完整或錯誤的 Email：%s', async email => {
+  it.each([
+    '1@1', '23@d.d', 'a@b', 'abc@gmail', 'abc@localhost', 'abc@', '@gmail.com',
+    'abc gmail.com', 'abc@@gmail.com', 'abc@example.', 'abc@example.c', 'abc@.com',
+    'abc@example..com', '.abc@gmail.com', 'abc.@gmail.com', 'abc..def@gmail.com', '', '   ',
+    '1\\@1', 'person @example.com', 'person@-example.com', 'person@example-.com',
+    'user@example.123', `user@example.${'a'.repeat(64)}`, `${'a'.repeat(65)}@gmail.com`,
+    `user@${'a'.repeat(64)}.com`,
+  ])('註冊拒絕不完整或錯誤的 Email：%s', async email => {
     await submitAuth('register', email)
 
     expect(supabase.auth.signUp).not.toHaveBeenCalled()
@@ -94,13 +101,38 @@ describe('AuthPage segmented control', () => {
     expect(mocks.navigate).not.toHaveBeenCalled()
   })
 
-  it.each(['person@example.com', 'person+tag@mail.example.com.tw', 'USER@EXAMPLE.COM', '1@1.com'])('正常 Email 可以註冊：%s', async email => {
+  it.each([
+    'user@example.com', 'abc@gmail.com', 'student@ttu.edu.tw', 'test.user+1@gmail.com',
+    'a@b.co', 'USER@EXAMPLE.COM', 'user123@sub.example.com', 'abc-def@example.com',
+    '23@d.dd', `user@example.${'a'.repeat(63)}`, ' user@example.com ',
+  ])('格式正常的 Email 送交 Supabase，由 hook 檢查 MX：%s', async email => {
     await submitAuth('register', email)
 
     expect(supabase.auth.signUp).toHaveBeenCalledExactlyOnceWith({
-      email, password: 'password123', options: { data: { display_name: '顯示名' } },
+      email: email.trim(), password: 'password123', options: { data: { display_name: '顯示名' } },
     })
     expect(mocks.navigate).toHaveBeenCalledWith('/')
+  })
+
+  it.each([
+    ['signup_email_no_mx', '此 Email 網域沒有可用的收信設定，請確認信箱地址'],
+    ['signup_email_dns_unavailable', '暫時無法確認 Email 網域，請稍後再試'],
+  ])('hook 拒絕註冊時顯示錯誤且不導頁：%s', async (message, expected) => {
+    vi.mocked(supabase.auth.signUp).mockResolvedValue({
+      data: { user: null, session: null }, error: new AuthError(message, 422, 'unexpected_failure'),
+    })
+    await submitAuth('register', 'user@example.com')
+    expect(mocks.stateSetters[4]).toHaveBeenLastCalledWith(expected)
+    expect(mocks.stateSetters[5]).toHaveBeenLastCalledWith(false)
+    expect(mocks.navigate).not.toHaveBeenCalled()
+  })
+
+  it('註冊連線失敗會顯示錯誤並結束等待', async () => {
+    vi.mocked(supabase.auth.signUp).mockRejectedValue(new TypeError('Failed to fetch'))
+    await submitAuth('register', 'user@example.com')
+    expect(mocks.stateSetters[4]).toHaveBeenLastCalledWith('連線失敗，請檢查網路後再試')
+    expect(mocks.stateSetters[5]).toHaveBeenLastCalledWith(false)
+    expect(mocks.navigate).not.toHaveBeenCalled()
   })
 
   it('新註冊規則不阻擋既有帳號登入', async () => {

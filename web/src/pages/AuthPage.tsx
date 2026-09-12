@@ -4,6 +4,9 @@ import { authErrorMessage } from '../lib/authErrors'
 import { supabase } from '../lib/supabase'
 import { Alert, Logo, Spinner } from '../components/icons'
 
+// Same format policy as server/signup_email.go; DNS MX is enforced by the Supabase hook.
+const registrationEmailPattern = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.[a-z]{2,63}$/i
+
 export default function AuthPage() {
   const nav = useNavigate()
   const [mode, setMode] = useState<'login' | 'register'>('login')
@@ -16,8 +19,8 @@ export default function AuthPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    // type="email" accepts single-label domains such as 1@1; registration needs a full domain.
-    if (mode === 'register' && !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i.test(email)) {
+    const registrationEmail = email.trim()
+    if (mode === 'register' && (registrationEmail.length > 254 || registrationEmail.split('@')[0].length > 64 || !registrationEmailPattern.test(registrationEmail))) {
       setError('請輸入完整的 Email，例如 you@example.com')
       return
     }
@@ -26,13 +29,15 @@ export default function AuthPage() {
       const { error } =
         mode === 'register'
           ? await supabase.auth.signUp({
-              email,
+              email: registrationEmail,
               password,
               options: { data: { display_name: displayName } },
             })
           : await supabase.auth.signInWithPassword({ email, password })
       if (error) setError(authErrorMessage(error))
       else nav('/')
+    } catch (error) {
+      setError(authErrorMessage(error instanceof Error ? error : { message: '' }))
     } finally {
       setBusy(false)
     }

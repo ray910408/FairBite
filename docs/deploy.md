@@ -51,6 +51,60 @@
 **Free plan 會在閒置 15 分鐘後休眠**，之後第一個請求要等約 50 秒冷啟動。
 Demo 前先打一次 `/healthz` 喚醒。
 
+## 註冊 Email：Regex + DNS MX hook
+
+註冊的格式檢查會先 trim、拒絕不完整網域、local part 首尾／連續句點，
+TLD 限 2–63 個英文字母。Go hook 再查 DNS MX；沒有 MX、Null MX（明示不收信）
+或 DNS 查詢失敗時拒絕建立帳號。依本產品要求採嚴格 MX 政策，不回退到 A/AAAA。
+MX 通過只代表網域有郵件設定，不證明個別信箱存在或屬於使用者。
+
+**只部署前端／後端程式不會自動啟用 MX。** 必須在 Supabase 啟用
+Before User Created hook，才能攔住直接呼叫 Auth API 的註冊。前端仍使用
+原本的 signUp，Supabase 在寫入 auth.users 前呼叫 hook；既有帳號登入不受影響。
+本 hook 僅供目前的 email + password 註冊；日後加入電話或匿名註冊需先調整政策。
+
+1. 先部署 Go 後端，確認公開 HTTPS 的
+   POST /api/auth/before-user-created 可連線。尚未配置 secret 時回 503，
+   配置後未簽章請求應回 401；這些都不是註冊成功的證據。
+2. 在 Supabase Dashboard → Authentication → Hooks 建立 **Before User Created / HTTP**，
+   URL 設為 https://<Go 後端網域>/api/auth/before-user-created，產生 signing secret。
+   將完整的 v1,whsec_<base64-secret> 存入後端環境變數 SIGNUP_HOOK_SECRET，
+   重新部署後端；不要將 secret 寫入 Git 或 VITE_*。
+3. **後端就緒後才啟用 hook**，維持原本 Confirm email 關閉。Hook 有約 5 秒期限，
+   DNS 查詢最多 2 秒，沒有應用層重試。repo 的 Render free plan 會休眠，冷啟動可能
+   超過期限而使註冊失敗；正式使用前須改用不休眠的執行環境，或另將此 hook 部署到
+   能滿足期限的服務。不能靠放行 DNS 故障來規避這個限制。
+4. 在測試環境直接呼叫 Supabase signUp 驗證：23@d.d 格式拒絕；
+   user@example.com 因 Null MX 拒絕；使用自己的可收信測試地址可建立帳號。
+   前兩筆應回錯誤且 auth.users 無新增資料。DNS 故障時應顯示稍後再試。
+   Hook 正常業務拒絕採 HTTP 200 加 error.http_code=422／error.message 的回應，
+   讓 Auth 解析錯誤並停止建帳；不可只看 hook HTTP status 判定成功。
+5. 若啟用失敗，先記錄 Auth hook 錯誤並停下處理；不要無限重試。
+   回滾須停用該 hook 才回到舊的「只檢查格式」行為，應明確告知 MX 保護將消失。
+   不需要 DB migration，也不刪除／修改任何既有帳號。
+
+本機測試時先設定同一個 SIGNUP_HOOK_SECRET 給 Go server 與啟動 Supabase CLI
+的環境，再取消 supabase/config.toml 內 [auth.hook.before_user_created] 的註解。
+URI 使用 http://host.docker.internal:8787/api/auth/before-user-created。
+只設定 server/.env 不會自動傳入 Supabase CLI；不要用 config push 改正式 auth 設定。
+
+可重跑的驗證（在 server 目錄、PowerShell）：
+
+~~~powershell
+go test ./... -run '^TestSignup' -count=1
+$env:TEST_SIGNUP_DNS = '1'
+go test ./... -run '^TestSignupEmailLiveDNS$' -count=1 -v
+Remove-Item Env:TEST_SIGNUP_DNS
+~~~
+
+第一個命令是離線格式／MX／簽章／路由回歸測試；第二個只實際查 DNS，不建立帳號。
+Supabase 建帳整合驗證必須另行完成，不能用單元測試代替。
+
+參考：[Before User Created](https://supabase.com/docs/guides/auth/auth-hooks/before-user-created-hook)、
+[HTTP hook 錯誤處理](https://supabase.com/docs/guides/auth/auth-hooks#http-hooks)、
+[Auth HTTP dispatcher](https://github.com/supabase/auth/blob/master/internal/hooks/hookshttp/hookshttp.go)、
+[Null MX](https://www.rfc-editor.org/rfc/rfc7505.html)。
+
 ## 3. 前端設定值
 
 編輯 [`web/.env.production`](../web/.env.production)，把三行換成實際值：

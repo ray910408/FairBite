@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"sort"
 	"sync"
@@ -78,6 +80,8 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, weather
 	// single-flight 狀態綁在路由實例上，避免跨測試/跨實例透過 process 全域耦合
 	var searchInFlight sync.Map
 	mux := http.NewServeMux()
+	// Supabase signs this hook before a user/session exists; do not put it behind JWT middleware.
+	mux.Handle("POST /api/auth/before-user-created", newSignupHook(os.Getenv("SIGNUP_HOOK_SECRET"), net.DefaultResolver.LookupMX))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, map[string]bool{"ok": true})
 	})

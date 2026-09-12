@@ -7,6 +7,21 @@ import { authErrorMessage } from './authErrors'
 const err = (code: string | undefined, message = 'raw english') => ({ code, message })
 
 describe('authErrorMessage', () => {
+  it.each([
+    ['signup_email_invalid', '請輸入完整的 Email，例如 you@example.com'],
+    ['signup_email_no_mx', '此 Email 網域沒有可用的收信設定，請確認信箱地址'],
+    ['signup_email_dns_unavailable', '暫時無法確認 Email 網域，請稍後再試'],
+    ['signup_email_rate_limited', '嘗試次數過多，請稍後再試'],
+  ])('辨識 hook 的固定錯誤識別字：%s', (message, expected) => {
+    expect(authErrorMessage(err('unexpected_failure', message))).toBe(expected)
+  })
+  it.each(['hook_timeout', 'hook_timeout_after_retry'])('hook 逾時提示稍後重試：%s', code => {
+    expect(authErrorMessage(err(code))).toBe('暫時無法確認 Email 網域，請稍後再試')
+  })
+  it('不透傳非識別字或物件繼承的屬性', () => {
+    expect(authErrorMessage(err('unexpected_failure', 'constructor'))).toBe('操作失敗，請稍後再試')
+    expect(authErrorMessage(err('unexpected_failure', 'internal server details'))).toBe('操作失敗，請稍後再試')
+  })
   it('weak_password 轉中文', () =>
     expect(authErrorMessage(err('weak_password'))).toBe('密碼至少需要 6 碼'))
   it('invalid_credentials 轉中文', () =>
