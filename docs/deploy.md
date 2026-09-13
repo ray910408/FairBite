@@ -49,7 +49,12 @@
 服務名若改過，`WEB_ORIGIN` 不用動，但下一步的 `VITE_API_URL` 要跟著改。
 
 **Free plan 會在閒置 15 分鐘後休眠**，之後第一個請求要等約 50 秒冷啟動。
-Demo 前先打一次 `/healthz` 喚醒。
+登入／註冊頁載入時會立即匿名 GET `${VITE_API_URL}/healthz`（不使用快取），
+讓使用者填寫 Email／密碼的時間與後端冷啟動重疊。本機未設定 `VITE_API_URL`
+時，Vite dev／preview 會將 `/healthz` 代理到 `http://127.0.0.1:8787`。
+預熱只在進頁時發送，離頁取消；沒有定時保活、重試或等待就緒的按鈕限制。
+預熱失敗不阻擋表單；按註冊仍由 Supabase signUp → Hook → Go DNS MX 檢查。
+這只能降低冷啟動風險，太快送出或停留太久後才註冊仍可能遇到 hook 超時。
 
 ## 註冊 Email：Regex + DNS MX hook
 

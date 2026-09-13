@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { authErrorMessage } from '../lib/authErrors'
 import { supabase } from '../lib/supabase'
@@ -15,6 +15,18 @@ export default function AuthPage() {
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    // 預熱後端，讓填表時間與冷啟動重疊；失敗不阻擋 Supabase 登入／註冊。
+    void fetch(`${import.meta.env.VITE_API_URL ?? ''}/healthz`, {
+      method: 'GET',
+      cache: 'no-store',
+      credentials: 'omit',
+      signal: controller.signal,
+    }).catch(() => {})
+    return () => controller.abort()
+  }, [])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
