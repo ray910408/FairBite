@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { supabase } from '../lib/supabase'
 import { AuthError } from '@supabase/supabase-js'
@@ -8,12 +8,14 @@ const mocks = vi.hoisted(() => ({
   stateIndex: 0,
   stateValues: [] as unknown[],
   stateSetters: [] as ReturnType<typeof vi.fn>[],
+  effects: [] as Array<() => void | (() => void)>,
 }))
 
 vi.mock('react', async importOriginal => {
   const actual = await importOriginal<typeof import('react')>()
   return {
     ...actual,
+    useEffect: (effect: () => void | (() => void)) => { mocks.effects.push(effect) },
     useState: (initial: unknown) => {
       const index = mocks.stateIndex++
       const value = mocks.stateValues[index] === undefined ? initial : mocks.stateValues[index]
@@ -82,6 +84,55 @@ describe('AuthPage segmented control', () => {
     mocks.stateIndex = 0
     mocks.stateValues = []
     mocks.stateSetters = []
+    mocks.effects = []
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  it.each(['login', 'register'])('進入 %s 頁立即匿名 GET /healthz，離頁時取消請求', async mode => {
+    mocks.stateValues = [mode]
+    vi.stubEnv('VITE_API_URL', 'https://backend.example.com')
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const { default: AuthPage } = await import('./AuthPage')
+    AuthPage()
+
+    expect(mocks.effects).toHaveLength(1)
+    const cleanup = mocks.effects[0]()
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('https://backend.example.com/healthz', {
+      method: 'GET', cache: 'no-store', credentials: 'omit', signal: expect.any(AbortSignal),
+    })
+    expect(supabase.auth.signUp).not.toHaveBeenCalled()
+    expect(supabase.auth.signInWithPassword).not.toHaveBeenCalled()
+    const signal = fetchMock.mock.calls[0][1].signal as AbortSignal
+    expect(signal.aborted).toBe(false)
+    if (typeof cleanup !== 'function') throw new Error('缺少離頁清理')
+    cleanup()
+    expect(signal.aborted).toBe(true)
+  })
+
+  it.each(['pending', 'failed'])('預熱 %s 時仍可送出註冊，未設 API URL 使用本機 proxy', async status => {
+    vi.stubEnv('VITE_API_URL', '')
+    const fetchMock = vi.fn().mockImplementation(() => status === 'failed'
+      ? Promise.reject(new TypeError('Failed to fetch'))
+      : new Promise(() => {}))
+    vi.stubGlobal('fetch', fetchMock)
+    const { default: AuthPage } = await import('./AuthPage')
+    AuthPage()
+    expect(mocks.effects).toHaveLength(1)
+    const cleanup = mocks.effects[0]()
+    await Promise.resolve()
+    expect(fetchMock.mock.calls[0][0]).toBe('/healthz')
+    for (const setter of mocks.stateSetters) expect(setter).not.toHaveBeenCalled()
+
+    mocks.stateIndex = 0
+    await submitAuth('register', 'user@example.com')
+    expect(supabase.auth.signUp).toHaveBeenCalledOnce()
+    expect(mocks.navigate).toHaveBeenCalledWith('/')
+    if (typeof cleanup === 'function') cleanup()
   })
 
   it.each([
