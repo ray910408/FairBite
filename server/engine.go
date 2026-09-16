@@ -312,7 +312,6 @@ func prefFactor(r Restaurant, in EngineInput) TraceEntry {
 	mult := PrefMultMin + (PrefMultMax-PrefMultMin)*ratio
 	reason := fmt.Sprintf("%d/%d 位成員偏好命中", hits, len(in.Members))
 	if lowest != "" {
-		// Evaluate only enables private-history corrections in groups of four or more.
 		reason += "（已套用成員公平校正）"
 	}
 	return TraceEntry{"preference", mult, reason}
@@ -533,12 +532,6 @@ func recencyFactor(r Restaurant, in EngineInput) TraceEntry {
 var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor, exposureFactor, rainFactor, timeSlotFactor}
 
 func Evaluate(in EngineInput) EngineResult {
-	// Gate the inputs, not just traces: score/probability and persisted draws are
-	// public too. This boundary covers search, vote, draw and leave rescoring.
-	// k=4 plus coarse statistics reduces inference; it is not differential privacy.
-	if len(in.Members) < 4 {
-		in.Recency, in.Exposure, in.Satisfaction = nil, nil, nil
-	}
 	var res EngineResult
 	survivors := make([]Restaurant, 0, len(in.Restaurants))
 	for _, r := range in.Restaurants {

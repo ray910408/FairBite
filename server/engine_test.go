@@ -849,10 +849,13 @@ func TestPrefFairnessBoost(t *testing.T) {
 		Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
 	}
 	prefMult := func(in EngineInput) (float64, string) {
-		// Factor arithmetic is tested directly; Evaluate's k=4 gate is covered
-		// separately by TestSmallGroupPrivateHistoryNoninterference.
-		e := prefFactor(in.Restaurants[0], in)
-		return e.Mult, e.Reason
+		for _, e := range Evaluate(in).Kept[0].Trace {
+			if e.Factor == "preference" {
+				return e.Mult, e.Reason
+			}
+		}
+		t.Fatal("trace 缺 preference 因素")
+		return 0, ""
 	}
 	// 無滿足度資料：一半命中 → 0.6 + 0.9*0.5 = 1.05
 	if m, reason := prefMult(in); m < 1.049 || m > 1.051 || strings.Contains(reason, "公平") {

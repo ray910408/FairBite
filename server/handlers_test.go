@@ -1141,7 +1141,10 @@ func TestSearchAndDrawHappyPathExposureBaseline(t *testing.T) {
 		roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	addHistoryScoringPeers(t, ctx, pool, roomID)
+	// Reused host fixture: keep quota state independent of earlier test runs.
+	if _, err := pool.Exec(ctx, `delete from account_resource_usage where user_id = $1`, hostID); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		pool.Exec(ctx, `delete from public.dining_history where room_id = $1`, roomID)
 		pool.Exec(ctx, `delete from public.dining_history where user_id = $1 and room_id is null`, hostID)
@@ -1307,7 +1310,6 @@ func TestVotePreservesExcludedAtSearchExposureBaseline(t *testing.T) {
 		values ($1, $2, 1), ($1, $3, 6)`, hostID, targetID, anchorID); err != nil {
 		t.Fatal(err)
 	}
-	addHistoryScoringPeers(t, ctx, pool, roomID)
 	t.Cleanup(func() {
 		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
 		pool.Exec(ctx, `delete from auth.users where id = $1`, hostID)
@@ -3008,7 +3010,10 @@ func TestSearchExposureOrderingNewStoreBonus(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	addHistoryScoringPeers(t, ctx, pool, roomA, roomB)
+	// Reused host fixture: keep quota state independent of earlier test runs.
+	if _, err := pool.Exec(ctx, `delete from account_resource_usage where user_id = $1`, hostID); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		pool.Exec(ctx, `delete from public.rooms where id = any($1::uuid[])`, []string{roomA, roomB})
 		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)

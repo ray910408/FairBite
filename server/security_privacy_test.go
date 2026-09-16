@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"reflect"
 	"strings"
@@ -13,59 +14,68 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Keep integration history tests above the privacy threshold using real, unique
-// members with the same current preferences, never duplicate Member IDs.
-func addHistoryScoringPeers(t *testing.T, ctx context.Context, pool *pgxpool.Pool, roomIDs ...string) {
-	t.Helper()
-	// These fixtures reuse a host ID across test runs; quota behavior has its own
-	// tests and must not make repeated history-ordering checks state-dependent.
-	if _, err := pool.Exec(ctx, `delete from account_resource_usage where user_id in
-		(select host_id from rooms where id=any($1::uuid[]))`, roomIDs); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 3; i++ {
-		var uid string
-		if err := pool.QueryRow(ctx, `insert into auth.users(id) values(gen_random_uuid()) returning id`).Scan(&uid); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { pool.Exec(context.Background(), `delete from auth.users where id=$1`, uid) })
-		if _, err := pool.Exec(ctx, `insert into room_members(room_id,user_id,budget_max,cuisines,dietary,max_distance_m,transport,ready)
-			select r.id,$1,m.budget_max,m.cuisines,m.dietary,m.max_distance_m,m.transport,true
-			from rooms r join room_members m on m.room_id=r.id and m.user_id=r.host_id
-			where r.id=any($2::uuid[])`, uid, roomIDs); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-// Shared score, probability and trace must ALL be independent of private history
-// below the minimum group size, not merely hide names in the explanation.
-func TestSmallGroupPrivateHistoryNoninterference(t *testing.T) {
-	for n := 1; n < 4; n++ {
-		t.Run(fmt.Sprint(n), func(t *testing.T) {
-			in := EngineInput{Restaurants: []Restaurant{rest(nil), rest(func(r *Restaurant) {
-				r.PlaceID = "other"
-				r.CuisineTags = []string{"taiwanese"}
-			})}, Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170}
-			for i := 0; i < n; i++ {
-				in.Members = append(in.Members, member(func(m *Member) {
-					m.UserID = fmt.Sprint(i)
-					if i > 0 {
-						m.Cuisines = []string{"taiwanese"}
-					}
-				}))
-			}
-			without := Evaluate(in)
-			in.Recency = map[string]RecencyCount{"p1": {Fresh: 1, Fading: 2}}
-			in.Exposure = map[string]ExposureCount{"p1": {Recommended: 100, Chosen: 20}}
-			in.Satisfaction = map[string]float64{"0": 0.1, "1": 0.9, "2": 0.8}
-			for _, gear := range []string{"familiar", "balanced", "explore"} {
-				in.Exploration = gear
-				if got := Evaluate(in); !reflect.DeepEqual(got, without) {
-					t.Fatalf("%s: private history changed shared output\nwithout=%+v\nwith=%+v", gear, without, got)
+// History scoring applies below and at the former four-member boundary.
+func TestHistoryScoringAllRoomSizes(t *testing.T) {
+	for n := 1; n <= 4; n++ {
+		for _, gear := range []struct {
+			name              string
+			recency, exposure float64
+		}{
+			{"familiar", 0.65, 1.0},
+			{"balanced", 0.3, 0.9},
+			{"explore", 0.3, 0.85},
+		} {
+			t.Run(fmt.Sprintf("%d/%s", n, gear.name), func(t *testing.T) {
+				in := EngineInput{Restaurants: []Restaurant{rest(nil), rest(func(r *Restaurant) {
+					r.PlaceID = "other"
+					r.CuisineTags = []string{"taiwanese"}
+				})}, Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170, Exploration: gear.name}
+				for i := 0; i < n; i++ {
+					in.Members = append(in.Members, member(func(m *Member) {
+						m.UserID = fmt.Sprint(i)
+						if i > 0 {
+							m.Cuisines = []string{"taiwanese"}
+						}
+					}))
 				}
-			}
-		})
+				without := Evaluate(in)
+				in.Recency = map[string]RecencyCount{"p1": {Fresh: n}}
+				in.Exposure = map[string]ExposureCount{"p1": {Recommended: 5 * n, Chosen: 5 * n}}
+				withHistory := Evaluate(in)
+				traces := map[string]TraceEntry{}
+				for _, trace := range withHistory.Kept[0].Trace {
+					traces[trace.Factor] = trace
+				}
+				if got := traces["recency"].Mult; math.Abs(got-gear.recency) > 1e-9 {
+					t.Fatalf("recency = %v, want %v", got, gear.recency)
+				}
+				if trace, ok := traces["exposure"]; gear.name == "familiar" {
+					if ok {
+						t.Fatalf("familiar must keep chosen penalty disabled: %+v", trace)
+					}
+				} else if !ok || math.Abs(trace.Mult-gear.exposure) > 1e-9 {
+					t.Fatalf("exposure = %+v, want %v", trace, gear.exposure)
+				}
+				if withHistory.Kept[0].Score >= without.Kept[0].Score ||
+					withHistory.Kept[0].Probability >= without.Kept[0].Probability {
+					t.Fatal("history penalties must lower both score and probability")
+				}
+				in.Satisfaction = map[string]float64{}
+				for _, m := range in.Members {
+					in.Satisfaction[m.UserID] = 0.9
+				}
+				in.Satisfaction["0"] = 0.1
+				withFairness := Evaluate(in)
+				if n == 1 {
+					if !reflect.DeepEqual(withHistory, withFairness) {
+						t.Fatal("one member has no satisfaction gap to correct")
+					}
+				} else if withFairness.Kept[0].Score <= withHistory.Kept[0].Score ||
+					withFairness.Kept[0].Probability <= withHistory.Kept[0].Probability {
+					t.Fatal("fairness must boost the least satisfied member's preference")
+				}
+			})
+		}
 	}
 }
 

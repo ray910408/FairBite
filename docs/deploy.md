@@ -169,14 +169,26 @@ Go 若先啟動而配額 schema 尚未存在，搜尋會回 503（fail closed）
   全站 10000 次／日；跨 instances 最多 4 個搜尋，45 秒 deadline／60 秒失效 lease。
   window 為固定起算 10 分鐘；失敗或未用完的預留不退款，重啟／刪房不重設帳號額度。
   單次目前最多預留 32 個 HTTP calls。預算是 request 數，不是固定貨幣金額。
-- 未滿 4 人的房間不使用 recency／exposure／satisfaction 計分；4 人以上使用粗化統計，
-  不再顯示精確人次，但不承諾對串通成員提供不可推論性或 differential privacy。
+- 所有房間均依既有規則使用 recency／exposure／satisfaction 計分，不設最低房間人數；
+  recency／exposure 保留粗化統計，公平校正仍需至少兩位有滿足度資料的成員且差距達門檻。
+  不顯示精確歷史人次或公平校正對象，但小房間仍可能從機率推論個人紀錄，
+  不承諾不可推論性或 differential privacy。
 - Migration `20260905000300` 先鎖定並封存所有原始候選／抽選資料至 `private_scoring`，
   再隱藏公開舊機率與權重。winner、seed 不變，舊機率不被偽造或重算；
   原始稽核僅資料庫 owner 可存取，不公開給 REST service role。
   未完成房間在開始投票／投票／抽選時恢復新規則機率；已抽選 UI 顯示「歷史機率已隱藏」。
 - 新 migrations 使用 timestamp，避免與本機曾出現、但不在此 checkout 的 `0026_search_calls`
   版本號衝突。部署前仍須比對目標 migration history；本次只驗證隔離 DB，沒有修改 production。
+
+## 移除歷史計分人數門檻（2026-09-16）
+
+此更新只需部署 Go API，無新增 migration 或環境變數。
+CI 與 Deploy web 的既有 `go test -race ./...` 會執行
+`TestHistoryScoringAllRoomSizes`（1–4 人、三種探索檔位），以及移除湊人 fixture 後的
+單人房搜尋／投票／抽選 exposure 整合測試；DB 測試需設定 `TEST_DATABASE_URL`。
+
+新搜尋立即使用新規則；既有未定案房間在下一次投票、抽選或退房重算時更新機率。
+已定案的抽選快照保留原值。
 
 ## 換網域或改服務名時
 
