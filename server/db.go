@@ -33,14 +33,15 @@ type RoomRow struct {
 	MealTime      *time.Time // NULL = 馬上出發（spec §4）
 	CuisineFilter bool
 	DrawVersion   int64
+	SearchVersion int64
 }
 
 func LoadRoom(ctx context.Context, q querier, roomID string) (RoomRow, error) {
 	var r RoomRow
 	err := q.QueryRow(ctx,
-		`select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), exploration, meal_time, cuisine_filter, draw_version
+		`select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), exploration, meal_time, cuisine_filter, draw_version, search_version
 		 from rooms where id = $1`, roomID).
-		Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.Exploration, &r.MealTime, &r.CuisineFilter, &r.DrawVersion)
+		Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.Exploration, &r.MealTime, &r.CuisineFilter, &r.DrawVersion, &r.SearchVersion)
 	return r, err
 }
 

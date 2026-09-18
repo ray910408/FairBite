@@ -107,6 +107,12 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, weather
 	api.HandleFunc("POST /api/rooms/{id}/redraw", func(w http.ResponseWriter, r *http.Request) {
 		handleRedraw(w, r, pool, weather)
 	})
+	api.HandleFunc("POST /api/rooms/{id}/location-vote", func(w http.ResponseWriter, r *http.Request) {
+		handleLocationVote(w, r, pool)
+	})
+	api.HandleFunc("POST /api/rooms/{id}/location", func(w http.ResponseWriter, r *http.Request) {
+		handleChooseLocation(w, r, pool)
+	})
 	api.HandleFunc("POST /api/leave", func(w http.ResponseWriter, r *http.Request) {
 		handleLeave(w, r, pool, weather)
 	})
@@ -228,6 +234,7 @@ func handleStartVoting(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 	if !ok {
 		return
 	}
+	expectedSearchVersion := room.SearchVersion
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
@@ -248,6 +255,15 @@ func handleStartVoting(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 			return
 		}
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	room, err = LoadRoom(ctx, tx, room.ID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	if room.SearchVersion != expectedSearchVersion {
+		jsonError(w, http.StatusConflict, "搜尋批次已更新")
 		return
 	}
 	// Migration 20260905000300 hides legacy odds rather than fabricating an old draw. Restore
@@ -331,6 +347,7 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 	if !ok {
 		return
 	}
+	expectedSearchVersion := room.SearchVersion
 	var req VoteCommand
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
@@ -344,7 +361,6 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusUnprocessableEntity, "餐廳 ID 格式不正確")
 		return
 	}
-	wx := loadWeatherCached(weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
@@ -360,6 +376,16 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
+	room, err = LoadRoom(ctx, tx, room.ID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	if room.SearchVersion != expectedSearchVersion {
+		jsonError(w, http.StatusConflict, "搜尋批次已更新")
+		return
+	}
+	wx := loadWeatherCached(weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
 	uid := UserID(r)
 	vetoesRemaining, err := castVote(ctx, tx, room.ID, uid, req)
 	if err != nil {
@@ -683,6 +709,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 			jsonError(w, http.StatusConflict, "房間狀態已變更")
 		case errors.Is(err, ErrMembersChanged):
 			jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
+		case errors.Is(err, ErrSearchChanged):
+			jsonError(w, http.StatusConflict, "搜尋位置已更新，請重新搜尋")
 		case errors.Is(err, ErrNotReady):
 			jsonError(w, http.StatusConflict, searchNotReadyMessage)
 		default:
@@ -762,6 +790,7 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		jsonError(w, http.StatusConflict, "房間狀態不允許抽選")
 		return
 	}
+	expectedSearchVersion := room.SearchVersion
 	wx := loadWeather(ctx, weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -785,6 +814,15 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 			return
 		}
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	room, err = LoadRoom(ctx, tx, room.ID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
+	}
+	if room.SearchVersion != expectedSearchVersion {
+		jsonError(w, http.StatusConflict, "搜尋批次已更新")
 		return
 	}
 	// spec §5.5：抽選前權威重算；細節見 rescoreRoom

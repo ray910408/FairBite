@@ -54,6 +54,12 @@ export function leaveNotice(
         deletePoint,
         '目前無法用邀請碼重新加入；若候選耗盡回到等待階段，同一邀請碼才會重新開放'])
   }
+  if (status === 'relocating') {
+    return withHost(solo
+      ? [deletePoint, '等待選擇的新地點與房間條件會一起消失', '離開後無法用邀請碼重新加入']
+      : ['你的條件會退出這場重新搜尋', deletePoint,
+        '房主選好新地點並回到等待階段後，只要房間還在就能再用同一邀請碼加入'])
+  }
   // candidates 階段還沒有票（贊成／否決鈕只在 voting 出現，RoomPage 的 CandidateList
   // 只有 voting 才拿到 voting prop）；離席在這裡是條件退出重算（ADR-0007、leave.go 的 rescore）
   if (status === 'candidates') {

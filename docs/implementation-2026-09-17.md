@@ -10,7 +10,7 @@
 | --- | --- | --- | --- | --- |
 | 0 | 已核准規格、ADR、執行紀錄 | 主代理 | 逐項核對使用者決策、diff/UTF-8 檢查 | 已審查，納入本次提交 |
 | 1 | 待確認抽選、版本、重轉與耗盡回準備；後端/schema/UI | Sol | 主代理檢查交易/授權/歷史/重算；Go、DB 整合、Vitest、build | 已審查，納入本次提交 |
-| 2 | 改地點表決、離房門檻、選點與搜尋競態；後端/schema/UI | Sol | 主代理檢查鎖序與舊搜尋失效；Go、DB 併發、Vitest、build | 核心與面板完成，待整合 |
+| 2 | 改地點表決、離房門檻、選點與搜尋競態；後端/schema/UI | Sol | 主代理檢查鎖序與舊搜尋失效；Go、DB 併發、Vitest、build | 已審查，納入本次提交 |
 | 3 | 訪客身分、QR 邀請、升級新帳號與切換既有帳號 | Sol | 主代理檢查 Auth/RPC/RLS/email 驗證；DB/Auth 整合、Vitest、Playwright | 實作與 Auth 驗證中 |
 | 4 | 僅保留 Google 候選的 Maps 店家連結 | Luna | 主代理檢查連結/來源/排除判定；Vitest、build | 已審查並通過測試，納入本次提交 |
 | 5 | 全流程整合、部署文件與驗收核對 | 主代理 | Go/web/DB/E2E；核對四項需求與既有契約 | 待執行 |
@@ -37,3 +37,5 @@ Task 4（2026-09-18）：Luna 實作，主代理獨立核對 CandidateList 僅�
 Task 2 初步證據：主代理實作改地點交易與 search_version trigger，Luna 實作独立 RelocationPanel。TestLocation* 真實 DB 測試通過（2026-09-18，最新 0.523s），涵蓋 4 人嚴格過半、撤回、通過後鎖定、成員授權、選點重設、相同座標輪次失效及與真實 draw handler 的競態。relocation_test.sql 的 8 項 pgTAP 全通過。尚未整合 routes/useRoom/RoomPage/leave/freeze，不能視為功能完成；未有失敗修復輪次。
 
 Task 1：主代理審查後補強欄位 grants、版本一致性、轉盤採不可變機率快照並按版本 remount；核對 pending 不寫歷史、host-only confirm/redraw、版本鎖、批次排除、候選耗盡及房主繼任。主代理提交前證據：TestPending* 真實 DB passed（0.733s）、6 files / 89 web tests passed、pending_selection_test.sql 6/6 passed。Sol full server DB passed（9.628s）；最後含搜尋的歷史測試重跑碰到隔離庫累計配額429，此前全套通過，待最終整合環境再驗。全 web/build 當時受並行 Task3 未完成檔案影響，不宣稱全樹已通過。硬失效測試一次修正 fixture 後通過，未超過兩輪。
+
+Task 2：Sol 整合 routes、leave、freeze、Realtime 與 RoomPage；主代理審查鎖序、版本與座標比對、退房後多數計算、UI 權限與設定 flush，並把選用換地點從固定必經步驟移除。主代理 TestLocation*/TestFreeze* 真實 DB passed（0.701s），web 4 files / 36 tests passed；補上實際 handleSearch 阻塞期間同座標新輪次的回歸，確認舊搜尋 409、仍為 lobby、無舊候選。Sol full server DB passed（10.471s）、web 327/327 passed、build passed、pgTAP 8/8 passed。沒有同一測試超過兩次修復。

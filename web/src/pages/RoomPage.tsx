@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
-import { confirmDraw, editConditions, redrawRoom, startVoting } from '../lib/api'
+import { chooseLocation, confirmDraw, editConditions, redrawRoom, startVoting, voteLocation } from '../lib/api'
+import type { DeparturePoint } from '../lib/departure'
 import { isVetoDeadEnd } from '../lib/deadEnd'
 import { EXPLORATION_OPTIONS } from '../lib/labels'
 import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
@@ -16,6 +17,7 @@ import CandidateList from '../components/CandidateList'
 import Wheel from '../components/Wheel'
 import ResultCard from '../components/ResultCard'
 import RatingPrompt from '../components/RatingPrompt'
+import RelocationPanel from '../components/RelocationPanel'
 import { Alert, Check, Copy, Logo, Spinner, Users } from '../components/icons'
 
 const STEPS = [
@@ -29,7 +31,7 @@ const STEPS = [
 const SEARCH_SLOW_STATUS_MS = 3000
 
 function Stepper({ status }: { status: Room['status'] }) {
-  const current = STEPS.findIndex(s => s.key === status)
+  const current = STEPS.findIndex(s => s.key === (status === 'relocating' ? 'voting' : status))
   return (
     <ol className="flex items-center gap-1 text-xs">
       {STEPS.map((s, i) => (
@@ -41,7 +43,9 @@ function Stepper({ status }: { status: Room['status'] }) {
           }`}>
             {i < current ? <Check className="h-3.5 w-3.5" /> : i + 1}
           </span>
-          <span className={i === current ? 'font-semibold text-fg' : 'text-fg-muted'}>{s.label}</span>
+          <span className={i === current ? 'font-semibold text-fg' : 'text-fg-muted'}>
+            {s.key === 'voting' && status === 'relocating' ? '換地點' : s.label}
+          </span>
           {i < STEPS.length - 1 && <span className="h-px flex-1 bg-border" />}
         </li>
       ))}
@@ -52,7 +56,7 @@ function Stepper({ status }: { status: Room['status'] }) {
 export default function RoomPage() {
   const { id = '' } = useParams()
   const nav = useNavigate()
-  const { room, members, candidates, draw, myUserId, connected, notFound, loadError,
+  const { room, members, candidates, draw, locationVotes = [], myUserId, connected, notFound, loadError,
     refetch, toggleVote, hasMyVote, ups, vetoesRemaining } = useRoom(id)
   const [spun, setSpun] = useState(false)
   const [actionError, setActionError] = useState('')
@@ -71,6 +75,7 @@ export default function RoomPage() {
   const [editingConditions, setEditingConditions] = useState(false)
   const [searchSlow, setSearchSlow] = useState(false)
   const [pendingAction, setPendingAction] = useState<'confirm' | 'redraw' | null>(null)
+  const [relocationBusy, setRelocationBusy] = useState(false)
   const leaveTriggerRef = useRef<HTMLAnchorElement>(null)
   // 房籍查詢自己的世代（比照 HistoryPage）：aria-busy 擋不住點擊，兩次點擊之間房籍
   // 還可能在別的分頁被改，只有最後一次點擊的回應能生效
@@ -297,6 +302,30 @@ export default function RoomPage() {
     }
   }
 
+  async function onLocationVote(want: boolean) {
+    if (relocationBusy) return
+    setRelocationBusy(true); setActionError('')
+    try {
+      const msg = await voteLocation(room!.id, want, room!.search_version)
+      if (msg) setActionError(msg)
+      else await refetch()
+    } catch { setActionError('改地點表決失敗：無法連線到伺服器') }
+    finally { setRelocationBusy(false) }
+  }
+
+  async function onChooseLocation(point: DeparturePoint) {
+    if (relocationBusy) return
+    setRelocationBusy(true); setActionError('')
+    try {
+      const [conditionsOK, roomSettingsOK] = await Promise.all([conditionsFlush.current(), flushRoomWrites()])
+      if (!conditionsOK || !roomSettingsOK) return
+      const msg = await chooseLocation(room!.id, point.lat, point.lng, room!.search_version)
+      if (msg) setActionError(msg)
+      else await refetch()
+    } catch { setActionError('更新地點失敗：無法連線到伺服器') }
+    finally { setRelocationBusy(false) }
+  }
+
   function closeLeave() {
     setLeaveDialog(null)
     // 觸發元素不隨 dialog 卸載，但背景整塊帶著 inert：setLeaveDialog 不同步 flush，
@@ -348,7 +377,7 @@ export default function RoomPage() {
           <span className="sr-only" aria-live="polite">{copied ? '邀請碼已複製' : ''}</span>
           <Link to="/history" className="btn btn-quiet min-h-11 px-1.5 text-xs sm:px-2 sm:text-sm">足跡</Link>
           <span className="ml-auto whitespace-nowrap rounded-full bg-brand-soft px-2 sm:px-3 py-1 text-xs font-semibold text-brand-strong">
-            {{ lobby: '等待中', candidates: '候選已出爐', voting: '投票中', pending: '抽中待確認', decided: '已定案' }[room.status]}
+            {{ lobby: '等待中', candidates: '候選已出爐', voting: '投票中', relocating: '等待選新地點', pending: '抽中待確認', decided: '已定案' }[room.status]}
           </span>
         </div>
         <div className="mx-auto w-full max-w-lg px-3 pb-3">
@@ -416,6 +445,13 @@ export default function RoomPage() {
             ))}
           </ul>
         </section>
+
+        {(room.status === 'voting' || room.status === 'relocating' || (room.status === 'lobby' && isHost)) && (
+          <RelocationPanel isHost={isHost} status={room.status}
+            wantChange={locationVotes.some(v => v.user_id === myUserId)}
+            yesCount={locationVotes.length} memberCount={members.length} busy={relocationBusy}
+            onVote={onLocationVote} onChoose={onChooseLocation} />
+        )}
 
         {(room.status === 'candidates' || room.status === 'voting') && (
           <p className="text-xs text-fg-muted">

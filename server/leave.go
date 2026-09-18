@@ -77,10 +77,10 @@ func leaveOneRoom(ctx context.Context, pool *pgxpool.Pool, weather WeatherProvid
 	var room RoomRow
 	err = tx.QueryRow(ctx, `
 		select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0),
-		       exploration, meal_time, cuisine_filter, draw_version
+		       exploration, meal_time, cuisine_filter, draw_version, search_version
 		from rooms where id = $1 for update`, roomID).
 		Scan(&room.ID, &room.HostID, &room.Status, &room.CenterLat, &room.CenterLng,
-			&room.Exploration, &room.MealTime, &room.CuisineFilter, &room.DrawVersion)
+			&room.Exploration, &room.MealTime, &room.CuisineFilter, &room.DrawVersion, &room.SearchVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // 並發退房已刪房：冪等
 	}
@@ -116,6 +116,11 @@ func leaveOneRoom(ctx context.Context, pool *pgxpool.Pool, weather WeatherProvid
 	if room.HostID == uid {
 		if _, err := tx.Exec(ctx,
 			`update rooms set host_id = $2 where id = $1`, roomID, successor); err != nil {
+			return err
+		}
+	}
+	if room.Status == "voting" {
+		if _, err := passLocationMajority(ctx, tx, room.ID); err != nil {
 			return err
 		}
 	}

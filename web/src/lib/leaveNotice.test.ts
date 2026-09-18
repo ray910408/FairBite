@@ -46,6 +46,12 @@ describe('leaveNotice', () => {
     expect(points.join('\n')).toContain('候選耗盡回到等待階段')
   })
 
+  it('relocating：說明選點後才重新開放加入', () => {
+    const points = leaveNotice('relocating', 3, 'ABC123', false)
+    expect(points.join('\n')).toContain('房主選好新地點並回到等待階段後')
+    expect(points.join('\n')).not.toContain('候選盤面會重新計算')
+  })
+
   // memberCount = null（成員沒載成功，人數不可判定）：兩個方向都不能給無條件承諾
   it('null：不說「唯一的人」，也不給無條件的重加入承諾', () => {
     const lobby = leaveNotice('lobby', null, 'ABC123', false)

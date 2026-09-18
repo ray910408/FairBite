@@ -7,13 +7,14 @@ export type Room = {
   id: string
   code: string
   host_id: string
-  status: 'lobby' | 'candidates' | 'voting' | 'pending' | 'decided'
+  status: 'lobby' | 'candidates' | 'voting' | 'relocating' | 'pending' | 'decided'
   exploration: 'familiar' | 'balanced' | 'explore'
   // NULL = 馬上出發（migration 0017）
   meal_time: string | null
   // 房主菜系過濾開關（migration 0021）：開啟時不符成員菜系偏好的店被硬性排除
   cuisine_filter: boolean
   draw_version: number
+  search_version: number
 }
 
 export type MemberRow = {
@@ -62,3 +63,5 @@ export type DrawRow = {
   probabilities: Record<string, number>
   version: number
 }
+
+export type LocationVoteRow = { room_id: string; user_id: string }
