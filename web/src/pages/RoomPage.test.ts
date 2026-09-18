@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   getUid: vi.fn(),
   searchRoom: vi.fn(),
   editConditions: vi.fn(),
+  confirmDraw: vi.fn(),
+  redrawRoom: vi.fn(),
   members: {} as { data?: unknown; error?: unknown },
   effects: [] as Array<() => void | (() => void)>,
 }))
@@ -52,6 +54,8 @@ vi.mock('../lib/supabase', () => ({
 vi.mock('../lib/api', () => ({
   searchRoom: mocks.searchRoom,
   editConditions: mocks.editConditions,
+  confirmDraw: mocks.confirmDraw,
+  redrawRoom: mocks.redrawRoom,
   startVoting: vi.fn(async () => null),
 }))
 
@@ -189,6 +193,56 @@ describe('RoomPage voting controls', () => {
     expect(up?.props?.['aria-pressed']).toBe(true)
     expect(veto?.props?.['aria-pressed']).toBe(true)
     expect(veto?.props?.disabled).toBe(false)
+  })
+})
+
+describe('RoomPage pending selection controls', () => {
+  const candidate: CandidateRow = {
+    room_id: 'room-1', restaurant_id: 'r1', status: 'kept', probability: 1,
+    weight_breakdown: [], exclusion_reason: null, exclusion_kinds: [],
+    restaurants: { name: '店家', lat: 25, lng: 121, place_id: 'p1', source: 'google' },
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.stateIndex = 0; mocks.stateValues = [true]; mocks.stateSetters = []; mocks.effects = []
+    mocks.confirmDraw.mockResolvedValue(null); mocks.redrawRoom.mockResolvedValue(null)
+  })
+
+  function pendingState(myUserId: string) {
+    return {
+      room: { id: 'room-1', code: 'ABC123', host_id: 'host', status: 'pending',
+        exploration: 'balanced', meal_time: null, cuisine_filter: false, draw_version: 4 },
+      members: [], candidates: [candidate],
+      draw: { room_id: 'room-1', winner_restaurant_id: 'r1', seed: 'seed', probabilities: { r1: 1 }, version: 4 },
+      myUserId, connected: true, notFound: false, loadError: false, refetch: vi.fn(),
+      toggleVote: vi.fn(), hasMyVote: vi.fn(), ups: new Map(), vetoesRemaining: 2,
+    }
+  }
+
+  it('只有房主能用版本 4 確認或排除重轉', async () => {
+    mocks.useRoom.mockReturnValue(pendingState('host'))
+    const tree = await renderRoomPage()
+    const confirm = findButton(tree, '確認就吃這家')
+    const redraw = findButton(tree, '排除這家並重轉')
+    if (!confirm.props?.onClick || !redraw.props?.onClick) throw new Error('找不到待確認操作')
+    await confirm.props.onClick()
+    expect(mocks.confirmDraw).toHaveBeenCalledWith('room-1', 4)
+
+    mocks.stateIndex = 0; mocks.stateValues = [true]; mocks.effects = []; mocks.useRoom.mockReturnValue(pendingState('member'))
+    const memberTree = await renderRoomPage()
+    expect(findButton(memberTree, '確認就吃這家').type).toBeUndefined()
+    expect(findButton(memberTree, '排除這家並重轉').type).toBeUndefined()
+  })
+
+  it('房間版本已前進時不顯示舊抽選或操作', async () => {
+    const state = pendingState('host')
+    state.room.draw_version = 5
+    mocks.useRoom.mockReturnValue(state)
+    const tree = await renderRoomPage()
+    expect(textContent(tree)).toContain('正在同步最新抽選結果')
+    expect(findButton(tree, '確認就吃這家').type).toBeUndefined()
+    expect(findButton(tree, '排除這家並重轉').type).toBeUndefined()
   })
 })
 

@@ -41,14 +41,16 @@ function query(table: string) {
   if (table === 'room_candidates') {
     return { select: () => ({ eq: () => ({ order: () => result }) }) }
   }
-  if (table === 'draws') return { select: () => ({ eq: () => ({ maybeSingle: () => result }) }) }
+  if (table === 'draws') return { select: () => ({ eq: () => ({
+    order: () => ({ limit: () => ({ maybeSingle: () => result }) }),
+  }) }) }
   return { select: () => ({ eq: () => result }) }
 }
 
 function room(status: Room['status']): Room {
   return {
     id: 'room-1', code: 'ABC123', host_id: 'host-1', status,
-    exploration: 'balanced', meal_time: null, cuisine_filter: false,
+    exploration: 'balanced', meal_time: null, cuisine_filter: false, draw_version: 0,
   }
 }
 

@@ -10,7 +10,7 @@ const candidate: CandidateRow = {
   weight_breakdown: [], exclusion_reason: null, exclusion_kinds: [],
   restaurants: { name: '測試餐廳', lat: 25, lng: 121, place_id: 'place', source: 'google' },
 }
-const draw: DrawRow = { room_id: 'room', winner_restaurant_id: 'restaurant', seed: 'original-seed', probabilities: {} }
+const draw: DrawRow = { room_id: 'room', winner_restaurant_id: 'restaurant', seed: 'original-seed', probabilities: {}, version: 1 }
 
 it('does not fabricate zero probability for redacted legacy candidates', () => {
   const html = renderToStaticMarkup(<CandidateList rows={[candidate]} />)
@@ -34,6 +34,12 @@ it('preserves the historical winner without claiming a fabricated probability', 
   expect(html).toContain('測試餐廳')
   expect(html).toContain('歷史機率已隱藏')
   expect(html).not.toContain('0.0%')
+})
+
+it('labels an unconfirmed draw without claiming the restaurant is decided', () => {
+  const html = renderToStaticMarkup(<ResultCard draw={draw} candidates={[candidate]} me={undefined} confirmed={false} />)
+  expect(html).toContain('抽中待確認')
+  expect(html).not.toContain('今天就吃')
 })
 
 it('does not draw zero-angle sectors for missing historical odds', () => {

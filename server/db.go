@@ -32,14 +32,15 @@ type RoomRow struct {
 	Exploration   string
 	MealTime      *time.Time // NULL = 馬上出發（spec §4）
 	CuisineFilter bool
+	DrawVersion   int64
 }
 
 func LoadRoom(ctx context.Context, q querier, roomID string) (RoomRow, error) {
 	var r RoomRow
 	err := q.QueryRow(ctx,
-		`select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), exploration, meal_time, cuisine_filter
+		`select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), exploration, meal_time, cuisine_filter, draw_version
 		 from rooms where id = $1`, roomID).
-		Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.Exploration, &r.MealTime, &r.CuisineFilter)
+		Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.Exploration, &r.MealTime, &r.CuisineFilter, &r.DrawVersion)
 	return r, err
 }
 
@@ -360,8 +361,8 @@ func ReplaceCandidates(ctx context.Context, tx pgx.Tx, roomID string, res Engine
 		trace, _ := json.Marshal(c.Trace)
 		if _, err := tx.Exec(ctx, `
 			insert into room_candidates
-				(room_id, restaurant_id, status, probability, weight_breakdown, exposure_counted, query_matches)
-			values ($1, $2, 'kept', $3, $4, $5, $6)`,
+				(room_id, restaurant_id, status, probability, weight_breakdown, exposure_counted, query_matches, batch_excluded)
+			values ($1, $2, 'kept', $3, $4, $5, $6, false)`,
 			roomID, c.Restaurant.ID, c.Probability, trace, exposureCounted[c.Restaurant.ID],
 			nonNilKinds(c.Restaurant.QueryMatches)); err != nil {
 			return err
@@ -371,14 +372,32 @@ func ReplaceCandidates(ctx context.Context, tx pgx.Tx, roomID string, res Engine
 		// arch c3：結構化 kinds 隨列持久化（kept 列吃欄位 default '{}'）
 		if _, err := tx.Exec(ctx, `
 			insert into room_candidates
-				(room_id, restaurant_id, status, exclusion_reason, exclusion_kinds, exposure_counted, query_matches)
-			values ($1, $2, 'excluded', $3, $4, $5, $6)`,
+				(room_id, restaurant_id, status, exclusion_reason, exclusion_kinds, exposure_counted, query_matches, batch_excluded)
+			values ($1, $2, 'excluded', $3, $4, $5, $6, $7)`,
 			roomID, e.Restaurant.ID, e.Reason, nonNilKinds(e.Kinds), exposureCounted[e.Restaurant.ID],
-			nonNilKinds(e.Restaurant.QueryMatches)); err != nil {
+			nonNilKinds(e.Restaurant.QueryMatches), hasKind(e.Kinds, "batch")); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func LoadBatchExclusions(ctx context.Context, q querier, roomID string) (map[string]bool, error) {
+	rows, err := q.Query(ctx, `select restaurant_id from room_candidates
+		where room_id = $1 and batch_excluded`, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
 func TransitionRoom(ctx context.Context, tx pgx.Tx, roomID, from, to string) error {

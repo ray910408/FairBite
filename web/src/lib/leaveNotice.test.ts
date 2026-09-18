@@ -40,6 +40,12 @@ describe('leaveNotice', () => {
     expect(points.join('\n')).not.toContain(`之後${REJOIN}`)
   })
 
+  it('pending：不宣稱未確認結果已寫入足跡，並說明耗盡後可重新加入', () => {
+    const points = leaveNotice('pending', 3, 'ABC123', false)
+    expect(points.join('\n')).toContain('不會因你離開而寫入足跡')
+    expect(points.join('\n')).toContain('候選耗盡回到等待階段')
+  })
+
   // memberCount = null（成員沒載成功，人數不可判定）：兩個方向都不能給無條件承諾
   it('null：不說「唯一的人」，也不給無條件的重加入承諾', () => {
     const lobby = leaveNotice('lobby', null, 'ABC123', false)

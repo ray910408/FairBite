@@ -75,6 +75,14 @@ export async function drawRoom(roomId: string): Promise<string | null> {
   return postAction(`/api/rooms/${roomId}/draw`, '抽選失敗')
 }
 
+export async function confirmDraw(roomId: string, version: number): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/confirm`, '確認失敗', { version })
+}
+
+export async function redrawRoom(roomId: string, version: number): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/redraw`, '重轉失敗', { version })
+}
+
 export async function startVoting(roomId: string): Promise<string | null> {
   return postAction(`/api/rooms/${roomId}/start-voting`, '開始投票失敗')
 }

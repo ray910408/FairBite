@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useRoom } from '../hooks/useRoom'
-import { editConditions, startVoting } from '../lib/api'
+import { confirmDraw, editConditions, redrawRoom, startVoting } from '../lib/api'
 import { isVetoDeadEnd } from '../lib/deadEnd'
 import { EXPLORATION_OPTIONS } from '../lib/labels'
 import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
 import { isGoogleSourced } from '../lib/placesSource'
+import { snapshotCandidates } from '../lib/probability'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import { supabase } from '../lib/supabase'
 import type { Room } from '../lib/types'
@@ -21,6 +22,7 @@ const STEPS = [
   { key: 'lobby', label: '設定條件' },
   { key: 'candidates', label: '候選出爐' },
   { key: 'voting', label: '投票' },
+  { key: 'pending', label: '待確認' },
   { key: 'decided', label: '定案' },
 ] as const
 
@@ -68,6 +70,7 @@ export default function RoomPage() {
   const [roomSettingsBlocked, setRoomSettingsBlocked] = useState(false)
   const [editingConditions, setEditingConditions] = useState(false)
   const [searchSlow, setSearchSlow] = useState(false)
+  const [pendingAction, setPendingAction] = useState<'confirm' | 'redraw' | null>(null)
   const leaveTriggerRef = useRef<HTMLAnchorElement>(null)
   // 房籍查詢自己的世代（比照 HistoryPage）：aria-busy 擋不住點擊，兩次點擊之間房籍
   // 還可能在別的分頁被改，只有最後一次點擊的回應能生效
@@ -91,6 +94,10 @@ export default function RoomPage() {
   const searchAbort = useRef<AbortController | undefined>(undefined)
   const startVotingInFlight = useRef(false)
   const editConditionsInFlight = useRef(false)
+  const pendingActionInFlight = useRef(false)
+  const currentDraw = draw?.version === room?.draw_version ? draw : null
+  const drawCandidates = currentDraw ? snapshotCandidates(candidates, currentDraw.probabilities) : []
+
   useEffect(() => {
     const d = room?.meal_time ? new Date(room.meal_time) : null
     setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
@@ -117,6 +124,7 @@ export default function RoomPage() {
       if (timer !== undefined) clearTimeout(timer)
     }
   }, [])
+  useEffect(() => { setSpun(false) }, [draw?.version])
   if (!room) {
     if (loadError) return (
       <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
@@ -340,7 +348,7 @@ export default function RoomPage() {
           <span className="sr-only" aria-live="polite">{copied ? '邀請碼已複製' : ''}</span>
           <Link to="/history" className="btn btn-quiet min-h-11 px-1.5 text-xs sm:px-2 sm:text-sm">足跡</Link>
           <span className="ml-auto whitespace-nowrap rounded-full bg-brand-soft px-2 sm:px-3 py-1 text-xs font-semibold text-brand-strong">
-            {{ lobby: '等待中', candidates: '候選已出爐', voting: '投票中', decided: '已定案' }[room.status]}
+            {{ lobby: '等待中', candidates: '候選已出爐', voting: '投票中', pending: '抽中待確認', decided: '已定案' }[room.status]}
           </span>
         </div>
         <div className="mx-auto w-full max-w-lg px-3 pb-3">
@@ -646,15 +654,47 @@ export default function RoomPage() {
             )}
           </>
         )}
-        {room.status === 'decided' && draw && (
+        {(room.status === 'pending' || room.status === 'decided') && draw && !currentDraw && (
+          <p role="status" className="banner bg-brand-soft text-brand-strong">正在同步最新抽選結果…</p>
+        )}
+        {(room.status === 'pending' || room.status === 'decided') && currentDraw && (
           <div className="space-y-4">
-            {!spun && draw.probabilities[draw.winner_restaurant_id] != null ? (
-              <Wheel rows={candidates} winnerId={draw.winner_restaurant_id}
+            {!spun && currentDraw.probabilities[currentDraw.winner_restaurant_id] != null ? (
+              <Wheel key={currentDraw.version} rows={drawCandidates} winnerId={currentDraw.winner_restaurant_id}
                 onDone={() => setSpun(true)} />
             ) : (
               <>
-                <ResultCard draw={draw} candidates={candidates} me={me} />
-                <RatingPrompt roomId={room.id} />
+                <ResultCard draw={currentDraw} candidates={drawCandidates} me={me}
+                  confirmed={room.status === 'decided'} />
+                {room.status === 'decided' && <RatingPrompt roomId={room.id} />}
+                {room.status === 'pending' && isHost && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <button type="button" className="btn btn-secondary w-full"
+                      disabled={pendingAction !== null} aria-busy={pendingAction === 'redraw'}
+                      onClick={async () => {
+                        if (pendingActionInFlight.current) return
+                        pendingActionInFlight.current = true; setPendingAction('redraw'); setActionError('')
+                        const msg = await redrawRoom(room.id, currentDraw.version)
+                          .catch(() => '重轉失敗：無法連線到伺服器')
+                          .finally(() => { pendingActionInFlight.current = false; setPendingAction(null) })
+                        if (msg) setActionError(msg)
+                      }}>
+                      {pendingAction === 'redraw' ? <><Spinner className="h-5 w-5" />重轉中…</> : '排除這家並重轉'}
+                    </button>
+                    <button type="button" className="btn btn-primary w-full"
+                      disabled={pendingAction !== null} aria-busy={pendingAction === 'confirm'}
+                      onClick={async () => {
+                        if (pendingActionInFlight.current) return
+                        pendingActionInFlight.current = true; setPendingAction('confirm'); setActionError('')
+                        const msg = await confirmDraw(room.id, currentDraw.version)
+                          .catch(() => '確認失敗：無法連線到伺服器')
+                          .finally(() => { pendingActionInFlight.current = false; setPendingAction(null) })
+                        if (msg) setActionError(msg)
+                      }}>
+                      {pendingAction === 'confirm' ? <><Spinner className="h-5 w-5" />確認中…</> : '確認就吃這家'}
+                    </button>
+                  </div>
+                )}
               </>
             )}
             {candidates.some(c => c.status === 'kept' && isGoogleSourced(c.restaurants.source)) && (
