@@ -18,6 +18,17 @@ it('does not fabricate zero probability for redacted legacy candidates', () => {
   expect(html).not.toContain('0.0%')
 })
 
+it('links only kept Google candidates to Google Maps', () => {
+  const html = renderToStaticMarkup(<CandidateList rows={[
+    candidate,
+    { ...candidate, restaurant_id: 'mock', restaurants: { ...candidate.restaurants, source: 'mock' } },
+    { ...candidate, restaurant_id: 'excluded', status: 'excluded', exclusion_reason: 'veto' },
+  ]} />)
+  expect(html.match(/在 Google Maps 查看/g)).toHaveLength(1)
+  expect(html).toContain('target="_blank"')
+  expect(html).toContain('rel="noopener noreferrer"')
+})
+
 it('preserves the historical winner without claiming a fabricated probability', () => {
   const html = renderToStaticMarkup(<ResultCard draw={draw} candidates={[candidate]} me={undefined} />)
   expect(html).toContain('測試餐廳')

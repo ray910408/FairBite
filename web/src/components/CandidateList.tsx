@@ -1,4 +1,5 @@
 import type { CandidateRow } from '../lib/types'
+import { buildGoogleMapsPlaceUrl } from '../lib/maps'
 import { isGoogleSourced } from '../lib/placesSource'
 import { chipLabel, formatPercents, sortExcluded, sortKept } from '../lib/probability'
 import { VETO_QUOTA } from '../lib/votes'
@@ -33,6 +34,17 @@ export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; 
           <div className="flex items-baseline gap-2">
             <span aria-hidden="true" className="font-mono text-xs text-fg-muted">{ci + 1}</span>
             <span className="flex-1 font-semibold">{c.restaurants.name}</span>
+            {isGoogleSourced(c.restaurants.source) && (
+              <a
+                className="text-xs text-brand underline underline-offset-2"
+                href={buildGoogleMapsPlaceUrl(c.restaurants.name, c.restaurants.lat, c.restaurants.lng,
+                  c.restaurants.place_id, c.restaurants.source)}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                在 Google Maps 查看
+              </a>
+            )}
             <span className="font-mono text-sm font-semibold text-brand">{oddsKnown ? percents[ci] : '機率未提供'}</span>
           </div>
           {oddsKnown && <div aria-hidden="true" className="h-1.5 overflow-hidden rounded-full bg-brand-soft">

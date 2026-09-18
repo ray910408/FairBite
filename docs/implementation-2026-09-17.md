@@ -12,7 +12,7 @@
 | 1 | 待確認抽選、版本、重轉與耗盡回準備；後端/schema/UI | Sol | 主代理檢查交易/授權/歷史/重算；Go、DB 整合、Vitest、build | 待執行 |
 | 2 | 改地點表決、離房門檻、選點與搜尋競態；後端/schema/UI | Sol | 主代理檢查鎖序與舊搜尋失效；Go、DB 併發、Vitest、build | 待執行 |
 | 3 | 訪客身分、QR 邀請、升級新帳號與切換既有帳號 | Sol | 主代理檢查 Auth/RPC/RLS/email 驗證；DB/Auth 整合、Vitest、Playwright | 待執行 |
-| 4 | 僅保留 Google 候選的 Maps 店家連結 | Luna | 主代理檢查連結/來源/排除判定；Vitest、build | 待執行 |
+| 4 | 僅保留 Google 候選的 Maps 店家連結 | Luna | 主代理檢查連結/來源/排除判定；Vitest、build | 已審查並通過測試，納入本次提交 |
 | 5 | 全流程整合、部署文件與驗收核對 | 主代理 | Go/web/DB/E2E；核對四項需求與既有契約 | 待執行 |
 
 獨立 task 可並行實作，但每項需完成主代理審查、修正與必要測試才可 commit；每個 commit 後執行 `codegraph.cmd sync D:\app` 並核對狀態。未通過審查不得視為完成。每個 task 提交前將證據寫入本檔。
@@ -28,3 +28,8 @@
 ## 審查證據
 
 Task 0：主代理核對 17 項訪談決策與四項原始功能，ADR-0008/0009 改為 accepted，保留「尚未實作」的功能界線；文件 diff 檢查通過。
+
+
+Task 4（2026-09-18）：Luna 實作，主代理獨立核對 CandidateList 僅在 kept 清單依 source 顯示店家連結、excluded/mock 無連結、URLSearchParams 編碼與 fallback、target/rel、原導航函式未改。主代理執行 npm test -- src/lib/maps.test.ts src/components/PrivateScoring.test.tsx：2 files / 11 tests passed；npm run build exit 0；npm run lint exit 0（既有 warnings）。未有測試修復輪次。
+
+驗證環境（2026-09-18）：已啟動獨立 app_features Supabase，ports 55321/55322/55324，baseline a57ae8a migrations 全部成功。原 app 的 47 個房間未重設。規格 commit a57ae8a 後 CodeGraph sync 回覆 Already up to date。
