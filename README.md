@@ -140,14 +140,17 @@ Push-Location web; npm run build; Pop-Location
 
 ## E2E 測試
 
-雙客戶端完整閉環 E2E 執行前，需先依「本地啟動」讓三個服務保持運行：Supabase local、使用 mock provider 與 local JWKS 的 Go API，以及 Vite dev server。另開一個 PowerShell 終端執行：
+多客戶端完整閉環 E2E 執行前，需先依「本地啟動」讓三個服務保持運行：Supabase local、使用 mock provider 與 local JWKS 的 Go API，以及 Vite dev server。本地 Auth 需開啟匿名登入、manual linking 與 Email confirmation，並在 `supabase/config.toml` 的 `[auth]` 設定 `site_url = "https://localhost:5173/#/auth"`、將 `https://localhost:5173/**` 加入 `additional_redirect_urls`；設定變更後重啟本地 Supabase。測試從本地 Mailpit 讀取驗證信，不應對正式環境執行。另開一個 PowerShell 終端執行：
 
 ```powershell
 $env:PLAYWRIGHT_BROWSERS_PATH = "0"
+$env:TEST_MAILPIT_URL = "http://127.0.0.1:54324"
 cd web
 npx playwright install chromium # 首次執行需下載瀏覽器
 npm run e2e
 ```
+
+若使用隔離 stack 或其他連接埠，請同步調整 Auth redirect、`TEST_MAILPIT_URL` 與 `PLAYWRIGHT_BASE_URL`（預設 `https://localhost:5173`）。
 
 E2E 尚未接入 CI，因為 CI 需額外編排整套 local stack；`TODOS.md` 保留後續 CI 編排評估。
 

@@ -106,15 +106,20 @@ func newSignupHook(secret string, lookupMX func(context.Context, string) ([]*net
 		}
 		var event struct {
 			User struct {
-				Email string `json:"email"`
+				Email       string `json:"email"`
+				IsAnonymous bool   `json:"is_anonymous"`
 			} `json:"user"`
 		}
 		if json.Unmarshal(body, &event) != nil {
 			jsonError(w, http.StatusBadRequest, "invalid_hook_payload")
 			return
 		}
-		code := "signup_email_rate_limited"
-		if limiter.Allow() {
+		code := ""
+		// Anonymous creation has no email to validate. The signed hook payload is
+		// the authority here; an absent email alone must never bypass the policy.
+		if !(event.User.IsAnonymous && strings.TrimSpace(event.User.Email) == "") && !limiter.Allow() {
+			code = "signup_email_rate_limited"
+		} else if !(event.User.IsAnonymous && strings.TrimSpace(event.User.Email) == "") {
 			code = checkSignupEmail(r.Context(), event.User.Email, lookupMX)
 		}
 		if code != "" {

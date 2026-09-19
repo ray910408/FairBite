@@ -17,9 +17,11 @@
    supabase db push
    ```
 
-3. Authentication → Sign In / Providers → Email：**關掉 Confirm email**。
-   本專案只用 email + password，`signUp` 成功後直接導首頁；若開著確認信，
-   註冊會拿不到 session 而彈回登入頁，且免費方案內建 SMTP 每小時只發 2 封。
+3. Authentication 設定需與訪客升級流程一致：
+   - Sign In / Providers：啟用 **Anonymous Sign-Ins** 與 Email provider。
+   - Email：開啟 **Confirm email**。新帳號及匿名訪客綁定 email 都要完成確認；pending confirmation 期間不得建立新房。
+   - Security：啟用 **Allow manual linking**，讓匿名身分以原 UID 升級，不建立第二個帳號。
+   - URL Configuration：Site URL 設正式站 origin/path，Redirect URLs 加入正式站 auth hash route 及實際使用的 preview URL；不要沿用本機 `127.0.0.1`。
 
    **不要用 `supabase config push` 代替這個開關**：本機 `config.toml` 的
    `site_url = "http://127.0.0.1:3000"` 會一起被推上去，把正式站的 auth 設定打壞。
@@ -66,7 +68,8 @@ MX 通過只代表網域有郵件設定，不證明個別信箱存在或屬於�
 **只部署前端／後端程式不會自動啟用 MX。** 必須在 Supabase 啟用
 Before User Created hook，才能攔住直接呼叫 Auth API 的註冊。前端仍使用
 原本的 signUp，Supabase 在寫入 auth.users 前呼叫 hook；既有帳號登入不受影響。
-本 hook 僅供目前的 email + password 註冊；日後加入電話或匿名註冊需先調整政策。
+匿名建立沒有 email，簽章 payload 明確標示匿名身分時略過 Regex/MX；一般 email 註冊與
+匿名訪客更新 email 都必須經過同一政策。缺 email 的非匿名事件仍拒絕，不能用空 email 繞過。
 
 1. 先部署 Go 後端，確認公開 HTTPS 的
    POST /api/auth/before-user-created 可連線。尚未配置 secret 時回 503，
@@ -75,7 +78,7 @@ Before User Created hook，才能攔住直接呼叫 Auth API 的註冊。前端�
    URL 設為 https://<Go 後端網域>/api/auth/before-user-created，產生 signing secret。
    將完整的 v1,whsec_<base64-secret> 存入後端環境變數 SIGNUP_HOOK_SECRET，
    重新部署後端；不要將 secret 寫入 Git 或 VITE_*。
-3. **後端就緒後才啟用 hook**，維持原本 Confirm email 關閉。Hook 有約 5 秒期限，
+3. **後端就緒後才啟用 hook**，並維持 Confirm email 開啟。Hook 有約 5 秒期限，
    DNS 查詢最多 2 秒，沒有應用層重試。repo 的 Render free plan 會休眠，冷啟動可能
    超過期限而使註冊失敗；正式使用前須改用不休眠的執行環境，或另將此 hook 部署到
    能滿足期限的服務。不能靠放行 DNS 故障來規避這個限制。
@@ -89,7 +92,7 @@ Before User Created hook，才能攔住直接呼叫 Auth API 的註冊。前端�
    不需要 DB migration，也不刪除／修改任何既有帳號。
 
 本機測試時先設定同一個 SIGNUP_HOOK_SECRET 給 Go server 與啟動 Supabase CLI
-的環境，再取消 supabase/config.toml 內 [auth.hook.before_user_created] 的註解。
+的環境，再設定 supabase/config.toml 內 [auth.hook.before_user_created]。
 URI 使用 http://host.docker.internal:8787/api/auth/before-user-created。
 只設定 server/.env 不會自動傳入 Supabase CLI；不要用 config push 改正式 auth 設定。
 
@@ -103,7 +106,9 @@ Remove-Item Env:TEST_SIGNUP_DNS
 ~~~
 
 第一個命令是離線格式／MX／簽章／路由回歸測試；第二個只實際查 DNS，不建立帳號。
-Supabase 建帳整合驗證必須另行完成，不能用單元測試代替。
+目前本機已驗證匿名建立、原 UID 升級與 pending confirmation 權限閘門；上游 HTTP signup hook
+並未在本機 Auth stack 啟用，因此簽章、匿名略過 MX、一般 Regex/MX 的 Go 測試不能取代
+正式環境 hook 驗證。
 
 參考：[Before User Created](https://supabase.com/docs/guides/auth/auth-hooks/before-user-created-hook)、
 [HTTP hook 錯誤處理](https://supabase.com/docs/guides/auth/auth-hooks#http-hooks)、
@@ -194,6 +199,30 @@ CI 與 Deploy web 的既有 `go test -race ./...` 會執行
 
 新搜尋立即使用新規則；既有未定案房間在下一次投票、抽選或退房重算時更新機率。
 已定案的抽選快照保留原值。
+
+## 房間待確認、改地點與訪客功能（已實作，尚未部署）
+
+本機測試使用獨立 `app_features` Supabase（API 55321、DB 55322、郵件測試匣 55324；
+Go API 8788、Vite 5174），未重設既有 `app` 資料。待確認、改地點、Maps 店家入口與
+訪客 Auth 的實作與自動測試已完成；QR 三瀏覽器閉環也已通過。尚未部署或 push，
+各項命令與驗收證據見 `implementation-2026-09-17.md`。
+
+這不是可直接混跑新舊 API 的 additive release：抽選從立即定案改成待確認，
+`draws` 從每房唯一改成每房、每版本唯一，並保留各次抽選快照。舊 API 沒有版本欄位，
+舊 SPA 也不認識待確認與改地點階段。部署前需另取得授權，備份資料庫並暫停舊 API 寫入，
+依序完成 migrations、新 Go API、新 Web 與 Auth 設定，確認後恢復服務並要求舊分頁重新載入。
+不可只回滾 Web 或 Go，讓舊程式重新寫入新生命週期。
+
+部署順序：先備份並暫停舊 API 寫入；依序套用 `20260917000100_pending_selection.sql`、
+`20260917000200_relocation.sql`、`20260917000300_guest_identity.sql`；再部署新 Go API 與 Web；
+最後在 hosted Supabase 啟用 anonymous sign-ins、manual linking、Confirm email、正式 redirect URLs
+與 Before User Created HTTP hook，逐項驗證後才恢復服務。只修改 `supabase/config.toml` 不會改變 hosted 設定。
+
+正式驗收至少包含：訪客直接呼叫建房 RPC 被拒絕、匿名首次入房、原 UID 升級且 email
+確認前仍不可建房、確認且設定密碼後可建房、登入既有帳號不合併訪客資料、直接更新 Auth email
+無法繞過 Regex + DNS MX、非準備階段拒絕新成員，以及房內多使用者同步。Supabase v2.194.0
+在處理驗證連結時，先單獨寫入 `is_anonymous=false`，再更新已驗證 email；migration 的
+trigger 必須在這兩次更新間繼續核對 pending confirmation 票據，部署驗收不可只看 `is_anonymous`。
 
 ## 換網域或改服務名時
 

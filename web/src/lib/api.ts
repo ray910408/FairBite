@@ -75,12 +75,28 @@ export async function drawRoom(roomId: string): Promise<string | null> {
   return postAction(`/api/rooms/${roomId}/draw`, '抽選失敗')
 }
 
+export async function confirmDraw(roomId: string, version: number): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/confirm`, '確認失敗', { version })
+}
+
+export async function redrawRoom(roomId: string, version: number): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/redraw`, '重轉失敗', { version })
+}
+
 export async function startVoting(roomId: string): Promise<string | null> {
   return postAction(`/api/rooms/${roomId}/start-voting`, '開始投票失敗')
 }
 
 export async function editConditions(roomId: string): Promise<string | null> {
   return postAction(`/api/rooms/${roomId}/edit-conditions`, '修改條件失敗')
+}
+
+export async function voteLocation(roomId: string, want: boolean, version: number): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/location-vote`, '改地點表決失敗', { want, version })
+}
+
+export async function chooseLocation(roomId: string, lat: number, lng: number, version: number): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/location`, '更新地點失敗', { lat, lng, version })
 }
 
 // 投票/否決/收回的唯一入口（D15）：Go 單一交易寫票 + 權威重算，Realtime 推回全員

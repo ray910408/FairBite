@@ -9,6 +9,7 @@ import AuthPage from './pages/AuthPage'
 import HomePage from './pages/HomePage'
 import HistoryPage from './pages/HistoryPage'
 import RoomPage from './pages/RoomPage'
+import JoinPage from './pages/JoinPage'
 
 export function useSession() {
   const [session, setSession] = useState<Session | null>(null)
@@ -45,6 +46,7 @@ export default function App() {
     <HashRouter>
       <Routes>
         <Route path="/auth" element={<AuthPage />} />
+        <Route path="/join/:code" element={<JoinPage />} />
         <Route path="/" element={<Guard><HomePage /></Guard>} />
         <Route path="/history" element={<Guard><HistoryPage /></Guard>} />
         <Route path="/room/:id" element={<Guard><RoomPage /></Guard>} />
