@@ -8,12 +8,12 @@
 
 | Task | 範圍 | 實作者 | 審查與驗證 | 狀態 |
 | --- | --- | --- | --- | --- |
-| 0 | 已核准規格、ADR、執行紀錄 | 主代理 | 逐項核對使用者決策、diff/UTF-8 檢查 | 已審查，納入本次提交 |
-| 1 | 待確認抽選、版本、重轉與耗盡回準備；後端/schema/UI | Sol | 主代理檢查交易/授權/歷史/重算；Go、DB 整合、Vitest、build | 已審查，納入本次提交 |
-| 2 | 改地點表決、離房門檻、選點與搜尋競態；後端/schema/UI | Sol | 主代理檢查鎖序與舊搜尋失效；Go、DB 併發、Vitest、build | 已審查，納入本次提交 |
-| 3 | 訪客身分、QR 邀請、升級新帳號與切換既有帳號 | Sol、主代理 | 主代理檢查 Auth/RPC/RLS/email 驗證；DB/Auth 整合、Vitest、Playwright | 已審查，納入本次提交 |
-| 4 | 僅保留 Google 候選的 Maps 店家連結 | Luna | 主代理檢查連結/來源/排除判定；Vitest、build | 已審查並通過測試，納入本次提交 |
-| 5 | 全流程整合、部署文件與驗收核對 | 主代理 | Go/web/DB/E2E；核對四項需求與既有契約 | 待執行 |
+| 0 | 已核准規格、ADR、執行紀錄 | 主代理 | 逐項核對使用者決策、diff/UTF-8 檢查 | 已審查並獨立提交，見下列紀錄 |
+| 1 | 待確認抽選、版本、重轉與耗盡回準備；後端/schema/UI | Sol | 主代理檢查交易/授權/歷史/重算；Go、DB 整合、Vitest、build | 已審查並獨立提交，見下列紀錄 |
+| 2 | 改地點表決、離房門檻、選點與搜尋競態；後端/schema/UI | Sol | 主代理檢查鎖序與舊搜尋失效；Go、DB 併發、Vitest、build | 已審查並獨立提交，見下列紀錄 |
+| 3 | 訪客身分、QR 邀請、升級新帳號與切換既有帳號 | Sol、主代理 | 主代理檢查 Auth/RPC/RLS/email 驗證；DB/Auth 整合、Vitest、Playwright | 已審查並獨立提交，見下列紀錄 |
+| 4 | 僅保留 Google 候選的 Maps 店家連結 | Luna | 主代理檢查連結/來源/排除判定；Vitest、build | 已提交 `fb652ab` |
+| 5 | 全流程整合、部署文件與驗收核對 | 主代理、Sol 文件 | Go/web/DB/E2E；核對四項需求與既有契約 | 已審查與驗收，納入 Task5 提交 |
 
 獨立 task 可並行實作，但每項需完成主代理審查、修正與必要測試才可 commit；每個 commit 後執行 `codegraph.cmd sync D:\app` 並核對狀態。未通過審查不得視為完成。每個 task 提交前將證據寫入本檔。
 
@@ -65,3 +65,23 @@ Task 2：Sol 整合 routes、leave、freeze、Realtime 與 RoomPage；主代理�
 QR 三瀏覽器 E2E 第一輪修復 async checkbox 斷言後，發現實際 UI 問題：relocating 時 ConditionsForm 已卸載、flush 回 false，使確認新地點不送出。第二輪修正僅在 lobby 等待條件儲存，保留 lobby 閘門；RoomPage 40/40 tests passed，QR E2E 正在執行第二輪修復後驗收，若再失敗即停損。
 
 Task3 提交前主代理審查結論：核對 signed anonymous hook、Regex+MX 升級票據、Auth 分兩步更新順序、RLS/RPC 建房閘門、原 UID 延續、既有登入必須明示退房、兩個確認框的 inert 背景、QR 加入與 lobby 限制、定案後提示及同瀏覽器跳過記憶。QR 三瀏覽器第二輪修復後通過（38.9s），涵蓋暱稱加入、改地點、訪客接任房主、重新準備、排除重轉、不寫被排除店歷史、正式提示、跳過後重新入房、訪客首頁無建房按鈕。最新 full server 真實 DB passed（10.100s）；full web 33 files / 329 tests passed；production build 與 lint exit 0（bundle、Fast Refresh 和既有 hooks 等非阻斷 warnings）。Auth live 與 pgTAP 證據如上；HTTP signup hook 尚未在本機 Auth stack 啟用，正式部署需另行驗證。全部 E2E 回歸納入 Task5 最終驗收。
+
+Task3 已提交 `85bc857`，CodeGraph sync 成功（Already up to date）。Task5 全部 7 項 Playwright E2E 通過（2.0m），包含邀請輸入限制、慢搜尋／離席、雙使用者正式定案閉環、QR 三瀏覽器閉環、全否決與房主繼任。
+
+## 需求與驗收證據對照
+
+| 核准需求 | 實作與證據 |
+| --- | --- |
+| 改搜尋中心、嚴格過半、撤回、離房重算、通過不可撤销、繼任選點 | `relocation.go` 與 `TestLocation*` 真實 DB；QR E2E 驗證雙投票並行、過半暫停與訪客繼任；`TestHandleSearchRejectsSameCenterNewRound` 證明舊搜尋不覆蓋新輪次。 |
+| 房主確認／排除重轉、批次排除、耗盡回準備、只有正式結果入歷史 | `pending.go`、`TestPending*` 與 pending pgTAP 6/6；雙使用者與 QR E2E 實際驗證 pending 按鈕、重新轉動同步、只保留確認店的歷史。 |
+| QR 暱稱入房、同瀏覽器恢復、訪客繼任、建房需完成註冊 | `JoinPage`、`resolve_room_invite`／既有 `join_room` 與 `create_room` 授權；guest pgTAP 9/9、live Auth、QR E2E；加入者未取得定位權限仍可完整參與。 |
+| 定案後可跳過註冊提示、原 UID 升級、既有帳號不合併 | Prompt 測試與 QR 重入房驗證；live Auth 檢查同 UID 房籍／歷史；AuthPage 離席確認、失敗返回與直接登入守門由程式審查及回歸測試覆蓋，沒有跨 UID 資料合併路徑。 |
+| 保留候選 Google Maps 店家連結、排除與 mock 無連結 | `maps.test.ts`／`PrivateScoring.test.tsx`；既有結果導航不带 origin，URL 正確編碼並保留新分頁語意。 |
+
+部署仍不在本次執行範圍。正式 Supabase 設定、HTTP signup hook 與公開 QR 網址的裝置掃碼需按 `deploy.md` 在部署時驗證；本機 Maps 使用 mock，真實 Google 店家連結以 URL/來源單元測試驗證。上述界線不代表已部署、已 push 或真實 Google API 已連線。
+
+## 最終審查與提交
+
+Task0 `a57ae8a`、Task1 `5e3ffc7`、Task2 `a206b60`、Task3 `85bc857`、Task4 `fb652ab` 均已独立提交並同步 CodeGraph。Auth 後續審查發現初始 getUser 尚未完成時快速提交可錯分訪客身分；`4827013` 改為提交時讀取 session，兩個回歸涵蓋登入退房確認與同 UID 註冊升級。主代理重新執行 AuthPage 53/53 passed；Sol build passed；提交後 CodeGraph sync 成功。
+
+Task5 完成部署文件、ADR／CONTEXT、一致的本地 Email confirmation 測試前置，以及 7 項 E2E 回歸。全套 E2E、329 項前端測試與 Go／DB 結果取得於 Auth 快速提交修正前；該修正另以 AuthPage 53 項及 build 驗證，未將未重跑的全套結果視為新修正後的結果。最終 diff 檢查與需求對照完成，無待實作功能；未 push 或部署。

@@ -6,6 +6,8 @@ status: accepted
 
 2026-09-17 需求訪談已選擇讓首次掃碼者只填暱稱即可成為房間成員，同日使用者已授權按完整計劃實作。訪客可填條件、投票、表決改地點，也可依既有退房繼任規則接任房主；建立新房才要求註冊，避免原房主離開時決策被註冊流程卡住。正式定案後提示註冊一次，可跳過。
 
+此決策已以 Supabase 匿名 Auth、資料庫建房閘門及原 UID 升級流程實作；本機 live Auth integration 與 guest pgTAP 已通過，但尚未部署到 hosted Supabase。
+
 ## 身分與紀錄邊界
 
 - 同一瀏覽器沿用訪客身分與暱稱；升級成新正式帳號時保留原身分資料。
@@ -21,6 +23,8 @@ status: accepted
 
 ## Consequences
 
-- 擴充既有詞彙表中「成員必須已註冊」的限制；每位訪客仍須有可驗證、彼此隔離的身分。
+- 移除舊有「成員必須已註冊」限制；每位訪客仍須有可驗證、彼此隔離的匿名 Auth 身分。
 - 不變更既有條件、投票額度與退房責任；訪客身分不豁免伺服器授權、輸入驗證與速率限制。
-- 候選技術為 Supabase 匿名身分及原身分升級；仍需驗證現有 signup hook、email 綁定驗證及訪客建立房間的限制，不能只在 UI 隱藏按鈕。
+- 使用 Supabase 匿名身分建立可驗證的訪客 UID；`create_room` 在資料庫端拒絕匿名使用者，不能只靠 UI 隱藏按鈕。
+- 升級沿用原 UID：先更新 email，再設定 password；Supabase v2.194.0 的 email 更新事件會先呈現 `is_anonymous=false`，資料庫 trigger 必須在 pending confirmation 期間繼續守住建房權限。
+- Regex + DNS MX 政策同時涵蓋首次正式註冊與訪客升級的 email 更新；匿名建立沒有 email，經簽章 hook 明確略過 MX。正式環境仍須啟用 HTTP hook、匿名登入、manual linking、email confirmation 與 redirect URL，不能用本機測試代替 hosted 設定。

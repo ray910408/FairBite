@@ -122,7 +122,9 @@ stateDiagram-v2
 - 同一官方文件區分「訪客升級新帳號」與「登入既有帳號」；既有帳號的資料衝突需由產品決定，不可假設自動合併。綁定 email 與設定密碼的驗證時序需與既有 Regex + DNS MX 政策一起檢查。
 - [Google Maps URLs](https://developers.google.com/maps/documentation/urls/get-started)：可用搜尋連結與 `query_place_id` 開啟指定店家資訊，符合已選的店家頁需求；不需為評論另外抓取內容。Google 來源但缺少有效識別碼時以店名與座標作搜尋 fallback，不把 mock 識別碼當 Place ID。
 
-## 已確認規則的驗收情境（尚未執行）
+## 已確認規則的驗收情境
+
+下列為核准的驗收契約；本機實際執行結果與限制記錄於 `implementation-2026-09-17.md`。
 
 ### 改地點
 
