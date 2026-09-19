@@ -47,7 +47,7 @@ vi.mock('react-router-dom', () => ({
 }))
 
 vi.mock('../lib/supabase', () => ({
-  supabase: { auth: { signOut: vi.fn() }, rpc: mocks.rpc, from: mocks.from },
+  supabase: { auth: { signOut: vi.fn(), getUser: vi.fn().mockResolvedValue({ data: { user: { is_anonymous: false } } }) }, rpc: mocks.rpc, from: mocks.from },
 }))
 vi.mock('../lib/uid', () => ({ getUid: mocks.getUid }))
 vi.mock('../lib/prefsLearning', () => ({ suggestCuisines: mocks.suggestCuisines }))

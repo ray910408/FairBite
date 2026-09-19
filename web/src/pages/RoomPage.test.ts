@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   editConditions: vi.fn(),
   confirmDraw: vi.fn(),
   redrawRoom: vi.fn(),
+  chooseLocation: vi.fn(async () => null),
   members: {} as { data?: unknown; error?: unknown },
   effects: [] as Array<() => void | (() => void)>,
 }))
@@ -56,6 +57,7 @@ vi.mock('../lib/api', () => ({
   editConditions: mocks.editConditions,
   confirmDraw: mocks.confirmDraw,
   redrawRoom: mocks.redrawRoom,
+  chooseLocation: mocks.chooseLocation,
   startVoting: vi.fn(async () => null),
 }))
 
@@ -407,6 +409,23 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
       signal: expect.any(AbortSignal),
       onRequestStart: expect.any(Function),
     }))
+  })
+
+  it('改地點階段不等待已卸載條件表單，lobby 仍維持儲存閘門', async () => {
+    const room = { ...lobbyRoom, search_version: 2 }
+    mocks.useRoom.mockReturnValue(roomState({ room }))
+    const tree = await renderRoomPage()
+    const conditions = findNode(tree, el => typeof el.props?.onFlushAvailable === 'function')
+    const register = conditions!.props!.onFlushAvailable as (flush: null) => void
+    register(null)
+    const panel = findNode(tree, el => typeof el.props?.onChoose === 'function')
+    const choose = panel!.props!.onChoose as (point: { lat: number; lng: number; label: string }) => Promise<void>
+    const point = { lat: 25.05, lng: 121.52, label: '新地點' }
+    await choose(point)
+    expect(mocks.chooseLocation).not.toHaveBeenCalled()
+    room.status = 'relocating'
+    await choose(point)
+    expect(mocks.chooseLocation).toHaveBeenCalledWith('room-1', point.lat, point.lng, 2)
   })
 
   it('preflight pending 時 unmount，晚到結果不送 search、不啟動 timer、不 setState', async () => {

@@ -18,6 +18,8 @@ import Wheel from '../components/Wheel'
 import ResultCard from '../components/ResultCard'
 import RatingPrompt from '../components/RatingPrompt'
 import RelocationPanel from '../components/RelocationPanel'
+import { GuestRegistrationPrompt } from '../components/GuestRegistrationPrompt'
+import { InviteQRCode } from '../components/InviteQRCode'
 import { Alert, Check, Copy, Logo, Spinner, Users } from '../components/icons'
 
 const STEPS = [
@@ -76,6 +78,7 @@ export default function RoomPage() {
   const [searchSlow, setSearchSlow] = useState(false)
   const [pendingAction, setPendingAction] = useState<'confirm' | 'redraw' | null>(null)
   const [relocationBusy, setRelocationBusy] = useState(false)
+  const [isGuest, setIsGuest] = useState(false)
   const leaveTriggerRef = useRef<HTMLAnchorElement>(null)
   // 房籍查詢自己的世代（比照 HistoryPage）：aria-busy 擋不住點擊，兩次點擊之間房籍
   // 還可能在別的分頁被改，只有最後一次點擊的回應能生效
@@ -130,6 +133,10 @@ export default function RoomPage() {
     }
   }, [])
   useEffect(() => { setSpun(false) }, [draw?.version])
+  useEffect(() => {
+    const getUser = supabase.auth?.getUser?.bind(supabase.auth)
+    if (getUser) void getUser().then(({ data }) => setIsGuest(data.user?.is_anonymous === true)).catch(() => {})
+  }, [])
   if (!room) {
     if (loadError) return (
       <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
@@ -317,7 +324,11 @@ export default function RoomPage() {
     if (relocationBusy) return
     setRelocationBusy(true); setActionError('')
     try {
-      const [conditionsOK, roomSettingsOK] = await Promise.all([conditionsFlush.current(), flushRoomWrites()])
+      // Relocating uses frozen conditions; its ConditionsForm is already unmounted.
+      const [conditionsOK, roomSettingsOK] = await Promise.all([
+        room!.status === 'lobby' ? conditionsFlush.current() : true,
+        flushRoomWrites(),
+      ])
       if (!conditionsOK || !roomSettingsOK) return
       const msg = await chooseLocation(room!.id, point.lat, point.lng, room!.search_version)
       if (msg) setActionError(msg)
@@ -451,6 +462,12 @@ export default function RoomPage() {
             wantChange={locationVotes.some(v => v.user_id === myUserId)}
             yesCount={locationVotes.length} memberCount={members.length} busy={relocationBusy}
             onVote={onLocationVote} onChoose={onChooseLocation} />
+        )}
+        {room.status === 'lobby' && (
+          <section className="card space-y-3">
+            <h2 className="text-base font-semibold">邀請成員</h2>
+            <InviteQRCode code={room.code} />
+          </section>
         )}
 
         {(room.status === 'candidates' || room.status === 'voting') && (
@@ -703,6 +720,9 @@ export default function RoomPage() {
                 <ResultCard draw={currentDraw} candidates={drawCandidates} me={me}
                   confirmed={room.status === 'decided'} />
                 {room.status === 'decided' && <RatingPrompt roomId={room.id} />}
+                {room.status === 'decided' && isGuest && (
+                  <GuestRegistrationPrompt userId={myUserId} roomId={room.id} open />
+                )}
                 {room.status === 'pending' && isHost && (
                   <div className="grid grid-cols-2 gap-3">
                     <button type="button" className="btn btn-secondary w-full"

@@ -62,6 +62,7 @@ export default function HomePage() {
   // HomePage.test.ts 依 useState 呼叫順序 mock
   const [leaveTarget, setLeaveTarget] = useState<LeaveTarget | null>(null)
   const [suggestionLoadError, setSuggestionLoadError] = useState('')
+  const [isGuest, setIsGuest] = useState(false)
   const location = useLocation()
   // 每次 mount 只做一次離席決策：消耗旗標的 replace 會讓 location 變、下面的 effect
   // 重跑，沒有這道閘就會在 doLeave() 還在飛的時候又走一次查房籍→開 dialog
@@ -117,6 +118,9 @@ export default function HomePage() {
   useEffect(() => {
     suggestionsMounted.current = true
     void loadSuggestions()
+    void supabase.auth.getUser()
+      .then(({ data }) => setIsGuest(data.user?.is_anonymous === true))
+      .catch(() => setIsGuest(false))
     return cancelSuggestionLoads
   }, [cancelSuggestionLoads, loadSuggestions])
 
@@ -253,8 +257,8 @@ export default function HomePage() {
           <p className="text-sm text-fg-muted">
             選好出發點與用餐時間建立房間，把邀請碼給大家，各自設好條件就能開始搜尋。
           </p>
-          <LocationPicker value={departure} onChange={handleDepartureChange} />
-          <div className="space-y-2">
+          {!isGuest && <LocationPicker value={departure} onChange={handleDepartureChange} />}
+          {!isGuest && <div className="space-y-2">
             <span className="text-sm font-semibold text-fg-muted">用餐時間</span>
             <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
               {([['now', '馬上出發'], ['custom', '自訂時間']] as const).map(([key, label]) => (
@@ -288,11 +292,13 @@ export default function HomePage() {
                 </select>
               </div>
             )}
-          </div>
-          <button onClick={createRoom} disabled={busy || !departure || leavePending} className="btn btn-primary w-full">
+          </div>}
+          {isGuest ? (
+            <Link to="/auth?mode=register" className="btn btn-primary w-full">註冊後建立房間</Link>
+          ) : <button onClick={createRoom} disabled={busy || !departure || leavePending} className="btn btn-primary w-full">
             {busy && <Spinner className="h-5 w-5" />}
             {busy ? '建立中…' : '建立房間'}
-          </button>
+          </button>}
           {createError && (
             <p role="alert" className="banner bg-danger-soft text-danger">
               <Alert className="h-5 w-5 shrink-0" />

@@ -86,6 +86,9 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, weather
 		jsonOK(w, map[string]bool{"ok": true})
 	})
 	api := http.NewServeMux()
+	api.HandleFunc("POST /api/auth/validate-upgrade-email", func(w http.ResponseWriter, r *http.Request) {
+		handleValidateUpgradeEmail(w, r, postgresGuestAuthStore{pool: pool}, net.DefaultResolver.LookupMX)
+	})
 	api.HandleFunc("POST /api/rooms/{id}/search", func(w http.ResponseWriter, r *http.Request) {
 		handleSearch(w, r, pool, places, weather, &searchInFlight)
 	})
