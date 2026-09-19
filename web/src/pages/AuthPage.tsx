@@ -65,17 +65,19 @@ export default function AuthPage() {
     }
     setBusy(true)
     try {
-      if (mode === 'register' && resumeUpgrade && user) {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError) throw sessionError
+      const currentUser = sessionData.session?.user ?? null
+      if (mode === 'register' && resumeUpgrade && currentUser) {
         const { error: passwordError } = await supabase.auth.updateUser({ password })
         if (passwordError) throw passwordError
-        localStorage.removeItem(`guest-upgrade:${user.id}`)
-        const returnTo = sessionStorage.getItem(`guest-upgrade-return:${user.id}`) ?? '/'
-        sessionStorage.removeItem(`guest-upgrade-return:${user.id}`)
+        localStorage.removeItem(`guest-upgrade:${currentUser.id}`)
+        const returnTo = sessionStorage.getItem(`guest-upgrade-return:${currentUser.id}`) ?? '/'
+        sessionStorage.removeItem(`guest-upgrade-return:${currentUser.id}`)
         nav(returnTo, { replace: true })
         return
       }
-      if (mode === 'register' && user?.is_anonymous) {
-        const { data: sessionData } = await supabase.auth.getSession()
+      if (mode === 'register' && currentUser?.is_anonymous) {
         const token = sessionData.session?.access_token
         if (!token) throw new Error('missing session')
         const validation = await fetch(`${import.meta.env.VITE_API_URL ?? ''}/api/auth/validate-upgrade-email`, {
@@ -90,11 +92,11 @@ export default function AuthPage() {
         const emailRedirectTo = `${window.location.origin}${window.location.pathname}${window.location.search}#/auth`
         const { error: updateError } = await supabase.auth.updateUser({ email: registrationEmail }, { emailRedirectTo })
         if (updateError) throw updateError
-        localStorage.setItem(`guest-upgrade:${user.id}`, registrationEmail.toLowerCase())
+        localStorage.setItem(`guest-upgrade:${currentUser.id}`, registrationEmail.toLowerCase())
         setUpgradeNotice('驗證信已寄出。請先完成 Email 驗證，再回來設定密碼；目前訪客房籍與紀錄都會保留。')
         return
       }
-      if (mode === 'login' && user?.is_anonymous) {
+      if (mode === 'login' && currentUser?.is_anonymous) {
         setConfirmExistingLogin(true)
         return
       }
