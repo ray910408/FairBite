@@ -21,7 +21,7 @@ set local "request.jwt.claims" = '{"sub":"75200000-0000-4000-8000-000000000002",
 select is((select count(*) from location_change_votes)::int,0,'outsiders cannot read votes');
 reset role;
 update rooms set status='lobby' where id='75200000-0000-4000-8000-000000000010';
-select is((select count(*) from location_change_votes)::int,0,'returning to preparation clears old location votes');
+select is((select count(*) from location_change_votes where room_id='75200000-0000-4000-8000-000000000010')::int,0,'returning to preparation clears old location votes');
 select is((select search_version from rooms where id='75200000-0000-4000-8000-000000000010'),1::bigint,'same-center return invalidates previous search round');
 select * from finish();
 rollback;
