@@ -86,6 +86,17 @@ describe('join after confirmed departure', () => {
     expect(mocks.navigate).toHaveBeenCalledWith('/room/new-room', { replace: true })
   })
 
+  it.each(['resolve_room_invite', 'join_room'])('%s throttling tells users to wait', async limitedRpc => {
+    mocks.rpc.mockImplementation(async (name: string) => name === limitedRpc
+      ? { data: null, error: { message: '嘗試過於頻繁，請稍後再試' } }
+      : { data: [{ room_id: 'new-room', status: 'lobby', is_member: false }], error: null })
+    await confirmDeparture()
+    expect(mocks.setters[4]).toHaveBeenLastCalledWith('嘗試過於頻繁，請稍後再試')
+    expect(mocks.setters[3]).toHaveBeenLastCalledWith(false)
+    expect(mocks.navigate).not.toHaveBeenCalled()
+    if (limitedRpc === 'resolve_room_invite') expect(mocks.rpc).toHaveBeenCalledTimes(1)
+  })
+
   it('departure errors are visible inside the active dialog', () => {
     mocks.values[4] = '原房間離席失敗'
     JoinPage()

@@ -40,7 +40,8 @@ export default function JoinPage() {
       return
     }
     const { data, error: joinError } = await supabase.rpc('join_room', { p_code: code })
-    if (joinError || !data) setError('房間不存在或已開始')
+    if (joinError || !data) setError(joinError?.message?.includes('頻繁')
+      ? '嘗試過於頻繁，請稍後再試' : '房間不存在或已開始')
     else nav(`/room/${data}`, { replace: true })
   }
 
@@ -50,7 +51,8 @@ export default function JoinPage() {
     try {
       const { data, error: resolveError } = await supabase.rpc('resolve_room_invite', { p_code: code })
       const row = (data as InviteRow[] | null)?.[0]
-      if (resolveError || !row) setError('房間不存在或已開始')
+      if (resolveError || !row) setError(resolveError?.message?.includes('頻繁')
+        ? '嘗試過於頻繁，請稍後再試' : '房間不存在或已開始')
       else await joinResolvedRoom(row)
     } catch {
       setError('目前無法確認邀請，請檢查網路後再試')

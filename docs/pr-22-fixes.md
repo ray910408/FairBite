@@ -77,3 +77,14 @@
 - 改用 checking／guest／member／error；只有查詢成功且不是訪客或未完成升級時顯示建房。錯誤就地顯示並提供重新檢查；既有 DB 建房資格不變。
 - Sol 實作後由主代理審查：核對匿名、升級標記、正式會員、returned error、rejection、缺少 user、storage exception 與 retry。測試使用真正 initial state，避免 mock 預先指定 checking 而漏掉初始狀態回歸。
 - 修正前 auth boundary 測試 7 項失敗；修正後首頁 48 tests、完整前端 33 files／365 tests passed（清空 Supabase URL/key）。Sol 執行 build／lint exit 0，既有 warnings 未更動。
+
+## 後續 review：邀請查詢繞過限流（4057058225）
+
+- 核實成立：原本 SECURITY DEFINER resolver 可反覆確認邀請碼，完全沒有使用 join_room 的邀請嘗試計數。
+- 新增 migration `20260920000200_invite_resolution_throttle.sql`；resolver 改為 VOLATILE PL/pgSQL，先取得與 join_room 相同的 UID advisory transaction lock，再使用同一 join_attempts／每分鐘 10 次額度。
+- 有效、無效、非成員看不到的已開始房间都先計數；查無結果正常回傳空集合，避免 raise 回滾嘗試。保留 RPC 結構、既有成員回房與 grants，不寫房籍。查詢後加入使用 2 次額度，部署文件已說明。
+- JoinPage 的 resolver／join 限流錯誤改顯示「嘗試過於頻繁，請稍後再試」，避免誤報房間不存在。兩項回歸修正前失敗、修正後 JoinPage 8/8 passed。
+- pgTAP 修正前 7/17 failed，隔離 app_features（55322）套用新 migration 後 17/17 passed；完整 SQL 8 files／160 assertions passed，測試均 rollback，沒有操作原 DB 54322 或 production。
+- 主代理與 Sol 只讀審查核對相同 lock key、共享額度、正常返回的計數持久性、權限與呼叫端。雙 session contention 未執行；並發序列化依據為兩個 RPC 的同一 transaction advisory lock。
+- 最終前端 33 files／367 tests passed；build／TypeScript／lint exit 0（既有 11 warnings）。本輪未執行 Go、Playwright 或 race；修改範圍為 Web 與 SQL。
+- 首頁 task 已獨立提交 `3a135b5`，CodeGraph sync 成功。限流 task 驗收後獨立提交；兩則留言於 push 後回覆並讀回 resolved 狀態。

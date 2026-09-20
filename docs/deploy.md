@@ -215,7 +215,8 @@ Go API 8788、Vite 5174），未重設既有 `app` 資料。待確認、改地�
 
 部署順序：先備份並暫停舊 API 寫入；依序套用 `20260917000100_pending_selection.sql`、
 `20260917000200_relocation.sql`、`20260917000300_guest_identity.sql`、
-`20260920000100_guest_upgrade_email_correction.sql`；再部署新 Go API 與 Web；
+`20260920000100_guest_upgrade_email_correction.sql`、
+`20260920000200_invite_resolution_throttle.sql`；再部署新 Go API 與 Web；
 最後在 hosted Supabase 啟用 anonymous sign-ins、manual linking、Confirm email、正式 redirect URLs
 與 Before User Created HTTP hook，逐項驗證後才恢復服務。只修改 `supabase/config.toml` 不會改變 hosted 設定。
 
@@ -228,6 +229,10 @@ trigger 必須在這兩次更新間繼續核對 pending confirmation 票據，�
 `20260920000100` 延續保護尚未完成的訪客升級，允許重新驗證並更正 Email。
 應先套用此 migration 再更新 API，避免新 API 的更正票據被舊 trigger 略過。
 驗收須包含輸錯 Email 後更正、僅確認對應 Email 後才能完成密碼設定，以及既有正式帳號不能使用訪客升級入口。
+
+`20260920000200` 讓 `resolve_room_invite` 與 `join_room` 共用每位使用者每分鐘 10 次的邀請嘗試額度。
+有效、無效及不可加入的邀請查詢都計數；一次查詢後加入會使用 2 次額度。
+此 migration 不改 RPC 回傳結構或房籍；正式驗收須確認兩個 RPC 混用仍會限流，額度到期後可再次查詢。
 
 ## 換網域或改服務名時
 
