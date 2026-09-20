@@ -18,6 +18,7 @@ select results_eq(
       ('dining_history','SELECT'),
       ('draws','SELECT'),
       ('exposure_stats','SELECT'),
+      ('location_change_votes','SELECT'),
       ('restaurants','SELECT'),
       ('room_candidates','SELECT'),
       ('room_members','SELECT'),
@@ -148,7 +149,7 @@ select results_eq(
       and table_name = 'rooms' and privilege_type = 'SELECT'
     order by 1
   $$,
-  $$ values ('code'), ('created_at'), ('cuisine_filter'), ('exploration'), ('host_id'), ('id'), ('meal_time'), ('status') $$,
+  $$ values ('code'), ('created_at'), ('cuisine_filter'), ('draw_version'), ('exploration'), ('host_id'), ('id'), ('meal_time'), ('search_version'), ('status') $$,
   'rooms 的 SELECT 欄級 grant 精確等於預期欄位集合（center_* 加回去即紅）');
 
 -- 同一條防線的行為面。上面比對 catalog，這條實際用同房成員的身分去讀 center_lat。
