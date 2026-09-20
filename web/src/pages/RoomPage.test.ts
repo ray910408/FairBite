@@ -217,7 +217,7 @@ describe('RoomPage pending selection controls', () => {
         exploration: 'balanced', meal_time: null, cuisine_filter: false, draw_version: 4 },
       members: [], candidates: [candidate],
       draw: { room_id: 'room-1', winner_restaurant_id: 'r1', seed: 'seed', probabilities: { r1: 1 }, version: 4 },
-      myUserId, connected: true, notFound: false, loadError: false, refetch: vi.fn(),
+      myUserId, connected: true, notFound: false, loadError: false, refetch: vi.fn(async (): Promise<void> => undefined),
       toggleVote: vi.fn(), hasMyVote: vi.fn(), ups: new Map(), vetoesRemaining: 2,
     }
   }
@@ -235,6 +235,62 @@ describe('RoomPage pending selection controls', () => {
     const memberTree = await renderRoomPage()
     expect(findButton(memberTree, '確認就吃這家').type).toBeUndefined()
     expect(findButton(memberTree, '排除這家並重轉').type).toBeUndefined()
+  })
+
+  it.each([
+    ['確認就吃這家', mocks.confirmDraw, 'confirm'],
+    ['排除這家並重轉', mocks.redrawRoom, 'redraw'],
+  ] as const)('%s 成功後等 refetch 完成才解除 busy', async (label, action, kind) => {
+    const reload = deferred<void>()
+    const state = pendingState('host')
+    state.refetch.mockReturnValue(reload.promise)
+    mocks.useRoom.mockReturnValue(state)
+    const tree = await renderRoomPage()
+    const click = findButton(tree, label).props?.onClick
+    if (!click) throw new Error(`找不到${label}`)
+
+    const request = click()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(action).toHaveBeenCalledWith('room-1', 4)
+    expect(state.refetch).toHaveBeenCalledOnce()
+    expect(mocks.stateSetters[14]).toHaveBeenCalledWith(kind)
+    expect(mocks.stateSetters[14]).not.toHaveBeenCalledWith(null)
+
+    reload.resolve(undefined)
+    await request
+    expect(mocks.stateSetters[14]).toHaveBeenLastCalledWith(null)
+  })
+
+  it.each([
+    ['確認就吃這家', mocks.confirmDraw],
+    ['排除這家並重轉', mocks.redrawRoom],
+  ] as const)('%s 失敗時顯示錯誤且不 refetch', async (label, action) => {
+    const state = pendingState('host')
+    action.mockResolvedValue('房間狀態已更新')
+    mocks.useRoom.mockReturnValue(state)
+    const tree = await renderRoomPage()
+
+    await findButton(tree, label).props!.onClick!()
+
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('房間狀態已更新')
+    expect(state.refetch).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[14]).toHaveBeenLastCalledWith(null)
+  })
+
+  it.each([
+    ['確認就吃這家', '確認成功，但重新載入失敗，請重新整理頁面'],
+    ['排除這家並重轉', '重轉成功，但重新載入失敗，請重新整理頁面'],
+  ] as const)('%s 成功但 refetch 拋錯時如實回報並解除 busy', async (label, message) => {
+    const state = pendingState('host')
+    state.refetch.mockRejectedValue(new Error('offline'))
+    mocks.useRoom.mockReturnValue(state)
+    const tree = await renderRoomPage()
+
+    await findButton(tree, label).props!.onClick!()
+
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith(message)
+    expect(mocks.stateSetters[14]).toHaveBeenLastCalledWith(null)
   })
 
   it('房間版本已前進時不顯示舊抽選或操作', async () => {

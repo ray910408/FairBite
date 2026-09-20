@@ -730,10 +730,14 @@ export default function RoomPage() {
                       onClick={async () => {
                         if (pendingActionInFlight.current) return
                         pendingActionInFlight.current = true; setPendingAction('redraw'); setActionError('')
-                        const msg = await redrawRoom(room.id, currentDraw.version)
-                          .catch(() => '重轉失敗：無法連線到伺服器')
-                          .finally(() => { pendingActionInFlight.current = false; setPendingAction(null) })
-                        if (msg) setActionError(msg)
+                        try {
+                          const msg = await redrawRoom(room.id, currentDraw.version)
+                            .catch(() => '重轉失敗：無法連線到伺服器')
+                          if (msg) setActionError(msg)
+                          else await refetch().catch(() => setActionError('重轉成功，但重新載入失敗，請重新整理頁面'))
+                        } finally {
+                          pendingActionInFlight.current = false; setPendingAction(null)
+                        }
                       }}>
                       {pendingAction === 'redraw' ? <><Spinner className="h-5 w-5" />重轉中…</> : '排除這家並重轉'}
                     </button>
@@ -742,10 +746,14 @@ export default function RoomPage() {
                       onClick={async () => {
                         if (pendingActionInFlight.current) return
                         pendingActionInFlight.current = true; setPendingAction('confirm'); setActionError('')
-                        const msg = await confirmDraw(room.id, currentDraw.version)
-                          .catch(() => '確認失敗：無法連線到伺服器')
-                          .finally(() => { pendingActionInFlight.current = false; setPendingAction(null) })
-                        if (msg) setActionError(msg)
+                        try {
+                          const msg = await confirmDraw(room.id, currentDraw.version)
+                            .catch(() => '確認失敗：無法連線到伺服器')
+                          if (msg) setActionError(msg)
+                          else await refetch().catch(() => setActionError('確認成功，但重新載入失敗，請重新整理頁面'))
+                        } finally {
+                          pendingActionInFlight.current = false; setPendingAction(null)
+                        }
                       }}>
                       {pendingAction === 'confirm' ? <><Spinner className="h-5 w-5" />確認中…</> : '確認就吃這家'}
                     </button>
