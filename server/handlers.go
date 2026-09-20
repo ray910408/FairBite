@@ -611,6 +611,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 				jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
 				return
 			}
+			if rejectChangedSearchSnapshot(w, ctx, pool, room) {
+				return
+			}
 			jsonError(w, http.StatusBadGateway, "餐廳搜尋失敗，且沒有可用的快取資料，請稍後再試")
 			return
 		}
@@ -678,6 +681,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 			log.Printf("member cuisine drift check failed: %v", cuisineErr)
 		} else if drifted {
 			jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
+			return
+		}
+		if rejectChangedSearchSnapshot(w, ctx, pool, room) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -781,6 +787,20 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	resp := resultJSON(result)
 	resp["degraded"] = degraded
 	jsonOK(w, resp)
+}
+
+func rejectChangedSearchSnapshot(w http.ResponseWriter, ctx context.Context, q querier, room RoomRow) bool {
+	err := checkSearchSnapshot(ctx, q, room.ID, room.SearchVersion, room.CenterLat, room.CenterLng)
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrSearchChanged) {
+		jsonError(w, http.StatusConflict, "搜尋位置已更新，請重新搜尋")
+	} else {
+		log.Printf("search snapshot check failed: %v", err)
+		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+	}
+	return true
 }
 
 func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weather WeatherProvider) {

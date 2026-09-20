@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,31 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+type relocatingSearchProvider struct {
+	pool         *pgxpool.Pool
+	roomID       string
+	fail         bool
+	relocate     bool
+	changeCenter bool
+}
+
+func (relocatingSearchProvider) Source() string { return "mock" }
+
+func (p relocatingSearchProvider) SearchNearby(ctx context.Context, _, _ float64, _ int, _ []string) (PlacesSearchResult, error) {
+	if p.relocate {
+		if _, err := p.pool.Exec(ctx, `update rooms
+			set search_version=search_version+1,
+			center_lat=case when $2 then -49 else center_lat end
+			where id=$1`, p.roomID, p.changeCenter); err != nil {
+			return PlacesSearchResult{}, err
+		}
+	}
+	if p.fail {
+		return PlacesSearchResult{}, errors.New("simulated outage after relocation")
+	}
+	return PlacesSearchResult{}, nil
+}
 
 func seedLocationRoom(t *testing.T, count int) (*pgxpool.Pool, string, []string) {
 	t.Helper()
@@ -203,6 +229,60 @@ func TestHandleSearchRejectsSameCenterNewRound(t *testing.T) {
 	}
 	if status != "lobby" || candidates != 0 {
 		t.Fatalf("stale search adopted: status=%s candidates=%d", status, candidates)
+	}
+}
+
+func TestHandleSearchRejectsRelocationBeforeEarlySearchExits(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		fail         bool
+		relocate     bool
+		changeCenter bool
+		wantStatus   int
+	}{
+		{name: "unchanged empty result", wantStatus: http.StatusUnprocessableEntity},
+		{name: "unchanged provider failure without cache", fail: true, wantStatus: http.StatusBadGateway},
+		{name: "relocated empty result", relocate: true, changeCenter: true, wantStatus: http.StatusConflict},
+		{name: "relocated provider failure without cache", fail: true, relocate: true, changeCenter: true, wantStatus: http.StatusConflict},
+		{name: "same-center new round empty result", relocate: true, wantStatus: http.StatusConflict},
+		{name: "same-center new round provider failure without cache", fail: true, relocate: true, wantStatus: http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool, roomID, users := seedLocationRoom(t, 1)
+			ctx := context.Background()
+			// Keep the cache-miss fixture away from the Taipei restaurant fixtures.
+			if _, err := pool.Exec(ctx, `update rooms set status='lobby',center_lat=-50,center_lng=-140 where id=$1`, roomID); err != nil {
+				t.Fatal(err)
+			}
+			members, err := LoadMembers(ctx, pool, roomID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cached, err := LoadCachedRestaurants(ctx, pool, -50, -140, averageMemberRadius(members), false)
+			if err != nil || len(cached) != 0 {
+				t.Fatalf("fixture must have no fallback cache: count=%d err=%v", len(cached), err)
+			}
+
+			h := newTestAppWithProvider(t, pool, relocatingSearchProvider{
+				pool: pool, roomID: roomID, fail: tc.fail, relocate: tc.relocate, changeCenter: tc.changeCenter,
+			})
+			search := pendingPost(t, h, users[0], "/api/rooms/"+roomID+"/search", "")
+			if search.Code != tc.wantStatus {
+				t.Fatalf("want %d got %d %s", tc.wantStatus, search.Code, search.Body.String())
+			}
+			if tc.relocate && !strings.Contains(search.Body.String(), "搜尋位置已更新") {
+				t.Fatalf("missing relocation message: %s", search.Body.String())
+			}
+			var status string
+			var candidates int
+			if err := pool.QueryRow(ctx, `select status,(select count(*) from room_candidates where room_id=$1)
+				from rooms where id=$1`, roomID).Scan(&status, &candidates); err != nil {
+				t.Fatal(err)
+			}
+			if status != "lobby" || candidates != 0 {
+				t.Fatalf("early exit changed room: status=%s candidates=%d", status, candidates)
+			}
+		})
 	}
 }
 

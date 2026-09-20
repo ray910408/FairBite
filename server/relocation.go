@@ -160,10 +160,10 @@ func clearLocationBatch(ctx context.Context, tx pgx.Tx, roomID string) error {
 
 var ErrSearchChanged = errors.New("search location or round changed during search")
 
-func checkSearchSnapshot(ctx context.Context, tx pgx.Tx, roomID string, version int64, lat, lng float64) error {
+func checkSearchSnapshot(ctx context.Context, q querier, roomID string, version int64, lat, lng float64) error {
 	var currentVersion int64
 	var currentLat, currentLng float64
-	if err := tx.QueryRow(ctx, `select search_version, center_lat, center_lng from rooms where id=$1`, roomID).
+	if err := q.QueryRow(ctx, `select search_version, center_lat, center_lng from rooms where id=$1`, roomID).
 		Scan(&currentVersion, &currentLat, &currentLng); err != nil {
 		return err
 	}

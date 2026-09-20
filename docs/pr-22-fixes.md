@@ -59,3 +59,14 @@
 - 主代理審查 Sol 修復，核對標記的建立／移除路徑；未放寬 DB 建房資格。
 - 三個新增回歸涵蓋匿名、非匿名但升級待完成、無升級標記的一般會員；同時核對註冊連結及建房按鈕。HomePage 42/42、完整前端 359/359 passed。
 - 帳號切換 task 已提交 `efe9366`，提交後 CodeGraph sync 成功。
+
+## 後續 review：搜尋提前返回的地點快照（4056390769）
+
+- 核實成立：零筆 422 與 provider failure／cache miss 502 會早於原本 freeze 的 search snapshot 驗證返回。
+- 兩個提前返回點現在直接重讀 search_version／中心；漂移回 409，查詢失敗回 500。正常候選流程仍在 room lock 內重驗，沒有新增 Places 呼叫。
+- 主代理審查後加強 DB regression：測試位置遠離既有餐廳且先明確斷言沒有快取，避免誤測正常 freeze 路徑。
+- 六案例涵蓋空結果／provider failure 各自的未變動、換地點、新輪次但同中心；驗證 422／502／409 正確且房間保留 lobby、沒有候選。
+- 用 Go overlay 載入修正前 handler：兩項未變動對照通過，四項漂移案例分別錯回 422／502 而失敗。工作樹修正版六項全部通過。
+- 隔離 DB 55322 的完整 `go test ./... -count=1` PASS（10.708s），`go vet ./...` exit 0；前端 lint／TypeScript exit 0（既有 11 lint warnings）。本輪未重跑 Playwright 或 race。
+- 子代理最初誤用既有 DB 54322 執行 fixture 測試，pre-provider 500／既有測試等待 provider 逾時；其 cleanup 會刪除該測試生成的 UUID 房間／使用者，但未查詢驗證清理後筆數。沒有 reset、migration 或快取刪除。上述正式驗收全數改用既有 app_features 隔離環境，沒有採用 54322 結果。
+- 首頁 task 已提交 `6d9d4d4`，提交後 CodeGraph sync 成功。前三節歷史狀態以當時記錄為準；`c985106` 已 push，GitHub web/server/db 三項 CI 通過；本次三個 review 修復另行推送並逐項結案。
