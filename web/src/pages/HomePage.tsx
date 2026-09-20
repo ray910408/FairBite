@@ -119,7 +119,11 @@ export default function HomePage() {
     suggestionsMounted.current = true
     void loadSuggestions()
     void supabase.auth.getUser()
-      .then(({ data }) => setIsGuest(data.user?.is_anonymous === true))
+      .then(({ data }) => {
+        const user = data.user
+        setIsGuest(user?.is_anonymous === true ||
+          (!!user && localStorage.getItem(`guest-upgrade:${user.id}`) !== null))
+      })
       .catch(() => setIsGuest(false))
     return cancelSuggestionLoads
   }, [cancelSuggestionLoads, loadSuggestions])

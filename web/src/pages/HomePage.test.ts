@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   loadLastDeparture: vi.fn(),
   leaveRooms: vi.fn(),
   fetchLeaveRooms: vi.fn(),
+  authGetUser: vi.fn().mockResolvedValue({ data: { user: { id: 'member-1', is_anonymous: false } } }),
   locationState: null as unknown,
 }))
 
@@ -47,7 +48,7 @@ vi.mock('react-router-dom', () => ({
 }))
 
 vi.mock('../lib/supabase', () => ({
-  supabase: { auth: { signOut: vi.fn(), getUser: vi.fn().mockResolvedValue({ data: { user: { is_anonymous: false } } }) }, rpc: mocks.rpc, from: mocks.from },
+  supabase: { auth: { signOut: vi.fn(), getUser: mocks.authGetUser }, rpc: mocks.rpc, from: mocks.from },
 }))
 vi.mock('../lib/uid', () => ({ getUid: mocks.getUid }))
 vi.mock('../lib/prefsLearning', () => ({ suggestCuisines: mocks.suggestCuisines }))
@@ -246,7 +247,51 @@ function stubSuggestionQueries() {
 
 const SUGGESTION_LOAD_ERROR = '口味建議暫時載入失敗；不影響建房與本次房內條件'
 const SUGGESTION_ERROR = 14
+const IS_GUEST = 15
 type SuggestionQueryResult = { data: unknown; error: unknown }
+
+describe('HomePage guest 建房邊界', () => {
+  beforeEach(() => {
+    mocks.stateIndex = 0
+    mocks.refIndex = 0
+    mocks.refs = []
+    mocks.effects = []
+    mocks.stateValues = []
+    mocks.stateSetters = []
+    mocks.getUid.mockReset().mockResolvedValue(null)
+    mocks.fetchLeaveRooms.mockReset().mockResolvedValue([])
+    mocks.authGetUser.mockReset()
+    vi.stubGlobal('localStorage', { getItem: vi.fn(), setItem: vi.fn() })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    mocks.authGetUser.mockReset().mockResolvedValue({ data: { user: { id: 'member-1', is_anonymous: false } } })
+  })
+
+  it.each([
+    ['尚未升級的匿名訪客', { id: 'guest-1', is_anonymous: true }, null, true],
+    ['已寄驗證信但尚未完成升級的訪客', { id: 'guest-pending', is_anonymous: false }, 'guest@example.com', true],
+    ['沒有升級標記的一般會員', { id: 'member-1', is_anonymous: false }, null, false],
+  ])('%s', async (_name, user, marker, expected) => {
+    mocks.authGetUser.mockResolvedValue({ data: { user } })
+    vi.mocked(localStorage.getItem).mockImplementation(key =>
+      key === `guest-upgrade:${user.id}` ? marker : null)
+    const { default: HomePage } = await import('./HomePage')
+    HomePage()
+
+    mocks.effects[0]?.()
+
+    await vi.waitFor(() => expect(mocks.stateSetters[IS_GUEST]).toHaveBeenCalledWith(expected))
+    mocks.stateValues[IS_GUEST] = mocks.stateSetters[IS_GUEST].mock.calls.at(-1)?.[0]
+    mocks.stateIndex = 0
+    mocks.refIndex = 0
+    const tree = HomePage()
+    const registration = findNode(tree, el => el.type === 'a' && el.props?.to === '/auth?mode=register')
+    expect(!!registration).toBe(expected)
+    expect(!!findButton(tree, '建立房間').type).toBe(!expected)
+  })
+})
 
 function okSuggestionResults(): SuggestionQueryResult[] {
   return [

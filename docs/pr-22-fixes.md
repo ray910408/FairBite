@@ -51,3 +51,11 @@
 - 新增離席 HTTP／network 與登入 credentials／network 四個回歸；修改前四項均因視窗缺少錯誤而失敗，修改後 AuthPage 64/64 passed。
 - Sol 獨立審查通過；主代理核對失敗不導頁、離席失敗不嘗試登入、busy 結束後可重試。
 - 同批前端驗證：33 files／359 tests passed（清空 Supabase URL/key）；production build exit 0。
+
+## 後續 review：首頁未完成升級訪客（4056390771）
+
+- 核實成立：GoTrue 匿名旗標清除後，仍可能等待 Email 驗證或密碼設定；AuthPage 的 UID 升級標記直到密碼成功設定才移除。
+- HomePage 沿用既有註冊入口，把具有目前 UID 升級標記的使用者歸入訪客，避免提前顯示建房操作。
+- 主代理審查 Sol 修復，核對標記的建立／移除路徑；未放寬 DB 建房資格。
+- 三個新增回歸涵蓋匿名、非匿名但升級待完成、無升級標記的一般會員；同時核對註冊連結及建房按鈕。HomePage 42/42、完整前端 359/359 passed。
+- 帳號切換 task 已提交 `efe9366`，提交後 CodeGraph sync 成功。
