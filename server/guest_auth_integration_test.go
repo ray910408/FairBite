@@ -47,6 +47,7 @@ func TestGuestAuthLiveIntegration(t *testing.T) {
 
 	stamp := time.Now().UTC().Format("20060102150405.000000000")
 	email := "fairbite.integration+" + strings.ReplaceAll(stamp, ".", "") + "@gmail.com"
+	correctedEmail := "fairbite.corrected+" + strings.ReplaceAll(stamp, ".", "") + "@gmail.com"
 	password := "integration-" + stamp
 
 	token, uid := anonymousSignup(t, ctx, supabaseURL, anonKey)
@@ -79,6 +80,24 @@ func TestGuestAuthLiveIntegration(t *testing.T) {
 		t.Fatalf("validated email link status=%d body=%s", linked.StatusCode, body)
 	}
 	linked.Body.Close()
+
+	// Local Auth enforces the configured one-second email send interval.
+	time.Sleep(1100 * time.Millisecond)
+	correction := jsonRequest(t, ctx, http.MethodPost, apiURL+"/api/auth/validate-upgrade-email", token, "", map[string]any{"email": correctedEmail})
+	if correction.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(correction.Body, 1024))
+		correction.Body.Close()
+		t.Fatalf("corrected validation status=%d body=%s", correction.StatusCode, body)
+	}
+	correction.Body.Close()
+	corrected := authUserUpdate(t, ctx, supabaseURL, anonKey, token, map[string]any{"email": correctedEmail})
+	if corrected.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(corrected.Body, 1024))
+		corrected.Body.Close()
+		t.Fatalf("corrected email link status=%d body=%s", corrected.StatusCode, body)
+	}
+	corrected.Body.Close()
+	email = correctedEmail
 
 	verifyURL := waitForVerificationLink(t, ctx, mailpitURL, email)
 	verifyReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, verifyURL, nil)

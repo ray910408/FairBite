@@ -248,6 +248,18 @@ describe('AuthPage segmented control', () => {
     expect(supabase.auth.signInWithPassword).not.toHaveBeenCalled()
   })
 
+  it('升級尚未完成時登入既有帳號仍需離房確認', async () => {
+    const pending = { id: 'guest-pending', is_anonymous: false, email: 'guest@gmail.com', email_confirmed_at: null }
+    vi.mocked(localStorage.getItem).mockReturnValue('guest@gmail.com')
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: pending, access_token: 'guest-token' } }, error: null,
+    } as never)
+    await submitAuth('login', 'member@example.com')
+
+    expect(mocks.stateSetters[7]).toHaveBeenCalledWith(true)
+    expect(supabase.auth.signInWithPassword).not.toHaveBeenCalled()
+  })
+
   it('初始 getUser 尚未完成時，匿名 session 註冊走驗證升級而非 signUp', async () => {
     const guest = { id: 'guest-pending', is_anonymous: true }
     vi.mocked(supabase.auth.getSession).mockResolvedValue({
@@ -264,6 +276,79 @@ describe('AuthPage segmented control', () => {
       { email: 'guest@gmail.com' }, { emailRedirectTo: 'https://example.test/app/#/auth' },
     )
     expect(supabase.auth.signUp).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['guest@gmail.com', null, false],
+    ['other@gmail.com', '2026-09-20T00:00:00Z', false],
+    ['guest@gmail.com', '2026-09-20T00:00:00Z', true],
+  ] as const)('重載升級頁只在對應 Email 已驗證時顯示設密碼：%s / %s', async (email, confirmedAt, canResume) => {
+    const current = { id: 'guest-pending', is_anonymous: false, email, email_confirmed_at: confirmedAt }
+    vi.mocked(localStorage.getItem).mockReturnValue('guest@gmail.com')
+    vi.mocked(supabase.auth.getUser).mockResolvedValue({ data: { user: current }, error: null } as never)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}')))
+    const { default: AuthPage } = await import('./AuthPage')
+    AuthPage()
+    const cleanup = mocks.effects[0]()
+    await Promise.resolve()
+
+    expect(mocks.stateSetters[9]).toHaveBeenCalledWith(canResume)
+    expect(mocks.stateSetters[10]).toHaveBeenCalledWith(!canResume)
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('guest@gmail.com')
+    if (typeof cleanup === 'function') cleanup()
+  })
+
+  it('匿名旗標已清除仍可更正待驗證 Email，保留同一身分', async () => {
+    const pending = { id: 'guest-pending', is_anonymous: false, email_confirmed_at: null }
+    vi.mocked(localStorage.getItem).mockReturnValue('wrong@gmail.com')
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: pending, access_token: 'guest-token' } }, error: null,
+    } as never)
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}'))
+    vi.stubGlobal('fetch', fetchMock)
+    await submitAuth('register', 'corrected@gmail.com')
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/validate-upgrade-email', expect.objectContaining({
+      body: JSON.stringify({ email: 'corrected@gmail.com' }),
+      headers: expect.objectContaining({ Authorization: 'Bearer guest-token' }),
+    }))
+    expect(supabase.auth.updateUser).toHaveBeenCalledWith(
+      { email: 'corrected@gmail.com' }, { emailRedirectTo: 'https://example.test/app/#/auth' },
+    )
+    expect(localStorage.setItem).toHaveBeenCalledWith('guest-upgrade:guest-pending', 'corrected@gmail.com')
+    expect(supabase.auth.signUp).not.toHaveBeenCalled()
+    expect(mocks.navigate).not.toHaveBeenCalled()
+  })
+
+  it('resume submit 重新確認 session，未驗證 Email 不可設定密碼', async () => {
+    const pending = { id: 'guest-pending', is_anonymous: false, email: 'guest@gmail.com', email_confirmed_at: null }
+    mocks.stateValues = ['register', 'guest@gmail.com', 'password123', '', '', false, pending, false, '', true]
+    vi.mocked(localStorage.getItem).mockReturnValue('guest@gmail.com')
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({ data: { session: { user: pending } }, error: null } as never)
+    const { default: AuthPage } = await import('./AuthPage')
+    const form = findForm(AuthPage())
+    if (!form?.props?.onSubmit) throw new Error('找不到註冊表單')
+    await (form.props.onSubmit as (event: { preventDefault: () => void }) => Promise<void>)({ preventDefault: vi.fn() })
+
+    expect(supabase.auth.updateUser).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[8]).toHaveBeenCalledWith('請先完成 Email 驗證，再回來設定密碼。')
+    expect(localStorage.removeItem).not.toHaveBeenCalled()
+    expect(mocks.navigate).not.toHaveBeenCalled()
+  })
+
+  it('resume submit 只接受 marker 對應的已驗證 Email', async () => {
+    const confirmed = { id: 'guest-confirmed', is_anonymous: false, email: 'guest@gmail.com', email_confirmed_at: '2026-09-20T00:00:00Z' }
+    mocks.stateValues = ['register', 'guest@gmail.com', 'password123', '', '', false, confirmed, false, '', true]
+    vi.mocked(localStorage.getItem).mockReturnValue('guest@gmail.com')
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({ data: { session: { user: confirmed } }, error: null } as never)
+    const { default: AuthPage } = await import('./AuthPage')
+    const form = findForm(AuthPage())
+    if (!form?.props?.onSubmit) throw new Error('找不到註冊表單')
+    await (form.props.onSubmit as (event: { preventDefault: () => void }) => Promise<void>)({ preventDefault: vi.fn() })
+
+    expect(supabase.auth.updateUser).toHaveBeenCalledExactlyOnceWith({ password: 'password123' })
+    expect(localStorage.removeItem).toHaveBeenCalledWith('guest-upgrade:guest-confirmed')
+    expect(mocks.navigate).toHaveBeenCalledWith('/', { replace: true })
   })
 
   it('登入與註冊按鈕都有至少 44px 的 class', async () => {

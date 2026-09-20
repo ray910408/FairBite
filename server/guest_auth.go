@@ -11,36 +11,36 @@ import (
 )
 
 type guestAuthStore interface {
-	IsAnonymous(context.Context, string) (bool, error)
 	SaveValidation(context.Context, string, string) (bool, error)
 }
 
 type postgresGuestAuthStore struct{ pool *pgxpool.Pool }
 
-func (s postgresGuestAuthStore) IsAnonymous(ctx context.Context, uid string) (bool, error) {
-	var anonymous bool
-	err := s.pool.QueryRow(ctx, `select is_anonymous from auth.users where id = $1`, uid).Scan(&anonymous)
-	return anonymous, err
-}
-
 func (s postgresGuestAuthStore) SaveValidation(ctx context.Context, uid, email string) (bool, error) {
 	var saved bool
 	err := s.pool.QueryRow(ctx, `
 		with anonymous_user as (
-			select id from auth.users where id = $1 and coalesce(is_anonymous, false) for update
+			select u.id from auth.users u where u.id = $1 and (
+				coalesce(u.is_anonymous, false) or exists (
+					select 1 from public.guest_email_validations g
+					where g.user_id = u.id and g.phase in ('validated', 'pending_confirmation')
+				)
+			) for update
 		), saved as (
 			insert into public.guest_email_validations (user_id, email, phase, expires_at)
 			select id, $2, 'validated', now() + interval '10 minutes' from anonymous_user
 			on conflict (user_id) do update set
 				email = excluded.email,
-				phase = public.guest_email_validations.phase,
-				expires_at = case when public.guest_email_validations.phase = 'validated'
-					then excluded.expires_at else public.guest_email_validations.expires_at end,
-				updated_at = case when public.guest_email_validations.phase = 'validated'
-					then now() else public.guest_email_validations.updated_at end
-			where public.guest_email_validations.phase = 'validated'
-				or (public.guest_email_validations.phase = 'pending_confirmation'
-					and public.guest_email_validations.email = excluded.email)
+				phase = case
+					when public.guest_email_validations.phase = 'pending_confirmation'
+						and public.guest_email_validations.email = excluded.email
+					then 'pending_confirmation' else 'validated' end,
+				expires_at = case
+					when public.guest_email_validations.phase = 'pending_confirmation'
+						and public.guest_email_validations.email = excluded.email
+					then public.guest_email_validations.expires_at else excluded.expires_at end,
+				updated_at = now()
+			where public.guest_email_validations.phase in ('validated', 'pending_confirmation')
 			returning 1
 		)
 		select exists(select 1 from saved)`, uid, email).Scan(&saved)
@@ -53,15 +53,6 @@ func (s postgresGuestAuthStore) SaveValidation(ctx context.Context, uid, email s
 func handleValidateUpgradeEmail(w http.ResponseWriter, r *http.Request, store guestAuthStore,
 	lookupMX func(context.Context, string) ([]*net.MX, error)) {
 	uid := UserID(r)
-	isAnonymous, err := store.IsAnonymous(r.Context(), uid)
-	if err != nil {
-		jsonError(w, http.StatusUnauthorized, "invalid_user")
-		return
-	}
-	if !isAnonymous {
-		jsonError(w, http.StatusConflict, "account_already_linked")
-		return
-	}
 	var body struct {
 		Email string `json:"email"`
 	}

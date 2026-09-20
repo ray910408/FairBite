@@ -9,6 +9,12 @@ import { LeaveConfirm } from '../components/LeaveConfirm'
 // Same format policy as server/signup_email.go; DNS MX is enforced by the Supabase hook.
 const registrationEmailPattern = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.[a-z]{2,63}$/i
 
+function guestUpgradeState(user: User, marker: string | null) {
+  const pending = !user.is_anonymous && !!marker
+  const confirmed = pending && !!user.email_confirmed_at && user.email?.toLowerCase() === marker
+  return { pending: pending && !confirmed, confirmed }
+}
+
 export default function AuthPage() {
   const nav = useNavigate()
   const [searchParams] = useSearchParams()
@@ -22,6 +28,7 @@ export default function AuthPage() {
   const [confirmExistingLogin, setConfirmExistingLogin] = useState(false)
   const [upgradeNotice, setUpgradeNotice] = useState('')
   const [resumeUpgrade, setResumeUpgrade] = useState(false)
+  const [pendingUpgrade, setPendingUpgrade] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -36,10 +43,16 @@ export default function AuthPage() {
     const applyUser = (current: User | null) => {
       if (!active) return
       setUser(current)
-      if (current && !current.is_anonymous && localStorage.getItem(`guest-upgrade:${current.id}`)) {
-        setResumeUpgrade(true)
+      const upgradeEmail = current && localStorage.getItem(`guest-upgrade:${current.id}`)
+      if (current && !current.is_anonymous && upgradeEmail) {
+        const upgrade = guestUpgradeState(current, upgradeEmail)
+        setResumeUpgrade(upgrade.confirmed)
+        setPendingUpgrade(upgrade.pending)
         setMode('register')
-        setEmail(current.email ?? '')
+        setEmail(upgradeEmail)
+      } else {
+        setResumeUpgrade(false)
+        setPendingUpgrade(false)
       }
     }
     const refreshUser = () => void supabase.auth.getUser().then(({ data }) => applyUser(data.user)).catch(() => {})
@@ -69,6 +82,13 @@ export default function AuthPage() {
       if (sessionError) throw sessionError
       const currentUser = sessionData.session?.user ?? null
       if (mode === 'register' && resumeUpgrade && currentUser) {
+        const upgradeEmail = localStorage.getItem(`guest-upgrade:${currentUser.id}`)
+        if (!guestUpgradeState(currentUser, upgradeEmail).confirmed) {
+          setResumeUpgrade(false)
+          setPendingUpgrade(!!upgradeEmail)
+          setUpgradeNotice('請先完成 Email 驗證，再回來設定密碼。')
+          return
+        }
         const { error: passwordError } = await supabase.auth.updateUser({ password })
         if (passwordError) throw passwordError
         localStorage.removeItem(`guest-upgrade:${currentUser.id}`)
@@ -77,7 +97,8 @@ export default function AuthPage() {
         nav(returnTo, { replace: true })
         return
       }
-      if (mode === 'register' && currentUser?.is_anonymous) {
+      const upgradeEmail = currentUser && localStorage.getItem(`guest-upgrade:${currentUser.id}`)
+      if (mode === 'register' && currentUser && (currentUser.is_anonymous || guestUpgradeState(currentUser, upgradeEmail).pending)) {
         const token = sessionData.session?.access_token
         if (!token) throw new Error('missing session')
         const validation = await fetch(`${import.meta.env.VITE_API_URL ?? ''}/api/auth/validate-upgrade-email`, {
@@ -96,7 +117,7 @@ export default function AuthPage() {
         setUpgradeNotice('驗證信已寄出。請先完成 Email 驗證，再回來設定密碼；目前訪客房籍與紀錄都會保留。')
         return
       }
-      if (mode === 'login' && currentUser?.is_anonymous) {
+      if (mode === 'login' && currentUser && (currentUser.is_anonymous || !!upgradeEmail)) {
         setConfirmExistingLogin(true)
         return
       }
@@ -175,7 +196,7 @@ export default function AuthPage() {
         </div>
 
         <form onSubmit={submit} className="space-y-3">
-          {mode === 'register' && !user?.is_anonymous && !resumeUpgrade && (
+          {mode === 'register' && !user?.is_anonymous && !resumeUpgrade && !pendingUpgrade && (
             <div className="space-y-1">
               <label className="label" htmlFor="displayName">顯示名稱</label>
               <input id="displayName" className="field" placeholder="房間裡看到的名字"
@@ -188,7 +209,7 @@ export default function AuthPage() {
               placeholder="you@example.com"
               value={email} onChange={e => setEmail(e.target.value)} required />
           </div>}
-          {!(mode === 'register' && user?.is_anonymous) && <div className="space-y-1">
+          {!(mode === 'register' && (user?.is_anonymous || pendingUpgrade)) && <div className="space-y-1">
             <label className="label" htmlFor="password">密碼</label>
             <input id="password" className="field" type="password"
               autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
@@ -204,7 +225,7 @@ export default function AuthPage() {
           {upgradeNotice && <p role="status" className="banner bg-brand-soft text-brand-strong">{upgradeNotice}</p>}
           <button className="btn btn-primary w-full" type="submit" disabled={busy}>
             {busy && <Spinner className="h-5 w-5" />}
-            {mode === 'login' ? '登入' : resumeUpgrade ? '完成註冊' : user?.is_anonymous ? '寄送驗證信' : '建立帳號'}
+            {mode === 'login' ? '登入' : resumeUpgrade ? '完成註冊' : user?.is_anonymous || pendingUpgrade ? '寄送驗證信' : '建立帳號'}
           </button>
         </form>
       </div>

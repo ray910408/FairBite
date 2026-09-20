@@ -28,12 +28,23 @@ select is(
   'pending_confirmation',
   'clearing anonymous flag alone does not complete email verification'
 );
+-- The API may revalidate a corrected address while is_anonymous is already false.
+update public.guest_email_validations
+  set email='corrected@example.org', phase='validated', expires_at=now() + interval '10 minutes'
+  where user_id='75300000-0000-4000-8000-000000000001';
+update auth.users set email_change='corrected@example.org'
+  where id='75300000-0000-4000-8000-000000000001';
+select is(
+  (select phase from public.guest_email_validations where user_id='75300000-0000-4000-8000-000000000001'),
+  'pending_confirmation',
+  'corrected validated email remains guarded after anonymous flag clears'
+);
 select throws_like(
   $$update auth.users set email='other@example.org' where id='75300000-0000-4000-8000-000000000001'$$,
   '%upgrade_email_confirmation_not_validated%',
   'pending upgrade still rejects a different email after anonymous flag clears'
 );
-update auth.users set email='guest@example.org', email_change='', email_confirmed_at=now()
+update auth.users set email='corrected@example.org', email_change='', email_confirmed_at=now()
   where id='75300000-0000-4000-8000-000000000001';
 select is(
   (select phase from public.guest_email_validations where user_id='75300000-0000-4000-8000-000000000001'),

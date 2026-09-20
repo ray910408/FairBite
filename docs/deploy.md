@@ -214,7 +214,8 @@ Go API 8788、Vite 5174），未重設既有 `app` 資料。待確認、改地�
 不可只回滾 Web 或 Go，讓舊程式重新寫入新生命週期。
 
 部署順序：先備份並暫停舊 API 寫入；依序套用 `20260917000100_pending_selection.sql`、
-`20260917000200_relocation.sql`、`20260917000300_guest_identity.sql`；再部署新 Go API 與 Web；
+`20260917000200_relocation.sql`、`20260917000300_guest_identity.sql`、
+`20260920000100_guest_upgrade_email_correction.sql`；再部署新 Go API 與 Web；
 最後在 hosted Supabase 啟用 anonymous sign-ins、manual linking、Confirm email、正式 redirect URLs
 與 Before User Created HTTP hook，逐項驗證後才恢復服務。只修改 `supabase/config.toml` 不會改變 hosted 設定。
 
@@ -223,6 +224,10 @@ Go API 8788、Vite 5174），未重設既有 `app` 資料。待確認、改地�
 無法繞過 Regex + DNS MX、非準備階段拒絕新成員，以及房內多使用者同步。Supabase v2.194.0
 在處理驗證連結時，先單獨寫入 `is_anonymous=false`，再更新已驗證 email；migration 的
 trigger 必須在這兩次更新間繼續核對 pending confirmation 票據，部署驗收不可只看 `is_anonymous`。
+
+`20260920000100` 延續保護尚未完成的訪客升級，允許重新驗證並更正 Email。
+應先套用此 migration 再更新 API，避免新 API 的更正票據被舊 trigger 略過。
+驗收須包含輸錯 Email 後更正、僅確認對應 Email 後才能完成密碼設定，以及既有正式帳號不能使用訪客升級入口。
 
 ## 換網域或改服務名時
 
