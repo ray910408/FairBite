@@ -216,7 +216,7 @@ export default function AuthPage() {
               placeholder="至少 6 碼"
               value={password} onChange={e => setPassword(e.target.value)} required minLength={6} />
           </div>}
-          {error && (
+          {error && !confirmExistingLogin && (
             <p role="alert" className="banner bg-danger-soft text-danger">
               <Alert className="h-5 w-5 shrink-0" />
               <span>{error}</span>
@@ -243,7 +243,13 @@ export default function AuthPage() {
               onClick={switchToExistingAccount}>離房並登入</button>
           </>
         ),
-        children: <p className="text-sm text-fg-muted">必須先離開目前房間。訪客紀錄不會合併到既有帳號；離席或登入失敗時不會切換身分。</p>,
+        children: <>
+          <p className="text-sm text-fg-muted">必須先離開目前房間。訪客紀錄不會合併到既有帳號；離席或登入失敗時不會切換身分。</p>
+          {error && <p role="alert" className="banner bg-danger-soft text-danger">
+            <Alert className="h-5 w-5 shrink-0" />
+            <span>{error}</span>
+          </p>}
+        </>,
       })}
     </>
   )

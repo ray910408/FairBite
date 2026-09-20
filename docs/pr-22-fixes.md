@@ -43,3 +43,11 @@
 
 已提交 task：DB CI `a6e3589`、pending 同步 `5fef58a`、web CI／離席錯誤 `99ed028`、Auth `8fafe96`；每次提交後 CodeGraph sync 成功。
 此文件與測試隔離修復經上述驗收後另行提交。GitHub review threads 尚未標記 resolved；未 push、未 merge、未部署。
+
+## 後續 review：帳號切換錯誤（4056390773）
+
+- 核實成立：確認視窗開啟時主表單為 inert，原本只在主表單顯示錯誤，視窗內沒有回饋。
+- 將錯誤 alert 放在有效視窗內；主表單避免重複顯示。取消視窗後仍可在表單看見錯誤。
+- 新增離席 HTTP／network 與登入 credentials／network 四個回歸；修改前四項均因視窗缺少錯誤而失敗，修改後 AuthPage 64/64 passed。
+- Sol 獨立審查通過；主代理核對失敗不導頁、離席失敗不嘗試登入、busy 結束後可重試。
+- 同批前端驗證：33 files／359 tests passed（清空 Supabase URL/key）；production build exit 0。

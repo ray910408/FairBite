@@ -71,6 +71,13 @@ function findForm(node: unknown): NodeLike | undefined {
   return element.type === 'form' ? element : findForm(element.props?.children)
 }
 
+function findDialog(node: unknown): NodeLike | undefined {
+  if (Array.isArray(node)) return node.map(findDialog).find(Boolean)
+  if (!node || typeof node !== 'object') return undefined
+  const element = node as NodeLike
+  return element.props?.role === 'dialog' ? element : findDialog(element.props?.children)
+}
+
 async function submitAuth(mode: 'login' | 'register', email: string) {
   mocks.stateValues = [mode, email, 'password123', '顯示名', '', false]
   const { default: AuthPage } = await import('./AuthPage')
@@ -258,6 +265,47 @@ describe('AuthPage segmented control', () => {
 
     expect(mocks.stateSetters[7]).toHaveBeenCalledWith(true)
     expect(supabase.auth.signInWithPassword).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['leave-http', '離開目前房間失敗，仍保留訪客身分；請稍後再試'],
+    ['leave-network', '連線失敗，請檢查網路後再試'],
+    ['login-credentials', 'Email 或密碼錯誤'],
+    ['login-network', '連線失敗，請檢查網路後再試'],
+  ])('切換帳號失敗 %s 在有效確認視窗顯示錯誤', async (failure, message) => {
+    const guest = { id: 'guest-1', is_anonymous: true }
+    mocks.stateValues = ['login', 'member@example.com', 'password123', '', '', false, guest, true]
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: guest, access_token: 'guest-token' } }, error: null,
+    } as never)
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: failure === 'leave-http' ? 500 : 200 }))
+    if (failure === 'leave-network') fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.mocked(supabase.auth.signInWithPassword).mockResolvedValue({
+      data: { user: null, session: null }, error: new AuthError('Invalid login credentials', 400, 'invalid_credentials'),
+    })
+    if (failure === 'login-network') vi.mocked(supabase.auth.signInWithPassword).mockRejectedValue(new TypeError('Failed to fetch'))
+
+    const { default: AuthPage } = await import('./AuthPage')
+    const button = findButton(AuthPage(), '離房並登入')
+    if (!button?.props?.onClick) throw new Error('找不到離房並登入按鈕')
+    await (button.props.onClick as () => Promise<void>)()
+
+    expect(mocks.stateSetters[4]).toHaveBeenLastCalledWith(message)
+    expect(mocks.stateSetters[5]).toHaveBeenLastCalledWith(false)
+    expect(mocks.stateSetters[7]).not.toHaveBeenCalledWith(false)
+    expect(mocks.navigate).not.toHaveBeenCalled()
+    if (failure.startsWith('leave-')) expect(supabase.auth.signInWithPassword).not.toHaveBeenCalled()
+    else expect(supabase.auth.signInWithPassword).toHaveBeenCalledExactlyOnceWith({ email: 'member@example.com', password: 'password123' })
+
+    // Apply the captured error to the next render and check its accessible location.
+    mocks.stateValues[4] = mocks.stateSetters[4].mock.calls.at(-1)?.[0]
+    mocks.stateIndex = 0
+    const tree = AuthPage()
+    const dialog = findDialog(tree)
+    expect(textContent(dialog)).toContain(message)
+    expect(renderToStaticMarkup(dialog as Parameters<typeof renderToStaticMarkup>[0])).toContain('role="alert"')
+    expect(textContent(findForm(tree))).not.toContain(message)
   })
 
   it('初始 getUser 尚未完成時，匿名 session 註冊走驗證升級而非 signUp', async () => {
