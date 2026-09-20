@@ -226,10 +226,25 @@ describe('leaveRooms', () => {
     vi.unstubAllGlobals()
   })
 
-  it('fetch 失敗時靜默 resolve，不向外 throw', async () => {
+  it('fetch 失敗時傳遞錯誤，下一次可重新離席', async () => {
     fetchStub.mockRejectedValue(new Error('down'))
     const { leaveRooms } = await import('./api')
+    await expect(leaveRooms()).rejects.toThrow('down')
+    fetchStub.mockResolvedValue(new Response('{}'))
     await expect(leaveRooms()).resolves.toBeUndefined()
+    expect(fetchStub).toHaveBeenCalledTimes(2)
+  })
+
+  it('HTTP 500 不可視為已成功離席', async () => {
+    fetchStub.mockResolvedValue(new Response('{}', { status: 500 }))
+    const { leaveRooms } = await import('./api')
+    await expect(leaveRooms()).rejects.toThrow('離席失敗（500）')
+  })
+
+  it('逾時向呼叫端傳遞，不靜默成功', async () => {
+    fetchStub.mockRejectedValue(new DOMException('timed out', 'TimeoutError'))
+    const { leaveRooms } = await import('./api')
+    await expect(leaveRooms()).rejects.toMatchObject({ name: 'TimeoutError' })
   })
 
   it('正常路徑打 POST /api/leave 且帶 5 秒 AbortSignal', async () => {

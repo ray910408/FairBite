@@ -761,6 +761,14 @@ describe('HomePage 離席確認 dialog', () => {
     expect(mocks.navigate).not.toHaveBeenCalled()
   })
 
+  it('首頁 best-effort 離席失敗仍解除閘門，不產生未處理 rejection', async () => {
+    mocks.leaveRooms.mockRejectedValue(new Error('offline'))
+    const tree = await render({ kind: 'rooms', rooms: [inRoom] })
+    await findButton(tree, '離開房間').props?.onClick?.()
+    await vi.waitFor(() => expect(mocks.stateSetters[PENDING]).toHaveBeenCalledWith(false))
+    expect(mocks.leaveRooms).toHaveBeenCalledTimes(1)
+  })
+
   it('取消（回到房間）導回房間且不退房', async () => {
     const tree = await render({ kind: 'rooms', rooms: [inRoom] })
     const back = findButton(tree, '回到房間')

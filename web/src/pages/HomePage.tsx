@@ -126,7 +126,9 @@ export default function HomePage() {
 
   // 退房是所有路徑的共同終點：leavePending 直到 settle 才解除，期間建房/加入維持禁用
   const doLeave = useCallback(() => {
-    void import('../lib/api').then(m => m.leaveRooms()).finally(() => setLeavePending(false))
+    void import('../lib/api').then(m => m.leaveRooms())
+      .catch(() => { /* 首頁維持 best-effort；下次進首頁再確認房籍。 */ })
+      .finally(() => setLeavePending(false))
   }, [])
 
   // mount 是所有繞過路徑的共同咽喉（瀏覽器上一頁、手機返回手勢、直接輸網址、

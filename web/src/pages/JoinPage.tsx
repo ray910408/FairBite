@@ -106,7 +106,7 @@ export default function JoinPage() {
       setLeaveTarget(null)
       await resolveInvite()
     } catch {
-      setError('原房間離席失敗；你仍留在原房間，請稍後再試')
+      setError('原房間離席未完成；請重新確認房間狀態後再試')
       setBusy(false)
     }
   }
@@ -166,6 +166,7 @@ export default function JoinPage() {
         ),
         children: (
           <>
+            {error && <p role="alert" className="banner bg-danger-soft text-danger">{error}</p>}
             <p className="text-sm text-fg-muted">加入新房前必須先離開目前房間；不會自動切換或保留兩邊房籍。</p>
             <LeaveRoomsBody target={leaveTarget} />
           </>
