@@ -62,7 +62,7 @@ export default function HomePage() {
   // HomePage.test.ts 依 useState 呼叫順序 mock
   const [leaveTarget, setLeaveTarget] = useState<LeaveTarget | null>(null)
   const [suggestionLoadError, setSuggestionLoadError] = useState('')
-  const [isGuest, setIsGuest] = useState(false)
+  const [authState, setAuthState] = useState<'checking' | 'guest' | 'member' | 'error'>('checking')
   const location = useLocation()
   // 每次 mount 只做一次離席決策：消耗旗標的 replace 會讓 location 變、下面的 effect
   // 重跑，沒有這道閘就會在 doLeave() 還在飛的時候又走一次查房籍→開 dialog
@@ -115,18 +115,25 @@ export default function HomePage() {
     suggestionRequest.current++
   }, [])
 
+  const loadAuthState = useCallback(async () => {
+    setAuthState('checking')
+    try {
+      const { data, error } = await supabase.auth.getUser()
+      if (error || !data.user) throw error ?? new Error('Missing user')
+      const user = data.user
+      setAuthState(user.is_anonymous === true ||
+        localStorage.getItem(`guest-upgrade:${user.id}`) !== null ? 'guest' : 'member')
+    } catch {
+      setAuthState('error')
+    }
+  }, [])
+
   useEffect(() => {
     suggestionsMounted.current = true
     void loadSuggestions()
-    void supabase.auth.getUser()
-      .then(({ data }) => {
-        const user = data.user
-        setIsGuest(user?.is_anonymous === true ||
-          (!!user && localStorage.getItem(`guest-upgrade:${user.id}`) !== null))
-      })
-      .catch(() => setIsGuest(false))
+    void loadAuthState()
     return cancelSuggestionLoads
-  }, [cancelSuggestionLoads, loadSuggestions])
+  }, [cancelSuggestionLoads, loadAuthState, loadSuggestions])
 
   // 退房是所有路徑的共同終點：leavePending 直到 settle 才解除，期間建房/加入維持禁用
   const doLeave = useCallback(() => {
@@ -263,8 +270,8 @@ export default function HomePage() {
           <p className="text-sm text-fg-muted">
             選好出發點與用餐時間建立房間，把邀請碼給大家，各自設好條件就能開始搜尋。
           </p>
-          {!isGuest && <LocationPicker value={departure} onChange={handleDepartureChange} />}
-          {!isGuest && <div className="space-y-2">
+          {authState === 'member' && <LocationPicker value={departure} onChange={handleDepartureChange} />}
+          {authState === 'member' && <div className="space-y-2">
             <span className="text-sm font-semibold text-fg-muted">用餐時間</span>
             <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
               {([['now', '馬上出發'], ['custom', '自訂時間']] as const).map(([key, label]) => (
@@ -299,12 +306,20 @@ export default function HomePage() {
               </div>
             )}
           </div>}
-          {isGuest ? (
+          {authState === 'guest' ? (
             <Link to="/auth?mode=register" className="btn btn-primary w-full">註冊後建立房間</Link>
-          ) : <button onClick={createRoom} disabled={busy || !departure || leavePending} className="btn btn-primary w-full">
+          ) : authState === 'member' ? <button onClick={createRoom} disabled={busy || !departure || leavePending} className="btn btn-primary w-full">
             {busy && <Spinner className="h-5 w-5" />}
             {busy ? '建立中…' : '建立房間'}
-          </button>}
+          </button> : authState === 'error' ? (
+            <div className="space-y-2">
+              <p className="flex items-center gap-2 text-sm text-danger" role="alert">
+                <Alert className="h-5 w-5 shrink-0" />
+                無法確認帳號狀態，請重新檢查
+              </p>
+              <button type="button" className="btn btn-primary w-full" onClick={loadAuthState}>重新檢查</button>
+            </div>
+          ) : <p role="status" className="text-sm text-fg-muted">正在確認帳號狀態…</p>}
           {createError && (
             <p role="alert" className="banner bg-danger-soft text-danger">
               <Alert className="h-5 w-5 shrink-0" />

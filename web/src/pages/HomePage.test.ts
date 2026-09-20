@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   stateIndex: 0,
   stateValues: [] as unknown[],
   stateSetters: [] as ReturnType<typeof vi.fn>[],
+  useInitialAuthState: false,
   // ref 依呼叫順序保存，跨 render 沿用、換 mount 才清空——「同一次 mount 只做一次
   // 離席決策」的守衛就靠 ref，每次 render 發新物件會讓它永遠測不到
   refIndex: 0,
@@ -28,7 +29,11 @@ vi.mock('react', async importOriginal => {
     ...actual,
     useState: (initial: unknown) => {
       const index = mocks.stateIndex++
-      const value = mocks.stateValues[index] === undefined ? initial : mocks.stateValues[index]
+      // Most tests render an already-authenticated HomePage without mounting effects.
+      // Auth-boundary tests use the real initial state and apply captured updates.
+      const value = mocks.stateValues[index] === undefined
+        ? (index === 15 && !mocks.useInitialAuthState ? 'member' : initial)
+        : mocks.stateValues[index]
       const setter = vi.fn()
       mocks.stateSetters[index] = setter
       return [value, setter]
@@ -247,11 +252,12 @@ function stubSuggestionQueries() {
 
 const SUGGESTION_LOAD_ERROR = '口味建議暫時載入失敗；不影響建房與本次房內條件'
 const SUGGESTION_ERROR = 14
-const IS_GUEST = 15
+const AUTH_STATE = 15
 type SuggestionQueryResult = { data: unknown; error: unknown }
 
 describe('HomePage guest 建房邊界', () => {
   beforeEach(() => {
+    mocks.useInitialAuthState = true
     mocks.stateIndex = 0
     mocks.refIndex = 0
     mocks.refs = []
@@ -265,14 +271,23 @@ describe('HomePage guest 建房邊界', () => {
   })
 
   afterEach(() => {
+    mocks.useInitialAuthState = false
     vi.unstubAllGlobals()
     mocks.authGetUser.mockReset().mockResolvedValue({ data: { user: { id: 'member-1', is_anonymous: false } } })
   })
 
+  it('帳號狀態尚未確認時不顯示建房或註冊入口', async () => {
+    const { default: HomePage } = await import('./HomePage')
+    const tree = HomePage()
+    expect(findButton(tree, '建立房間').type).toBeUndefined()
+    expect(findNode(tree, el => el.type === 'a' && el.props?.to === '/auth?mode=register')).toBeUndefined()
+    expect(textContent(tree)).toContain('正在確認帳號狀態')
+  })
+
   it.each([
-    ['尚未升級的匿名訪客', { id: 'guest-1', is_anonymous: true }, null, true],
-    ['已寄驗證信但尚未完成升級的訪客', { id: 'guest-pending', is_anonymous: false }, 'guest@example.com', true],
-    ['沒有升級標記的一般會員', { id: 'member-1', is_anonymous: false }, null, false],
+    ['尚未升級的匿名訪客', { id: 'guest-1', is_anonymous: true }, null, 'guest'],
+    ['已寄驗證信但尚未完成升級的訪客', { id: 'guest-pending', is_anonymous: false }, 'guest@example.com', 'guest'],
+    ['沒有升級標記的一般會員', { id: 'member-1', is_anonymous: false }, null, 'member'],
   ])('%s', async (_name, user, marker, expected) => {
     mocks.authGetUser.mockResolvedValue({ data: { user } })
     vi.mocked(localStorage.getItem).mockImplementation(key =>
@@ -282,14 +297,48 @@ describe('HomePage guest 建房邊界', () => {
 
     mocks.effects[0]?.()
 
-    await vi.waitFor(() => expect(mocks.stateSetters[IS_GUEST]).toHaveBeenCalledWith(expected))
-    mocks.stateValues[IS_GUEST] = mocks.stateSetters[IS_GUEST].mock.calls.at(-1)?.[0]
+    await vi.waitFor(() => expect(mocks.stateSetters[AUTH_STATE]).toHaveBeenCalledWith(expected))
+    mocks.stateValues[AUTH_STATE] = mocks.stateSetters[AUTH_STATE].mock.calls.at(-1)?.[0]
     mocks.stateIndex = 0
     mocks.refIndex = 0
     const tree = HomePage()
     const registration = findNode(tree, el => el.type === 'a' && el.props?.to === '/auth?mode=register')
-    expect(!!registration).toBe(expected)
-    expect(!!findButton(tree, '建立房間').type).toBe(!expected)
+    expect(!!registration).toBe(expected === 'guest')
+    expect(!!findButton(tree, '建立房間').type).toBe(expected === 'member')
+  })
+
+  it.each([
+    ['getUser rejection', () => mocks.authGetUser.mockRejectedValue(new Error('offline'))],
+    ['getUser error', () => mocks.authGetUser.mockResolvedValue({ data: { user: null }, error: new Error('expired') })],
+    ['getUser error with user', () => mocks.authGetUser.mockResolvedValue({
+      data: { user: { id: 'member-1', is_anonymous: false } }, error: new Error('unverified'),
+    })],
+    ['missing user', () => mocks.authGetUser.mockResolvedValue({ data: { user: null }, error: null })],
+    ['localStorage error', () => {
+      mocks.authGetUser.mockResolvedValue({ data: { user: { id: 'member-1', is_anonymous: false } }, error: null })
+      vi.mocked(localStorage.getItem).mockImplementation(() => { throw new Error('storage blocked') })
+    }],
+  ])('%s 時 fail closed 並可重試', async (_name, arrange) => {
+    arrange()
+    const { default: HomePage } = await import('./HomePage')
+    HomePage()
+    mocks.effects[0]?.()
+
+    await vi.waitFor(() => expect(mocks.stateSetters[AUTH_STATE]).toHaveBeenCalledWith('error'))
+    mocks.stateValues[AUTH_STATE] = 'error'
+    mocks.stateIndex = 0
+    mocks.refIndex = 0
+    const tree = HomePage()
+    expect(findButton(tree, '建立房間').type).toBeUndefined()
+    expect(findNode(tree, el => el.type === 'a' && el.props?.to === '/auth?mode=register')).toBeUndefined()
+    expect(textContent(tree)).toContain('無法確認帳號狀態，請重新檢查')
+
+    mocks.authGetUser.mockResolvedValue({
+      data: { user: { id: 'member-1', is_anonymous: false } }, error: null,
+    })
+    vi.mocked(localStorage.getItem).mockReturnValue(null)
+    await findButton(tree, '重新檢查').props?.onClick?.()
+    await vi.waitFor(() => expect(mocks.stateSetters[AUTH_STATE]).toHaveBeenCalledWith('member'))
   })
 })
 

@@ -70,3 +70,10 @@
 - 隔離 DB 55322 的完整 `go test ./... -count=1` PASS（10.708s），`go vet ./...` exit 0；前端 lint／TypeScript exit 0（既有 11 lint warnings）。本輪未重跑 Playwright 或 race。
 - 子代理最初誤用既有 DB 54322 執行 fixture 測試，pre-provider 500／既有測試等待 provider 逾時；其 cleanup 會刪除該測試生成的 UUID 房間／使用者，但未查詢驗證清理後筆數。沒有 reset、migration 或快取刪除。上述正式驗收全數改用既有 app_features 隔離環境，沒有採用 54322 結果。
 - 首頁 task 已提交 `6d9d4d4`，提交後 CodeGraph sync 成功。前三節歷史狀態以當時記錄為準；`c985106` 已 push，GitHub web/server/db 三項 CI 通過；本次三個 review 修復另行推送並逐項結案。
+
+## 後續 review：首頁身分查詢失敗（4057058221）
+
+- 核實成立：原本初始值與 catch 都是 `isGuest=false`，查詢尚未完成、Auth 拒絕或 localStorage 讀取失敗時，都會顯示建房操作。
+- 改用 checking／guest／member／error；只有查詢成功且不是訪客或未完成升級時顯示建房。錯誤就地顯示並提供重新檢查；既有 DB 建房資格不變。
+- Sol 實作後由主代理審查：核對匿名、升級標記、正式會員、returned error、rejection、缺少 user、storage exception 與 retry。測試使用真正 initial state，避免 mock 預先指定 checking 而漏掉初始狀態回歸。
+- 修正前 auth boundary 測試 7 項失敗；修正後首頁 48 tests、完整前端 33 files／365 tests passed（清空 Supabase URL/key）。Sol 執行 build／lint exit 0，既有 warnings 未更動。
