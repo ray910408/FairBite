@@ -111,9 +111,9 @@ export default function AuthPage() {
           throw new Error(body.error ?? 'upgrade validation failed')
         }
         const emailRedirectTo = `${window.location.origin}${window.location.pathname}${window.location.search}#/auth`
+        localStorage.setItem(`guest-upgrade:${currentUser.id}`, registrationEmail.toLowerCase())
         const { error: updateError } = await supabase.auth.updateUser({ email: registrationEmail }, { emailRedirectTo })
         if (updateError) throw updateError
-        localStorage.setItem(`guest-upgrade:${currentUser.id}`, registrationEmail.toLowerCase())
         setUpgradeNotice('驗證信已寄出。請先完成 Email 驗證，再回來設定密碼；目前訪客房籍與紀錄都會保留。')
         return
       }

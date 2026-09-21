@@ -368,6 +368,34 @@ describe('AuthPage segmented control', () => {
     expect(mocks.navigate).not.toHaveBeenCalled()
   })
 
+  it('遠端升級回應遺失前已保留更正後 Email 以供恢復', async () => {
+    const guest = { id: 'guest-interrupted', is_anonymous: true }
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: guest, access_token: 'guest-token' } }, error: null,
+    } as never)
+    vi.mocked(supabase.auth.updateUser).mockRejectedValue(new TypeError('Failed to fetch'))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}')))
+
+    await submitAuth('register', 'Corrected@Gmail.com')
+
+    expect(localStorage.setItem).toHaveBeenCalledWith('guest-upgrade:guest-interrupted', 'corrected@gmail.com')
+    expect(vi.mocked(localStorage.setItem).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(supabase.auth.updateUser).mock.invocationCallOrder[0])
+  })
+
+  it('無法保留升級 Email 時不開始遠端更新', async () => {
+    const guest = { id: 'guest-storage-failed', is_anonymous: true }
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: guest, access_token: 'guest-token' } }, error: null,
+    } as never)
+    vi.mocked(localStorage.setItem).mockImplementation(() => { throw new DOMException('Quota exceeded', 'QuotaExceededError') })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}')))
+
+    await submitAuth('register', 'guest@gmail.com')
+
+    expect(supabase.auth.updateUser).not.toHaveBeenCalled()
+  })
+
   it('resume submit 重新確認 session，未驗證 Email 不可設定密碼', async () => {
     const pending = { id: 'guest-pending', is_anonymous: false, email: 'guest@gmail.com', email_confirmed_at: null }
     mocks.stateValues = ['register', 'guest@gmail.com', 'password123', '', '', false, pending, false, '', true]

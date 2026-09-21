@@ -95,3 +95,10 @@
 - 將既有 applyDefaultPrefs 原樣移至共用 lib/defaultPrefs.ts；首頁與 QR 新入房共用，既有成員回房不重套偏好。
 - 新回歸於修正前 1/10 failed，修正後 JoinPage／HomePage 58 tests passed；驗證有效 cuisine 篩選、只填空條件列、await 寫入後導頁與既有房籍不重套。
 - Sol 獨立只讀審查無 blocker，build／TypeScript exit 0；本項沒有執行瀏覽器或 live RLS 驗證。
+
+## 後續 review：升級回應遺失的恢復標記（4057141108）
+
+- 核實成立：Auth 已提交 Email 更新，但回應遺失或關頁時，原本尚未寫入本機 UID marker，重載便無法恢復升級。
+- 通過既有 Email 驗證後，先持久化目標 Email，再呼叫 updateUser；回應失敗保留 intent，下次可恢復或更正，storage 寫入失敗則不開始 Auth 更新。
+- Sol 實作、主代理逐項審查；新增回應遺失 regression 修正前失敗，修正後 AuthPage 66/66 passed，另覆蓋 storage exception 不更新 Auth。既有重載測試核對非匿名 pending／已驗證相符 Email，以及同 UID 更正 Email。
+- 這是同瀏覽器的既有恢復契約；未新增跨裝置恢復，也未宣稱 live Auth 實測。
