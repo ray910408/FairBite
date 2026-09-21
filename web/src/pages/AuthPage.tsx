@@ -81,9 +81,10 @@ export default function AuthPage() {
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
       if (sessionError) throw sessionError
       const currentUser = sessionData.session?.user ?? null
-      if (mode === 'register' && resumeUpgrade && currentUser) {
-        const upgradeEmail = localStorage.getItem(`guest-upgrade:${currentUser.id}`)
-        if (!guestUpgradeState(currentUser, upgradeEmail).confirmed) {
+      const upgradeEmail = currentUser && localStorage.getItem(`guest-upgrade:${currentUser.id}`)
+      const upgrade = currentUser ? guestUpgradeState(currentUser, upgradeEmail) : null
+      if (mode === 'register' && currentUser && (resumeUpgrade || upgrade?.confirmed)) {
+        if (!upgrade?.confirmed) {
           setResumeUpgrade(false)
           setPendingUpgrade(!!upgradeEmail)
           setUpgradeNotice('請先完成 Email 驗證，再回來設定密碼。')
@@ -97,8 +98,7 @@ export default function AuthPage() {
         nav(returnTo, { replace: true })
         return
       }
-      const upgradeEmail = currentUser && localStorage.getItem(`guest-upgrade:${currentUser.id}`)
-      if (mode === 'register' && currentUser && (currentUser.is_anonymous || guestUpgradeState(currentUser, upgradeEmail).pending)) {
+      if (mode === 'register' && currentUser && (currentUser.is_anonymous || upgrade?.pending)) {
         const token = sessionData.session?.access_token
         if (!token) throw new Error('missing session')
         const validation = await fetch(`${import.meta.env.VITE_API_URL ?? ''}/api/auth/validate-upgrade-email`, {

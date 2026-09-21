@@ -125,3 +125,10 @@
 - 僅調整顯示條件，登入模式始終顯示 Email；註冊續接仍沿用原狀態。
 - Sol 實作，主代理逐項審查欄位、切換與登入呼叫；新測試修正前因缺少 Email 失敗，修正後 AuthPage 67/67 passed。
 - 回歸包含切登入、編輯 Email、離房確認，以及用編輯後 Email 呼叫 signInWithPassword。未宣稱 live Auth 驗收。
+
+## 後續 review：提交時恢復已驗證升級（4058847344）
+
+- 核實成立：getUser 尚未完成／失敗時，resumeUpgrade 初值為 false，使已驗證 session 誤入 signUp。
+- getSession 後以目前 UID marker 與已驗證 Email 計算升級狀態；保留過期 UI state 的未驗證提示與更正 Email 路徑。
+- Sol 實作、主代理審查；兩項新 regression 修改前 updateUser 呼叫 0 次而失敗，修正後 AuthPage 69/69 passed。前端完整 34 files／386 tests passed；build／TypeScript／lint exit 0，既有 11 warnings。
+- 同時補正上一項新測試的 Supabase mock 型別；僅影響 TypeScript 測試 fixture，未改產品行為。未執行 live Auth。

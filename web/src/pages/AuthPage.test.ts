@@ -434,6 +434,28 @@ describe('AuthPage segmented control', () => {
     expect(mocks.navigate).toHaveBeenCalledWith('/', { replace: true })
   })
 
+  it.each(['pending', 'rejected'])('初始 getUser %s 時，已驗證 session 直接完成升級而非重新 signUp', async status => {
+    const confirmed = { id: 'guest-confirmed', is_anonymous: false, email: 'guest@gmail.com', email_confirmed_at: '2026-09-20T00:00:00Z' }
+    mocks.stateValues = ['register', 'guest@gmail.com', 'password123', '', '', false]
+    vi.mocked(localStorage.getItem).mockReturnValue('guest@gmail.com')
+    vi.mocked(supabase.auth.getUser).mockImplementation(() => status === 'rejected'
+      ? Promise.reject(new TypeError('Failed to fetch'))
+      : new Promise(() => {}))
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({ data: { session: { user: confirmed } }, error: null } as never)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}')))
+    const { default: AuthPage } = await import('./AuthPage')
+    const form = findForm(AuthPage())
+    const cleanup = mocks.effects[0]()
+    if (!form?.props?.onSubmit) throw new Error('找不到註冊表單')
+    await (form.props.onSubmit as (event: { preventDefault: () => void }) => Promise<void>)({ preventDefault: vi.fn() })
+
+    expect(supabase.auth.updateUser).toHaveBeenCalledExactlyOnceWith({ password: 'password123' })
+    expect(supabase.auth.signUp).not.toHaveBeenCalled()
+    expect(localStorage.removeItem).toHaveBeenCalledWith('guest-upgrade:guest-confirmed')
+    expect(mocks.navigate).toHaveBeenCalledWith('/', { replace: true })
+    if (typeof cleanup === 'function') cleanup()
+  })
+
   it('登入與註冊按鈕都有至少 44px 的 class', async () => {
     const { default: AuthPage } = await import('./AuthPage')
     const tree = AuthPage()
@@ -485,7 +507,7 @@ describe('AuthPage segmented control', () => {
     vi.mocked(supabase.auth.getSession).mockResolvedValue({
       data: { session: { user: upgraded, access_token: 'guest-token' } }, error: null,
     } as never)
-    vi.mocked(supabase.auth.signInWithPassword).mockResolvedValue({ data: { user: null, session: null }, error: null })
+    vi.mocked(supabase.auth.signInWithPassword).mockResolvedValue({ data: { user: null, session: null }, error: null } as never)
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}')))
     const { default: AuthPage } = await import('./AuthPage')
     const tree = AuthPage()
