@@ -132,3 +132,14 @@
 - getSession 後以目前 UID marker 與已驗證 Email 計算升級狀態；保留過期 UI state 的未驗證提示與更正 Email 路徑。
 - Sol 實作、主代理審查；兩項新 regression 修改前 updateUser 呼叫 0 次而失敗，修正後 AuthPage 69/69 passed。前端完整 34 files／386 tests passed；build／TypeScript／lint exit 0，既有 11 warnings。
 - 同時補正上一項新測試的 Supabase mock 型別；僅影響 TypeScript 測試 fixture，未改產品行為。未執行 live Auth。
+
+## 後續 review：換地點後晚到的準備請求（4058847342）
+
+- 核實成立：既有 RLS 只鎖房間並檢查 lobby，lobby 換地點後仍接受沒有地點版本的 ready PATCH。
+- 新增 `20260921000100_round_bound_readiness.sql`：set_member_ready RPC 依 rooms → room_members 鎖序核對 search_version、lobby 與 auth.uid()；拒絕舊版、非成員及 null 輸入，撤銷 authenticated 直接更新 ready 的權限。
+- ConditionsForm 仍先 flush 條件，再送點擊當時版本；版本改變後停止待送請求及忽略晚到回應，錯誤會還原並提示。RoomPage 傳入搜尋版本，E2E 攔截改為辨識準備 RPC；部署文件要求 migration 先行及舊頁重載。
+- Sol 實作 SQL／Go concurrency tests，主代理審查；主代理實作前端，Sol 獨立只讀審查無 blocker。Go 雙連線測試實際觀察 pg_stat_activity 等待 room lock，覆蓋 relocation 先完成拒絕舊準備、準備先完成後被 relocation 重設、新版本成功。
+- 前端新 RPC regression 修改前因零次 RPC 失敗，修改後 ConditionsForm 25/25、RoomPage 46/46 通過；另驗證 flush 期間換版、舊回應晚到、RPC false/error/rejection。完整前端 34 files／386 tests passed；build／TypeScript／lint 通過（11 個既有 warnings）。
+- pgTAP 套 migration 前因缺少 RPC 失敗；套用後首次完整測試的 security fixture 使用錯誤 UUID（4000-8000 與實際 0000-0000 不同），一次測試修正後完整 8 files／172 assertions passed。未為測試修改產品邏輯。
+- 隔離 DB 55322 的完整 go test ./... -count=1 PASS（10.720s），go vet ./... exit 0。Playwright 雙使用者完整閉環 PASS（42.5s）、QR 訪客／改地點／繼任／重轉閉環 PASS（31.6s）；不是完整 Playwright suite，未執行 race 或 live Auth 升級測試。
+- 本輪只在既有 app_features 套用新 SQL，沒有 reset、操作原 DB 54322 或 production。migration 以單一 SQL transaction 套用，未寫入隔離環境的 Supabase migration history。

@@ -411,11 +411,11 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
 
     // BUG-007：guest Ready 先完成；room write 與 host condition flush 再分開驗證。
     const durabilityEvents: string[] = []
-    await b.route('**/rest/v1/room_members**', async route => {
+    await b.route(/\/rest\/v1\/(room_members|rpc\/set_member_ready)(\?|$)/, async route => {
       const request = route.request()
-      if (request.method() !== 'PATCH') return route.continue()
-      const payload = request.postDataJSON() as Record<string, unknown>
-      const kind = Object.hasOwn(payload, 'ready') ? 'ready' : 'conditions'
+      const isReady = request.url().includes('/rpc/set_member_ready')
+      if (request.method() !== (isReady ? 'POST' : 'PATCH')) return route.continue()
+      const kind = isReady ? 'ready' : 'conditions'
       durabilityEvents.push(`guest-${kind}:start`)
       await new Promise(resolve => setTimeout(resolve, 250))
       const response = await route.fetch()

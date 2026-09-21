@@ -216,7 +216,8 @@ Go API 8788、Vite 5174），未重設既有 `app` 資料。待確認、改地�
 部署順序：先備份並暫停舊 API 寫入；依序套用 `20260917000100_pending_selection.sql`、
 `20260917000200_relocation.sql`、`20260917000300_guest_identity.sql`、
 `20260920000100_guest_upgrade_email_correction.sql`、
-`20260920000200_invite_resolution_throttle.sql`；再部署新 Go API 與 Web；
+`20260920000200_invite_resolution_throttle.sql`、
+`20260921000100_round_bound_readiness.sql`；再部署新 Go API 與 Web；
 最後在 hosted Supabase 啟用 anonymous sign-ins、manual linking、Confirm email、正式 redirect URLs
 與 Before User Created HTTP hook，逐項驗證後才恢復服務。只修改 `supabase/config.toml` 不會改變 hosted 設定。
 
@@ -233,6 +234,12 @@ trigger 必須在這兩次更新間繼續核對 pending confirmation 票據，�
 `20260920000200` 讓 `resolve_room_invite` 與 `join_room` 共用每位使用者每分鐘 10 次的邀請嘗試額度。
 有效、無效及不可加入的邀請查詢都計數；一次查詢後加入會使用 2 次額度。
 此 migration 不改 RPC 回傳結構或房籍；正式驗收須確認兩個 RPC 混用仍會限流，額度到期後可再次查詢。
+
+`20260921000100` 將準備操作改為 `set_member_ready(room_id, ready, search_version)`，
+在 room lock 內核對地點版本；撤銷 authenticated 直接更新 ready 欄位的權限。
+必須先套用 migration 再部署新 Web，並要求舊分頁重新載入；舊 Web 的 ready PATCH 會被拒絕。
+正式驗收須包含 lobby 換地點時舊準備請求被拒、全員重新確認、新版本可準備與取消準備，
+以及條件儲存完成後才送出準備 RPC。保留預算、菜系、距離及交通條件的既有規則。
 
 ## 換網域或改服務名時
 

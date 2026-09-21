@@ -589,7 +589,7 @@ export default function RoomPage() {
             </div>
           </section>
         )}
-        {room.status === 'lobby' && me && <ConditionsForm me={me} isHost={isHost} disabled={searching}
+        {room.status === 'lobby' && me && <ConditionsForm me={me} isHost={isHost} searchVersion={room.search_version} disabled={searching}
           onFlushAvailable={flush => { conditionsFlush.current = flush ?? (async () => false) }} />}
         {room.status === 'lobby' && isHost && (
           <button className="btn btn-primary w-full"

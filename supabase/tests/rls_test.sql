@@ -45,11 +45,11 @@ select is((select count(*) from public.rooms)::int, 0, 'B 未加入前看不到�
 select lives_ok(format($$select public.join_room(%L)$$, (select code from ctx)), 'B 可用邀請碼加入');
 select is((select count(*) from public.rooms)::int, 1, 'B 加入後看得到房間');
 
-update public.room_members set ready = true
+update public.room_members set budget_max = 900
   where user_id = '00000000-0000-0000-0000-0000000000a1';
 select is(
   (select count(*) from public.room_members
-    where user_id = '00000000-0000-0000-0000-0000000000a1' and ready)::int,
+    where user_id = '00000000-0000-0000-0000-0000000000a1' and budget_max = 900)::int,
   0, 'B 改不動 A 的成員列');
 
 -- lobby 凍結：房間離開 lobby 後，本人也改不動條件
@@ -57,11 +57,11 @@ reset role;
 update public.rooms set status = 'candidates' where id = (select id from ctx);
 set local role authenticated;
 set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}';
-update public.room_members set ready = true
+update public.room_members set budget_max = 900
   where user_id = '00000000-0000-0000-0000-0000000000b2';
 select is(
   (select count(*) from public.room_members
-    where user_id = '00000000-0000-0000-0000-0000000000b2' and ready)::int,
+    where user_id = '00000000-0000-0000-0000-0000000000b2' and budget_max = 900)::int,
   0, '離開 lobby 後本人也改不動條件');
 
 -- join_room 對已開始的房間應拒絕
