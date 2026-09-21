@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { leaveRooms } from '../lib/api'
 import { applyDefaultPrefs } from '../lib/defaultPrefs'
@@ -25,13 +25,16 @@ export default function JoinPage() {
   const [leaveTarget, setLeaveTarget] = useState<LeaveTarget | null>(null)
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState('')
+  const inviteGeneration = useRef(0)
 
-  async function joinResolvedRoom(row: InviteRow) {
+  async function joinResolvedRoom(row: InviteRow, generation: number) {
+    if (generation !== inviteGeneration.current) return
     if (row.is_member) {
       nav(`/room/${row.room_id}`, { replace: true })
       return
     }
     const memberships = await fetchLeaveRooms()
+    if (generation !== inviteGeneration.current) return
     if (memberships === null) {
       setError('目前無法確認你的房間狀態，請稍後再試')
       return
@@ -41,51 +44,60 @@ export default function JoinPage() {
       return
     }
     const { data, error: joinError } = await supabase.rpc('join_room', { p_code: code })
+    if (generation !== inviteGeneration.current) return
     if (joinError || !data) setError(joinError?.message?.includes('頻繁')
       ? '嘗試過於頻繁，請稍後再試' : '房間不存在或已開始')
     else {
       await applyDefaultPrefs(data)
+      if (generation !== inviteGeneration.current) return
       nav(`/room/${data}`, { replace: true })
     }
   }
 
-  async function resolveInvite() {
+  async function resolveInvite(generation = inviteGeneration.current) {
+    if (generation !== inviteGeneration.current) return
     setBusy(true)
     setError('')
     try {
       const { data, error: resolveError } = await supabase.rpc('resolve_room_invite', { p_code: code })
+      if (generation !== inviteGeneration.current) return
       const row = (data as InviteRow[] | null)?.[0]
       if (resolveError || !row) setError(resolveError?.message?.includes('頻繁')
         ? '嘗試過於頻繁，請稍後再試' : '房間不存在或已開始')
-      else await joinResolvedRoom(row)
+      else await joinResolvedRoom(row, generation)
     } catch {
-      setError('目前無法確認邀請，請檢查網路後再試')
+      if (generation === inviteGeneration.current) setError('目前無法確認邀請，請檢查網路後再試')
     } finally {
-      setBusy(false)
+      if (generation === inviteGeneration.current) setBusy(false)
     }
   }
 
   useEffect(() => {
-    let active = true
+    const generation = ++inviteGeneration.current
+    setBusy(true)
+    setError('')
+    setNeedsNickname(false)
+    setLeaveTarget(null)
     void supabase.auth.getSession().then(({ data }) => {
-      if (!active) return
-      if (data.session) void resolveInvite()
+      if (generation !== inviteGeneration.current) return
+      if (data.session) void resolveInvite(generation)
       else {
         setNeedsNickname(true)
         setBusy(false)
       }
     }).catch(() => {
-      if (!active) return
+      if (generation !== inviteGeneration.current) return
       setError('目前無法確認登入狀態，請稍後再試')
       setBusy(false)
     })
-    return () => { active = false }
-    // The invite is fixed for this route mount.
+    return () => { inviteGeneration.current = generation + 1 }
+    // Each route generation owns its async work, including guest and departure actions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code])
 
   async function continueAsGuest(e: React.FormEvent) {
     e.preventDefault()
+    const generation = inviteGeneration.current
     const displayName = nickname.trim()
     if (!validGuestNickname(displayName)) return
     setBusy(true)
@@ -96,22 +108,27 @@ export default function JoinPage() {
       })
       if (signInError) throw signInError
     } catch {
+      if (generation !== inviteGeneration.current) return
       setError('訪客登入失敗，請稍後再試')
       setBusy(false)
       return
     }
+    if (generation !== inviteGeneration.current) return
     setNeedsNickname(false)
-    await resolveInvite()
+    await resolveInvite(generation)
   }
 
   async function confirmLeaveAndJoin() {
+    const generation = inviteGeneration.current
     setBusy(true)
     setError('')
     try {
       await leaveRooms()
+      if (generation !== inviteGeneration.current) return
       setLeaveTarget(null)
-      await resolveInvite()
+      await resolveInvite(generation)
     } catch {
+      if (generation !== inviteGeneration.current) return
       setError('原房間離席未完成；請重新確認房間狀態後再試')
       setBusy(false)
     }
@@ -153,7 +170,7 @@ export default function JoinPage() {
         </p>
       )}
       {error && !busy && (
-        <button className="btn btn-quiet w-full" type="button" onClick={resolveInvite}>重新嘗試</button>
+        <button className="btn btn-quiet w-full" type="button" onClick={() => resolveInvite()}>重新嘗試</button>
       )}
 
     </main>

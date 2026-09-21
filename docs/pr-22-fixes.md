@@ -109,3 +109,12 @@
 - effect 加入 winnerPresent；缺少到出現時重新啟動，一般候選 refetch 不重設 timer。
 - Sol 實作、主代理審查；修改前 recovery 的 onDone 0 次而失敗，修正後 recovery 與不中斷 timer 兩項通過。hook mock 在 deps 改变與測試結束執行 cleanup。
 - 完整前端 34 files／379 tests passed（含既有 RoomPage pending controls 測試）；build／TypeScript 通過。回歸直接驗證 Wheel onDone，沒有宣稱瀏覽器重試的端到端實測。
+
+## 後續 review：過期邀請非同步工作（4057141115）
+
+- 核實成立：effect 的 active 原本只保護 getSession，晚到 resolver／房籍查詢仍可加入舊房並導頁。
+- 以 route generation 貫穿 resolver、房籍檢查、join、偏好與導頁；cleanup 失效化舊 generation，路由改變重設畫面狀態，錯誤與 finally 也只更新目前頁面。
+- 訪客登入、確認離席及 retry 沿用同一防護。已送出的後端 mutation 無法由此撤銷；保證失效後不再啟動後续入房、不套用晚到結果或導頁。
+- 四項回歸於修改前失敗（resolver／房籍／join 晚到及換碼），修正後通過；另補 guest sign-in／leave 晚到兩項。JoinPage 16/16 passed。
+- 主代理實作、Sol 獨立只讀審查無 blocker。完整前端 34 files／379 tests passed，cleanup 等效寫法調整後 focused 16/16；build／TypeScript exit 0、lint exit 0（11 個既有 warnings）。未執行 Go、DB、Playwright 或 live Supabase，本輪僅前端變更。
+- 每項獨立審查、commit 後執行 CodeGraph sync；四則 review 於推送後逐項回覆並讀回 resolved。

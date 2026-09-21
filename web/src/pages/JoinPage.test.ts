@@ -11,11 +11,17 @@ const mocks = vi.hoisted(() => ({
   leaveConfirm: vi.fn(),
   getUid: vi.fn(),
   from: vi.fn(),
+  getSession: vi.fn(),
+  signInAnonymously: vi.fn(),
+  code: 'ABC123',
+  effects: [] as Array<() => void | (() => void)>,
+  generation: { current: 0 },
 }))
 
 vi.mock('react', async importOriginal => ({
   ...await importOriginal<typeof import('react')>(),
-  useEffect: vi.fn(),
+  useEffect: (effect: () => void | (() => void)) => { mocks.effects.push(effect) },
+  useRef: () => mocks.generation,
   useState: (initial: unknown) => {
     const index = mocks.stateIndex++
     const setter = vi.fn()
@@ -25,10 +31,11 @@ vi.mock('react', async importOriginal => ({
 }))
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mocks.navigate,
-  useParams: () => ({ code: 'ABC123' }),
+  useParams: () => ({ code: mocks.code }),
 }))
 // Unit tests must never initialize the real client or depend on developer .env files.
-vi.mock('../lib/supabase', () => ({ supabase: { rpc: mocks.rpc, from: mocks.from } }))
+vi.mock('../lib/supabase', () => ({ supabase: { rpc: mocks.rpc, from: mocks.from,
+  auth: { getSession: mocks.getSession, signInAnonymously: mocks.signInAnonymously } } }))
 vi.mock('../lib/uid', () => ({ getUid: mocks.getUid }))
 vi.mock('../lib/api', () => ({ leaveRooms: mocks.leaveRooms }))
 vi.mock('../lib/roomMembership', () => ({ fetchLeaveRooms: mocks.fetchLeaveRooms }))
@@ -54,6 +61,10 @@ describe('join after confirmed departure', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.stateIndex = 0
+    mocks.effects = []
+    mocks.generation.current = 0
+    mocks.code = 'ABC123'
+    mocks.getSession.mockResolvedValue({ data: { session: {} } })
     mocks.setters = []
     mocks.values = ['', false, { kind: 'rooms', rooms: [{ id: 'old-room' }] }, false, '']
     mocks.leaveRooms.mockResolvedValue(undefined)
@@ -122,6 +133,79 @@ describe('join after confirmed departure', () => {
     expect(mocks.getUid).not.toHaveBeenCalled()
     expect(mocks.from).not.toHaveBeenCalled()
     expect(mocks.navigate).toHaveBeenCalledWith('/room/existing', { replace: true })
+  })
+
+  it.each(['resolution', 'memberships', 'join'])('ignores late %s after unmount', async stage => {
+    let finish!: (value: unknown) => void
+    const pending = new Promise(resolve => { finish = resolve })
+    if (stage === 'memberships') mocks.fetchLeaveRooms.mockReturnValue(pending)
+    const rpc = mocks.rpc.getMockImplementation()!
+    mocks.rpc.mockImplementation((name: string) =>
+      (stage === 'resolution' && name === 'resolve_room_invite') || (stage === 'join' && name === 'join_room')
+        ? pending : rpc(name))
+    JoinPage()
+    const cleanup = mocks.effects[0]()
+    await vi.waitFor(() => {
+      if (stage === 'resolution') expect(mocks.rpc).toHaveBeenCalledWith('resolve_room_invite', { p_code: 'ABC123' })
+      if (stage === 'memberships') expect(mocks.fetchLeaveRooms).toHaveBeenCalled()
+      if (stage === 'join') expect(mocks.rpc).toHaveBeenCalledWith('join_room', { p_code: 'ABC123' })
+    })
+    if (typeof cleanup === 'function') cleanup()
+    mocks.setters.forEach(setter => setter.mockClear())
+    finish(stage === 'memberships' ? [] : { data: stage === 'join' ? 'old-room'
+      : [{ room_id: 'old-room', status: 'lobby', is_member: false }], error: null })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(mocks.navigate).not.toHaveBeenCalled()
+    expect(mocks.getUid).not.toHaveBeenCalled()
+    if (stage !== 'join') expect(mocks.rpc).not.toHaveBeenCalledWith('join_room', expect.anything())
+    mocks.setters.forEach(setter => expect(setter).not.toHaveBeenCalled())
+  })
+
+  it('only joins the latest invite when the route code changes', async () => {
+    let finishOld!: (value: unknown) => void
+    const oldResolution = new Promise(resolve => { finishOld = resolve })
+    mocks.rpc.mockImplementation((name: string, args: { p_code: string }) => {
+      if (args.p_code === 'ABC123') return oldResolution
+      return Promise.resolve({ data: name === 'resolve_room_invite'
+        ? [{ room_id: 'newest', status: 'lobby', is_member: false }] : 'newest', error: null })
+    })
+    JoinPage()
+    const cleanup = mocks.effects[0]()
+    await vi.waitFor(() => expect(mocks.rpc).toHaveBeenCalledTimes(1))
+    if (typeof cleanup === 'function') cleanup()
+    mocks.code = 'DEF456'
+    mocks.stateIndex = 0
+    JoinPage()
+    mocks.effects[1]()
+    await vi.waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/room/newest', { replace: true }))
+    finishOld({ data: [{ room_id: 'old', status: 'lobby', is_member: false }], error: null })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(mocks.rpc).not.toHaveBeenCalledWith('join_room', { p_code: 'ABC123' })
+    expect(mocks.rpc).toHaveBeenCalledWith('join_room', { p_code: 'DEF456' })
+    expect(mocks.navigate).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['guest', 'departure'])('does not resume the old invite after an in-flight %s action', async action => {
+    let finish!: (value: { error: null }) => void
+    const pending = new Promise(resolve => { finish = resolve })
+    // Keep the automatic session check pending so only the user action starts work.
+    mocks.getSession.mockReturnValue(new Promise(() => {}))
+    mocks.values[0] = '小明'
+    mocks.values[1] = true
+    mocks.signInAnonymously.mockReturnValue(pending)
+    mocks.leaveRooms.mockReturnValue(pending)
+    const tree = JoinPage()
+    const cleanup = mocks.effects[0]()
+    const joining = action === 'guest'
+      ? tree.props.children[0].props.children[2].props.onSubmit({ preventDefault: vi.fn() })
+      : mocks.leaveConfirm.mock.calls[0][0].actions.props.children[1].props.onClick()
+    if (typeof cleanup === 'function') cleanup()
+    mocks.setters.forEach(setter => setter.mockClear())
+    finish({ error: null })
+    await joining
+    expect(mocks.rpc).not.toHaveBeenCalled()
+    expect(mocks.navigate).not.toHaveBeenCalled()
+    mocks.setters.forEach(setter => expect(setter).not.toHaveBeenCalled())
   })
 
   it.each(['resolve_room_invite', 'join_room'])('%s throttling tells users to wait', async limitedRpc => {
