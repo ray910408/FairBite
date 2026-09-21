@@ -71,6 +71,13 @@ function findForm(node: unknown): NodeLike | undefined {
   return element.type === 'form' ? element : findForm(element.props?.children)
 }
 
+function findById(node: unknown, id: string): NodeLike | undefined {
+  if (Array.isArray(node)) return node.map(child => findById(child, id)).find(Boolean)
+  if (!node || typeof node !== 'object') return undefined
+  const element = node as NodeLike
+  return element.props?.id === id ? element : findById(element.props?.children, id)
+}
+
 function findDialog(node: unknown): NodeLike | undefined {
   if (Array.isArray(node)) return node.map(findDialog).find(Boolean)
   if (!node || typeof node !== 'object') return undefined
@@ -469,5 +476,49 @@ describe('AuthPage segmented control', () => {
     ;(button.props.onClick as () => void)()
 
     for (const setter of mocks.stateSetters) expect(setter).not.toHaveBeenCalled()
+  })
+
+  it('完成 Email 驗證的升級流程切回登入時可輸入既有帳號 Email', async () => {
+    const upgraded = { id: 'guest-confirmed', is_anonymous: false, email: 'guest@gmail.com', email_confirmed_at: '2026-09-20T00:00:00Z' }
+    mocks.stateValues = ['register', 'guest@gmail.com', 'password123', '', '', false, upgraded, false, '', true]
+    vi.mocked(localStorage.getItem).mockReturnValue('guest@gmail.com')
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: upgraded, access_token: 'guest-token' } }, error: null,
+    } as never)
+    vi.mocked(supabase.auth.signInWithPassword).mockResolvedValue({ data: { user: null, session: null }, error: null })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}')))
+    const { default: AuthPage } = await import('./AuthPage')
+    const tree = AuthPage()
+
+    const button = findButton(tree, '登入')
+    if (!button?.props?.onClick) throw new Error('找不到登入按鈕')
+    ;(button.props.onClick as () => void)()
+    expect(mocks.stateSetters[0]).toHaveBeenCalledWith('login')
+
+    mocks.stateValues[0] = 'login'
+    mocks.stateIndex = 0
+    const loginTree = AuthPage()
+    const emailInput = findById(loginTree, 'email')
+    if (!emailInput?.props?.onChange) throw new Error('登入模式缺少 Email 欄位')
+    ;(emailInput.props.onChange as (event: { target: { value: string } }) => void)({
+      target: { value: 'member@example.com' },
+    })
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('member@example.com')
+
+    mocks.stateValues[1] = 'member@example.com'
+    mocks.stateIndex = 0
+    const form = findForm(AuthPage())
+    if (!form?.props?.onSubmit) throw new Error('找不到登入表單')
+    await (form.props.onSubmit as (event: { preventDefault: () => void }) => Promise<void>)({ preventDefault: vi.fn() })
+    expect(mocks.stateSetters[7]).toHaveBeenCalledWith(true)
+
+    mocks.stateValues[7] = true
+    mocks.stateIndex = 0
+    const confirmButton = findButton(AuthPage(), '離房並登入')
+    if (!confirmButton?.props?.onClick) throw new Error('找不到離房並登入按鈕')
+    await (confirmButton.props.onClick as () => Promise<void>)()
+    expect(supabase.auth.signInWithPassword).toHaveBeenCalledExactlyOnceWith({
+      email: 'member@example.com', password: 'password123',
+    })
   })
 })

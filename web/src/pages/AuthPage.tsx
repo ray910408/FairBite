@@ -203,7 +203,7 @@ export default function AuthPage() {
                 value={displayName} onChange={e => setDisplayName(e.target.value)} required maxLength={80} />
             </div>
           )}
-          {!resumeUpgrade && <div className="space-y-1">
+          {(mode === 'login' || !resumeUpgrade) && <div className="space-y-1">
             <label className="label" htmlFor="email">Email</label>
             <input id="email" className="field" type="email" autoComplete="email"
               placeholder="you@example.com"

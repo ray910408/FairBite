@@ -118,3 +118,10 @@
 - 四項回歸於修改前失敗（resolver／房籍／join 晚到及換碼），修正後通過；另補 guest sign-in／leave 晚到兩項。JoinPage 16/16 passed。
 - 主代理實作、Sol 獨立只讀審查無 blocker。完整前端 34 files／379 tests passed，cleanup 等效寫法調整後 focused 16/16；build／TypeScript exit 0、lint exit 0（11 個既有 warnings）。未執行 Go、DB、Playwright 或 live Supabase，本輪僅前端變更。
 - 每項獨立審查、commit 後執行 CodeGraph sync；四則 review 於推送後逐項回覆並讀回 resolved。
+
+## 後續 review：升級後切換既有帳號的 Email 欄位（4058847339）
+
+- 核實成立：resumeUpgrade 原本連登入分頁也隱藏 Email，使用者無法輸入既有帳號。
+- 僅調整顯示條件，登入模式始終顯示 Email；註冊續接仍沿用原狀態。
+- Sol 實作，主代理逐項審查欄位、切換與登入呼叫；新測試修正前因缺少 Email 失敗，修正後 AuthPage 67/67 passed。
+- 回歸包含切登入、編輯 Email、離房確認，以及用編輯後 Email 呼叫 signInWithPassword。未宣稱 live Auth 驗收。
