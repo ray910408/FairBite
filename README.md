@@ -87,6 +87,9 @@ Vite 開發伺服器固定使用 HTTPS，並以同源 `/api` 與 `/supabase` pro
 Supabase HTTP 與 Realtime WebSocket，瀏覽器不會產生 mixed content。首次開啟自簽憑證頁面時，
 請點「進階」→「繼續前往」；手機也需要對印出的區網網址做一次。`web/.env.local` 保留本機
 anon key，另將 `VITE_API_URL` 設為空字串、`VITE_SUPABASE_URL` 設為 `/supabase`。
+`supabase/config.toml` 預設只允許 `https://localhost:5173` 與 `https://127.0.0.1:5173`
+的 Auth redirect；既有本地 Supabase stack 需重啟才會套用 checked-in 設定。使用區網網址、隔離 stack
+或其他連接埠時，需自行加入對應的明確網址並再次重啟。
 
 手動起（或非 Windows），三個終端：
 
@@ -140,7 +143,7 @@ Push-Location web; npm run build; Pop-Location
 
 ## E2E 測試
 
-多客戶端完整閉環 E2E 執行前，需先依「本地啟動」讓三個服務保持運行：Supabase local、使用 mock provider 與 local JWKS 的 Go API，以及 Vite dev server。本地 Auth 需開啟匿名登入、manual linking 與 Email confirmation，並在 `supabase/config.toml` 的 `[auth]` 設定 `site_url = "https://localhost:5173/#/auth"`、將 `https://localhost:5173/**` 加入 `additional_redirect_urls`；設定變更後重啟本地 Supabase。測試從本地 Mailpit 讀取驗證信，不應對正式環境執行。另開一個 PowerShell 終端執行：
+多客戶端完整閉環 E2E 執行前，需先依「本地啟動」讓三個服務保持運行：Supabase local、使用 mock provider 與 local JWKS 的 Go API，以及 Vite dev server。Repo 的本地 Auth 預設已啟用匿名登入、manual linking、Email confirmation 與 redirect，沿用「本地啟動」設定即可。測試從本地 Mailpit 讀取驗證信，不應對正式環境執行。另開一個 PowerShell 終端執行：
 
 ```powershell
 $env:PLAYWRIGHT_BROWSERS_PATH = "0"

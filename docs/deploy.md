@@ -24,7 +24,7 @@
    - URL Configuration：Site URL 設正式站 origin/path，Redirect URLs 加入正式站 auth hash route 及實際使用的 preview URL；不要沿用本機 `127.0.0.1`。
 
    **不要用 `supabase config push` 代替這個開關**：本機 `config.toml` 的
-   `site_url = "http://127.0.0.1:3000"` 會一起被推上去，把正式站的 auth 設定打壞。
+   `site_url = "https://localhost:5173/#/auth"` 會一起被推上去，把正式站的 auth 設定打壞。
 4. 抄三個值備用：
    - Project URL `https://zltocdydngmdnutzarlq.supabase.co`
    - anon public key（Project Settings → API Keys）

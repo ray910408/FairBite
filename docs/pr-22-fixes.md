@@ -143,3 +143,11 @@
 - pgTAP 套 migration 前因缺少 RPC 失敗；套用後首次完整測試的 security fixture 使用錯誤 UUID（4000-8000 與實際 0000-0000 不同），一次測試修正後完整 8 files／172 assertions passed。未為測試修改產品邏輯。
 - 隔離 DB 55322 的完整 go test ./... -count=1 PASS（10.720s），go vet ./... exit 0。Playwright 雙使用者完整閉環 PASS（42.5s）、QR 訪客／改地點／繼任／重轉閉環 PASS（31.6s）；不是完整 Playwright suite，未執行 race 或 live Auth 升級測試。
 - 本輪只在既有 app_features 套用新 SQL，沒有 reset、操作原 DB 54322 或 production。migration 以單一 SQL transaction 套用，未寫入隔離環境的 Supabase migration history。
+
+## 後續 review：本機確認信 redirect（4061390964）
+
+- 核實成立：一般 Vite 啟動使用 HTTPS 5173，Email confirmation 已啟用，但 checked-in Auth URL 仍為 3000。
+- Site URL 改為 `https://localhost:5173/#/auth`，allowlist 僅加入 localhost 與 127.0.0.1 的 HTTPS 5173 路徑。README 說明現有 stack 需重啟、LAN／其他 port 需加入明確網址；E2E 沿用預設設定。部署文件保留不得將本機 config push 至正式環境的限制。
+- Sol 實作、主代理審查並要求修正 README 舊有手動設定段落；Python tomllib 解析與 diff 檢查通過。
+- 把 checked-in 的兩項 URL 設定原樣帶入隔離 app_features（55321／55322／55324），逐一驗證兩個 origin 的真實 signup 確認信：Mailpit 連結保留指定 path/query/hash，驗證端點回導正確 HTTPS 5173 網址，Auth 帳號確認欄位已寫入。兩個測試帳號皆刪除並以 404 驗證不存在。
+- 本項未啟動瀏覽器、未重新執行訪客升級全流程；未操作原 app stack 或 production。隔離 config 修改前已備份，驗收完停止 task stack 後還原。
