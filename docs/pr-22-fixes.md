@@ -160,3 +160,11 @@
 - 新 RoomPage regression 使用實際 confirmDraw/API helper 搭配模擬 HTTP 200 reset 回應，驗證 Realtime 斷線也 refetch 並呈現準備階段的搜尋按鈕。這是元件/API 測試，不是瀏覽器斷線 E2E。
 - 隔離 DB 55322 的完整 Go suite 通過（10.456s）、go vet exit 0；前端 34 files／387 tests、build／TypeScript／lint 通過（11 個既有 lint warnings）。本輪沒有 migration、pgTAP、race 或 Playwright 執行。
 - Sol 實作 server regression 與最小修正，主代理審查並補前端回歸；另一位 Sol 對 server／web 差異獨立唯讀審查，無 blocker。
+
+## 後續 review：偏好儲存失敗阻斷成功入房（4061816171）
+
+- 核實成立：join_room 已成功後，applyDefaultPrefs 的 localStorage 讀寫或請求例外會向外傳遞，QR 頁誤報邀請失敗且不導頁；首頁建房／入房也呼叫相同 helper。
+- 在共用 helper 捕捉偏好套用例外，維持附加步驟失敗不阻斷導頁的既有契約。保留 cuisine 選項過濾、只更新自己的空 cuisines、成功才寫 marker；沒有新增重試或改變入房／離房錯誤處理。
+- 4 項新回歸使用真實 helper，覆蓋 storage 讀取、空偏好 marker 寫入、已存偏好 marker 寫入，以及偏好查詢 rejection。修改前均因沒有導頁而失敗；修改後 JoinPage 20/20 通過，也確認無錯誤提示及原有更新條件。
+- 完整前端 34 files／391 tests、TypeScript／build／lint 通過（11 個既有 lint warnings）。本次為元件與 helper mock 測試，未執行瀏覽器 storage 限額 E2E、Go 或 DB 測試；無 server／migration 變更。
+- 主代理實作並檢查差異；Sol 獨立只讀審查三條呼叫流程、錯誤語意及測試，無 blocker。

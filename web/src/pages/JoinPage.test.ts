@@ -127,6 +127,38 @@ describe('join after confirmed departure', () => {
     expect(localStorage.setItem).toHaveBeenCalledWith('prefs-applied:new-room:member-1', '1')
   })
 
+  it.each(['storage read', 'empty preference marker', 'saved preference marker', 'preference request'])
+  ('still navigates after a successful join when %s fails', async failure => {
+    mocks.getUid.mockResolvedValue('member-1')
+    const unavailable = () => { throw new Error('Preference persistence unavailable') }
+    vi.stubGlobal('localStorage', {
+      getItem: failure === 'storage read' ? unavailable : vi.fn(),
+      setItem: unavailable,
+    })
+    const eq = vi.fn().mockReturnThis()
+    eq.mockImplementationOnce(() => ({ eq })).mockImplementationOnce(() => ({ eq }))
+      .mockResolvedValueOnce({ error: null })
+    const update = vi.fn(() => ({ eq }))
+    mocks.from.mockReturnValue({ update })
+    const joinRpc = mocks.rpc.getMockImplementation()!
+    mocks.rpc.mockImplementation((name: string) => name === 'get_my_default_prefs'
+      ? { single: async () => {
+        if (failure === 'preference request') unavailable()
+        return { data: { default_prefs: { cuisines: failure === 'saved preference marker' ? ['japanese'] : [] } }, error: null }
+      } }
+      : joinRpc(name))
+
+    await confirmDeparture()
+
+    expect(mocks.rpc).toHaveBeenCalledWith('join_room', { p_code: 'ABC123' })
+    expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith('/room/new-room', { replace: true })
+    expect(mocks.setters[4].mock.calls.every(([message]) => message === '')).toBe(true)
+    if (failure === 'saved preference marker') {
+      expect(update).toHaveBeenCalledWith({ cuisines: ['japanese'] })
+      expect(eq.mock.calls).toEqual([['room_id', 'new-room'], ['user_id', 'member-1'], ['cuisines', '[]']])
+    } else expect(update).not.toHaveBeenCalled()
+  })
+
   it('does not reapply preferences when resuming existing membership', async () => {
     mocks.rpc.mockResolvedValue({ data: [{ room_id: 'existing', status: 'pending', is_member: true }], error: null })
     await confirmDeparture()
