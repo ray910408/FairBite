@@ -198,7 +198,7 @@ func handleConfirmDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 			pendingError(w, err)
 			return
 		}
-		jsonError(w, http.StatusConflict, "候選已全數失效，請重新搜尋")
+		jsonOK(w, map[string]any{"status": "lobby", "exhausted": true})
 		return
 	}
 	var winnerRest Restaurant

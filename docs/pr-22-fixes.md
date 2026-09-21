@@ -150,4 +150,13 @@
 - Site URL 改為 `https://localhost:5173/#/auth`，allowlist 僅加入 localhost 與 127.0.0.1 的 HTTPS 5173 路徑。README 說明現有 stack 需重啟、LAN／其他 port 需加入明確網址；E2E 沿用預設設定。部署文件保留不得將本機 config push 至正式環境的限制。
 - Sol 實作、主代理審查並要求修正 README 舊有手動設定段落；Python tomllib 解析與 diff 檢查通過。
 - 把 checked-in 的兩項 URL 設定原樣帶入隔離 app_features（55321／55322／55324），逐一驗證兩個 origin 的真實 signup 確認信：Mailpit 連結保留指定 path/query/hash，驗證端點回導正確 HTTPS 5173 網址，Auth 帳號確認欄位已寫入。兩個測試帳號皆刪除並以 404 驗證不存在。
-- 本項未啟動瀏覽器、未重新執行訪客升級全流程；未操作原 app stack 或 production。隔離 config 修改前已備份，驗收完停止 task stack 後還原。
+- 本項未啟動瀏覽器、未重新執行訪客升級全流程；未操作原 app stack 或 production。隔離 config 修改前已備份，驗收完已停止 task stack，並逐位元組確認 config 還原至備份。
+
+## 後續 review：確認耗盡後刷新房間（4061390984）
+
+- 核實成立：確認時全數候選失效已提交 lobby/reset，但 409 讓前端走不刷新的錯誤路徑，Realtime 斷線時停留在舊 pending 結果。
+- 僅將成功提交 reset 的回應改為與 redraw 一致的 HTTP 200 `{status:"lobby", exhausted:true}`，沿用前端既有成功後 await refetch；仍有其他候選而 winner 單獨失效、版本衝突、未提交的錯誤路徑維持原語意。
+- 新 DB regression 在原程式重現 409，修正後 7 項 pending 測試通過。核對候選／票數清空、準備重設、不寫 history、保留 draw audit、房籍與條件。
+- 新 RoomPage regression 使用實際 confirmDraw/API helper 搭配模擬 HTTP 200 reset 回應，驗證 Realtime 斷線也 refetch 並呈現準備階段的搜尋按鈕。這是元件/API 測試，不是瀏覽器斷線 E2E。
+- 隔離 DB 55322 的完整 Go suite 通過（10.456s）、go vet exit 0；前端 34 files／387 tests、build／TypeScript／lint 通過（11 個既有 lint warnings）。本輪沒有 migration、pgTAP、race 或 Playwright 執行。
+- Sol 實作 server regression 與最小修正，主代理審查並補前端回歸；另一位 Sol 對 server／web 差異獨立唯讀審查，無 blocker。

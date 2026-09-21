@@ -188,6 +188,75 @@ func TestPendingExhaustionReturnsLobby(t *testing.T) {
 	}
 }
 
+func TestPendingConfirmExhaustionReturnsLobby(t *testing.T) {
+	pool, ctx := pendingPool(t)
+	const roomID = "85858585-8585-4585-8585-858585858585"
+	const hostID = "86868686-8686-4686-8686-868686868686"
+	seedPendingRoom(t, pool, ctx, roomID, hostID, 1)
+	h := newTestApp(t, pool)
+	draw := pendingPost(t, h, hostID, "/api/rooms/"+roomID+"/draw", "")
+	version := responseVersion(t, draw)
+	var winner string
+	if err := pool.QueryRow(ctx, `select winner_restaurant_id from draws where room_id=$1 and version=$2`, roomID, version).Scan(&winner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into votes(room_id,user_id,restaurant_id,kind) values($1,$2,$3,'up')`, roomID, hostID, winner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update restaurants set price_level=4 where id=$1`, winner); err != nil {
+		t.Fatal(err)
+	}
+
+	confirm := pendingPost(t, h, hostID, "/api/rooms/"+roomID+"/confirm", fmt.Sprintf(`{"version":%d}`, version))
+	if confirm.Code != http.StatusOK {
+		t.Fatalf("confirm=%d %s", confirm.Code, confirm.Body.String())
+	}
+	var response struct {
+		Status    string `json:"status"`
+		Exhausted bool   `json:"exhausted"`
+	}
+	if err := json.Unmarshal(confirm.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != "lobby" || !response.Exhausted {
+		t.Fatalf("response=%+v", response)
+	}
+
+	var status, transport string
+	var ready bool
+	var budget, distance, members, candidates, votes, history, audits int
+	var cuisines []string
+	if err := pool.QueryRow(ctx, `select status from rooms where id=$1`, roomID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select budget_max,cuisines,max_distance_m,transport,ready
+		from room_members where room_id=$1 and user_id=$2`, roomID, hostID).
+		Scan(&budget, &cuisines, &distance, &transport, &ready); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select count(*) from room_members where room_id=$1`, roomID).Scan(&members); err != nil {
+		t.Fatal(err)
+	}
+	for query, dest := range map[string]*int{
+		`select count(*) from room_candidates where room_id=$1`: &candidates,
+		`select count(*) from votes where room_id=$1`:           &votes,
+		`select count(*) from dining_history where room_id=$1`:  &history,
+		`select count(*) from draws where room_id=$1`:           &audits,
+	} {
+		if err := pool.QueryRow(ctx, query, roomID).Scan(dest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if status != "lobby" || ready || candidates != 0 || votes != 0 || history != 0 || audits != 1 {
+		t.Fatalf("status=%s ready=%v candidates=%d votes=%d history=%d audits=%d",
+			status, ready, candidates, votes, history, audits)
+	}
+	if members != 1 || budget != 500 || len(cuisines) != 1 || cuisines[0] != "japanese" || distance != 2000 || transport != "walking" {
+		t.Fatalf("membership changed: members=%d budget=%d cuisines=%v distance=%d transport=%s",
+			members, budget, cuisines, distance, transport)
+	}
+}
+
 func addPendingMember(t *testing.T, pool *pgxpool.Pool, ctx context.Context, roomID, userID string) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `insert into auth.users(id,email) values($1,$2) on conflict(id) do nothing`, userID, userID+"@test.dev"); err != nil {

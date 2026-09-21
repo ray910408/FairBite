@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   eq: vi.fn(),
   navigate: vi.fn(),
   getUid: vi.fn(),
+  getSession: vi.fn(),
   searchRoom: vi.fn(),
   editConditions: vi.fn(),
   confirmDraw: vi.fn(),
@@ -49,6 +50,7 @@ vi.mock('../lib/uid', () => ({ getUid: mocks.getUid }))
 vi.mock('../lib/supabase', () => ({
   supabase: {
     from: mocks.from,
+    auth: { getSession: mocks.getSession },
   },
 }))
 
@@ -260,6 +262,34 @@ describe('RoomPage pending selection controls', () => {
     reload.resolve(undefined)
     await request
     expect(mocks.stateSetters[14]).toHaveBeenLastCalledWith(null)
+  })
+
+  it('確認回傳候選耗盡時，Realtime 斷線仍重新載入並回到準備畫面', async () => {
+    const api = await vi.importActual<typeof import('../lib/api')>('../lib/api')
+    mocks.getSession.mockResolvedValue({ data: { session: { access_token: 'token' } } })
+    mocks.confirmDraw.mockImplementation(api.confirmDraw)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      status: 'lobby', exhausted: true,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    const state = pendingState('host')
+    state.connected = false
+    state.refetch.mockImplementation(async () => {
+      mocks.useRoom.mockReturnValue({
+        ...state, room: { ...state.room, status: 'lobby' }, candidates: [],
+      })
+    })
+    mocks.useRoom.mockReturnValue(state)
+    const tree = await renderRoomPage()
+
+    await findButton(tree, '確認就吃這家').props!.onClick!()
+
+    expect(state.refetch).toHaveBeenCalledOnce()
+    expect(mocks.stateSetters[1]).toHaveBeenCalledTimes(1)
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('')
+    mocks.stateIndex = 0
+    const reloaded = await renderRoomPage()
+    expect(findButton(reloaded, '確認就吃這家').type).toBeUndefined()
+    expect(findButton(reloaded, '開始搜尋餐廳').type).toBe('button')
   })
 
   it.each([
