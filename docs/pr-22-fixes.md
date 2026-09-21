@@ -102,3 +102,10 @@
 - 通過既有 Email 驗證後，先持久化目標 Email，再呼叫 updateUser；回應失敗保留 intent，下次可恢復或更正，storage 寫入失敗則不開始 Auth 更新。
 - Sol 實作、主代理逐項審查；新增回應遺失 regression 修正前失敗，修正後 AuthPage 66/66 passed，另覆蓋 storage exception 不更新 Auth。既有重載測試核對非匿名 pending／已驗證相符 Email，以及同 UID 更正 Email。
 - 這是同瀏覽器的既有恢復契約；未新增跨裝置恢復，也未宣稱 live Auth 實測。
+
+## 後續 review：候選恢復後轉盤卡住（4057141109）
+
+- 核實成立：Wheel 在 winner row 缺少時提前返回，原 effect 僅監看 winnerId，補回候選也不會完成動畫。
+- effect 加入 winnerPresent；缺少到出現時重新啟動，一般候選 refetch 不重設 timer。
+- Sol 實作、主代理審查；修改前 recovery 的 onDone 0 次而失敗，修正後 recovery 與不中斷 timer 兩項通過。hook mock 在 deps 改变與測試結束執行 cleanup。
+- 完整前端 34 files／379 tests passed（含既有 RoomPage pending controls 測試）；build／TypeScript 通過。回歸直接驗證 Wheel onDone，沒有宣稱瀏覽器重試的端到端實測。
