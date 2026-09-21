@@ -4,10 +4,11 @@ import { formatPercent } from '../lib/probability'
 import { TRANSPORT_LABELS } from '../lib/labels'
 import { MapPin } from './icons'
 
-export default function ResultCard({ draw, candidates, me }: {
+export default function ResultCard({ draw, candidates, me, confirmed = true }: {
   draw: DrawRow
   candidates: CandidateRow[]
   me: MemberRow | undefined
+  confirmed?: boolean
 }) {
   const winner = candidates.find(c => c.restaurant_id === draw.winner_restaurant_id)
   if (!winner) return null
@@ -15,7 +16,9 @@ export default function ResultCard({ draw, candidates, me }: {
   const prob = draw.probabilities[draw.winner_restaurant_id]
   return (
     <div className="card animate-rise space-y-4 border-brand bg-linear-to-b from-brand-soft to-surface p-6 text-center">
-      <p className="text-sm font-medium tracking-wide text-brand-strong">今天就吃</p>
+      <p className="text-sm font-medium tracking-wide text-brand-strong">
+        {confirmed ? '今天就吃' : '抽中待確認'}
+      </p>
       <h2 className="text-3xl font-bold tracking-tight">{r.name}</h2>
       <p className="text-sm text-fg-muted">
         {prob == null ? '歷史機率已隱藏，以保護成員隱私；原抽選結果保留' : <>

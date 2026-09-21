@@ -18,6 +18,7 @@ select results_eq(
       ('dining_history','SELECT'),
       ('draws','SELECT'),
       ('exposure_stats','SELECT'),
+      ('location_change_votes','SELECT'),
       ('restaurants','SELECT'),
       ('room_candidates','SELECT'),
       ('room_members','SELECT'),
@@ -44,11 +45,11 @@ select is((select count(*) from public.rooms)::int, 0, 'B 未加入前看不到�
 select lives_ok(format($$select public.join_room(%L)$$, (select code from ctx)), 'B 可用邀請碼加入');
 select is((select count(*) from public.rooms)::int, 1, 'B 加入後看得到房間');
 
-update public.room_members set ready = true
+update public.room_members set budget_max = 900
   where user_id = '00000000-0000-0000-0000-0000000000a1';
 select is(
   (select count(*) from public.room_members
-    where user_id = '00000000-0000-0000-0000-0000000000a1' and ready)::int,
+    where user_id = '00000000-0000-0000-0000-0000000000a1' and budget_max = 900)::int,
   0, 'B 改不動 A 的成員列');
 
 -- lobby 凍結：房間離開 lobby 後，本人也改不動條件
@@ -56,11 +57,11 @@ reset role;
 update public.rooms set status = 'candidates' where id = (select id from ctx);
 set local role authenticated;
 set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}';
-update public.room_members set ready = true
+update public.room_members set budget_max = 900
   where user_id = '00000000-0000-0000-0000-0000000000b2';
 select is(
   (select count(*) from public.room_members
-    where user_id = '00000000-0000-0000-0000-0000000000b2' and ready)::int,
+    where user_id = '00000000-0000-0000-0000-0000000000b2' and budget_max = 900)::int,
   0, '離開 lobby 後本人也改不動條件');
 
 -- join_room 對已開始的房間應拒絕
@@ -148,7 +149,7 @@ select results_eq(
       and table_name = 'rooms' and privilege_type = 'SELECT'
     order by 1
   $$,
-  $$ values ('code'), ('created_at'), ('cuisine_filter'), ('exploration'), ('host_id'), ('id'), ('meal_time'), ('status') $$,
+  $$ values ('code'), ('created_at'), ('cuisine_filter'), ('draw_version'), ('exploration'), ('host_id'), ('id'), ('meal_time'), ('search_version'), ('status') $$,
   'rooms 的 SELECT 欄級 grant 精確等於預期欄位集合（center_* 加回去即紅）');
 
 -- 同一條防線的行為面。上面比對 catalog，這條實際用同房成員的身分去讀 center_lat。

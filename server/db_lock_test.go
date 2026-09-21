@@ -19,7 +19,7 @@ func TestLoadMembersSQLSelectsReady(t *testing.T) {
 	}
 }
 
-func TestMemberConditionAndReadyUpdateBlocksUntilFreezeCommit(t *testing.T) {
+func TestMemberConditionUpdateBlocksUntilFreezeCommitAndReadyRPCRejects(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
@@ -92,7 +92,7 @@ func TestMemberConditionAndReadyUpdateBlocksUntilFreezeCommit(t *testing.T) {
 	updateDone := make(chan updateResult, 1)
 	go func() {
 		tag, err := updateTx.Exec(ctx,
-			`update room_members set budget_max = 999, ready = false where room_id = $1 and user_id = $2`,
+			`update room_members set budget_max = 999 where room_id = $1 and user_id = $2`,
 			roomID, userID)
 		updateDone <- updateResult{rows: tag.RowsAffected(), err: err}
 	}()
@@ -124,6 +124,14 @@ func TestMemberConditionAndReadyUpdateBlocksUntilFreezeCommit(t *testing.T) {
 	}
 	if result.rows != 0 {
 		t.Fatalf("frozen condition update affected %d rows, want 0", result.rows)
+	}
+	var readyUpdated bool
+	if err := updateTx.QueryRow(ctx,
+		`select public.set_member_ready($1, false, 0)`, roomID).Scan(&readyUpdated); err != nil {
+		t.Fatal(err)
+	}
+	if readyUpdated {
+		t.Fatal("ready RPC succeeded after room freeze, want false")
 	}
 	if err := updateTx.Commit(ctx); err != nil {
 		t.Fatal(err)

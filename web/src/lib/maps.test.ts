@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { buildMapsUrl } from './maps'
+import { buildGoogleMapsPlaceUrl, buildMapsUrl } from './maps'
+
+describe('buildGoogleMapsPlaceUrl', () => {
+  it('以店名與座標搜尋並帶入有效 Google Place ID', () => {
+    const url = buildGoogleMapsPlaceUrl('A&B 餐廳', 25.05, 121.52, 'ChIJabc', 'google')
+    expect(url).toBe('https://www.google.com/maps/search/?api=1&query=A%26B+%E9%A4%90%E5%BB%B3+25.05%2C121.52&query_place_id=ChIJabc')
+  })
+  it('缺少或使用 mock ID 時只使用店名與座標 fallback', () => {
+    expect(buildGoogleMapsPlaceUrl('餐廳', 25.05, 121.52, '', 'google')).not.toContain('query_place_id=')
+    expect(buildGoogleMapsPlaceUrl('餐廳', 25.05, 121.52, 'mock-008', 'google')).not.toContain('query_place_id=')
+    expect(buildGoogleMapsPlaceUrl('餐廳', 25.05, 121.52, 'ChIJabc', 'mock')).not.toContain('query_place_id=')
+  })
+})
 
 describe('buildMapsUrl', () => {
   it('組出正確的 dir URL 與 travelmode', () => {

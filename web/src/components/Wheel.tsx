@@ -39,6 +39,7 @@ export default function Wheel({ rows, winnerId, onDone }: {
   const [rotation, setRotation] = useState(0)
   const slicesRef = useRef(slices)
   slicesRef.current = slices
+  const winnerPresent = slices.some(x => x.c.restaurant_id === winnerId)
   const doneRef = useRef(onDone)
   doneRef.current = onDone
   useEffect(() => {
@@ -53,7 +54,7 @@ export default function Wheel({ rows, winnerId, onDone }: {
     setRotation(5 * 360 + (360 - center)) // 指針固定在 12 點鐘，轉輪本體旋轉
     const t = setTimeout(() => doneRef.current(), prefersReduced() ? 700 : SPIN_MS + 200)
     return () => clearTimeout(t)
-  }, [winnerId]) // slices/onDone 走 ref：realtime refetch 不會重設計時器
+  }, [winnerId, winnerPresent]) // 候選補回 winner 時重試；一般 realtime refetch 不重設計時器
 
   if (kept.some(c => c.probability == null)) {
     return <p role="status">歷史機率已隱藏，以保護成員隱私</p>

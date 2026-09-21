@@ -23,12 +23,13 @@ var ErrNotReady = errors.New("guest not ready")
 // 鎖序一致地重讀 exploration/meal_time/cuisine_filter 與成員（LoadMembersForUpdate 的 order by user_id 即鎖序 pin）→
 // 對照 call-time fetchedRadius 收斂半徑：放大代表 fetch envelope under-fetch，回
 // ErrMembersChanged 讓 host 重搜（deferred rollback 留在 lobby）；縮小則就地重濾 found。
-// 圓心不在重讀之列：它是房主建房當下的位置，create_room 寫進去之後沒有任何路徑會改它，
-// 搜尋期間不可能被挪走。
 // 成功時就地更新 room.Exploration、room.MealTime 與 room.CuisineFilter 並回傳權威成員與存活的 found。
 func freezeAndLoadMembers(ctx context.Context, tx pgx.Tx, room *RoomRow, fetchedRadius int, fetchedCuisines []string, found []Restaurant) ([]Member, []Restaurant, error) {
 	// handleSearch 已由 assertHostInTx 取得 rooms row lock；TransitionRoom 沿用同一鎖，
 	// 再由 LoadMembersForUpdate 依 user_id 取得 member locks（rooms → members）。
+	if err := checkSearchSnapshot(ctx, tx, room.ID, room.SearchVersion, room.CenterLat, room.CenterLng); err != nil {
+		return nil, nil, err
+	}
 	if err := TransitionRoom(ctx, tx, room.ID, "lobby", "candidates"); err != nil {
 		// ErrConflict 原樣透傳，呼叫端據以回 409。
 		return nil, nil, err

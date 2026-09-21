@@ -42,10 +42,15 @@ func rescoreRoom(ctx context.Context, tx pgx.Tx, room RoomRow, wx *Weather) (Eng
 	if err != nil {
 		return EngineResult{}, nil, fmt.Errorf("載入滿足度: %w", err)
 	}
+	batchExcluded, err := LoadBatchExclusions(ctx, tx, room.ID)
+	if err != nil {
+		return EngineResult{}, nil, fmt.Errorf("載入本批排除: %w", err)
+	}
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
 		Now: roomEvalTime(room), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
 		Weather: wx, Votes: votes, Recency: recency, Exposure: exposure, ExposureCounted: exposureCounted,
-		Satisfaction: satisfaction, Exploration: room.Exploration, CuisineFilter: room.CuisineFilter})
+		Satisfaction: satisfaction, Exploration: room.Exploration, CuisineFilter: room.CuisineFilter,
+		BatchExcluded: batchExcluded})
 	// exposureCounted 從 LoadRoomRestaurants 到 Evaluate 到 ReplaceCandidates 全程同一份，round-trip 不外洩。
 	if err := ReplaceCandidates(ctx, tx, room.ID, result, exposureCounted); err != nil {
 		return EngineResult{}, nil, fmt.Errorf("寫入候選: %w", err)
