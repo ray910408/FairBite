@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   stateIndex: 0,
@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   fetchLeaveRooms: vi.fn(),
   navigate: vi.fn(),
   leaveConfirm: vi.fn(),
+  getUid: vi.fn(),
+  from: vi.fn(),
 }))
 
 vi.mock('react', async importOriginal => ({
@@ -26,7 +28,8 @@ vi.mock('react-router-dom', () => ({
   useParams: () => ({ code: 'ABC123' }),
 }))
 // Unit tests must never initialize the real client or depend on developer .env files.
-vi.mock('../lib/supabase', () => ({ supabase: { rpc: mocks.rpc } }))
+vi.mock('../lib/supabase', () => ({ supabase: { rpc: mocks.rpc, from: mocks.from } }))
+vi.mock('../lib/uid', () => ({ getUid: mocks.getUid }))
 vi.mock('../lib/api', () => ({ leaveRooms: mocks.leaveRooms }))
 vi.mock('../lib/roomMembership', () => ({ fetchLeaveRooms: mocks.fetchLeaveRooms }))
 vi.mock('../components/LeaveConfirm', () => ({
@@ -35,6 +38,8 @@ vi.mock('../components/LeaveConfirm', () => ({
 }))
 
 import JoinPage, { validGuestNickname } from './JoinPage'
+
+afterEach(() => vi.unstubAllGlobals())
 
 describe('guest nickname boundary', () => {
   it('matches the database 80 Unicode-character boundary', () => {
@@ -53,6 +58,7 @@ describe('join after confirmed departure', () => {
     mocks.values = ['', false, { kind: 'rooms', rooms: [{ id: 'old-room' }] }, false, '']
     mocks.leaveRooms.mockResolvedValue(undefined)
     mocks.fetchLeaveRooms.mockResolvedValue([])
+    mocks.getUid.mockResolvedValue(null)
     mocks.rpc.mockImplementation(async (name: string) => ({
       data: name === 'resolve_room_invite'
         ? [{ room_id: 'new-room', status: 'lobby', is_member: false }]
@@ -84,6 +90,38 @@ describe('join after confirmed departure', () => {
     expect(mocks.rpc).toHaveBeenNthCalledWith(1, 'resolve_room_invite', { p_code: 'ABC123' })
     expect(mocks.rpc).toHaveBeenNthCalledWith(2, 'join_room', { p_code: 'ABC123' })
     expect(mocks.navigate).toHaveBeenCalledWith('/room/new-room', { replace: true })
+  })
+
+  it('applies saved allowed cuisines to the new member before navigating', async () => {
+    mocks.getUid.mockResolvedValue('member-1')
+    vi.stubGlobal('localStorage', { getItem: vi.fn(), setItem: vi.fn() })
+    let finishWrite!: (value: { error: null }) => void
+    const write = new Promise(resolve => { finishWrite = resolve })
+    const eq = vi.fn().mockReturnThis()
+    eq.mockImplementationOnce(() => ({ eq })).mockImplementationOnce(() => ({ eq }))
+      .mockImplementationOnce(() => write)
+    const update = vi.fn(() => ({ eq }))
+    mocks.from.mockReturnValue({ update })
+    const joinRpc = mocks.rpc.getMockImplementation()!
+    mocks.rpc.mockImplementation((name: string) => name === 'get_my_default_prefs'
+      ? { single: async () => ({ data: { default_prefs: { cuisines: ['japanese', 'retired-tag'] } }, error: null }) }
+      : joinRpc(name))
+    const joining = confirmDeparture()
+    await vi.waitFor(() => expect(update).toHaveBeenCalledWith({ cuisines: ['japanese'] }))
+    expect(eq.mock.calls).toEqual([['room_id', 'new-room'], ['user_id', 'member-1'], ['cuisines', '[]']])
+    expect(mocks.navigate).not.toHaveBeenCalled()
+    finishWrite({ error: null })
+    await joining
+    expect(mocks.navigate).toHaveBeenCalledWith('/room/new-room', { replace: true })
+    expect(localStorage.setItem).toHaveBeenCalledWith('prefs-applied:new-room:member-1', '1')
+  })
+
+  it('does not reapply preferences when resuming existing membership', async () => {
+    mocks.rpc.mockResolvedValue({ data: [{ room_id: 'existing', status: 'pending', is_member: true }], error: null })
+    await confirmDeparture()
+    expect(mocks.getUid).not.toHaveBeenCalled()
+    expect(mocks.from).not.toHaveBeenCalled()
+    expect(mocks.navigate).toHaveBeenCalledWith('/room/existing', { replace: true })
   })
 
   it.each(['resolve_room_invite', 'join_room'])('%s throttling tells users to wait', async limitedRpc => {

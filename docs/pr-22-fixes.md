@@ -88,3 +88,10 @@
 - 主代理與 Sol 只讀審查核對相同 lock key、共享額度、正常返回的計數持久性、權限與呼叫端。雙 session contention 未執行；並發序列化依據為兩個 RPC 的同一 transaction advisory lock。
 - 最終前端 33 files／367 tests passed；build／TypeScript／lint exit 0（既有 11 warnings）。本輪未執行 Go、Playwright 或 race；修改範圍為 Web 與 SQL。
 - 首頁 task 已獨立提交 `3a135b5`，CodeGraph sync 成功。限流 task 驗收後獨立提交；兩則留言於 push 後回覆並讀回 resolved 狀態。
+
+## 後續 review：QR 入房預設偏好（4057141111）
+
+- 核實成立：QR 成功加入後原本直接導頁，跳過首頁已有的預設 cuisines 帶入。
+- 將既有 applyDefaultPrefs 原樣移至共用 lib/defaultPrefs.ts；首頁與 QR 新入房共用，既有成員回房不重套偏好。
+- 新回歸於修正前 1/10 failed，修正後 JoinPage／HomePage 58 tests passed；驗證有效 cuisine 篩選、只填空條件列、await 寫入後導頁與既有房籍不重套。
+- Sol 獨立只讀審查無 blocker，build／TypeScript exit 0；本項沒有執行瀏覽器或 live RLS 驗證。

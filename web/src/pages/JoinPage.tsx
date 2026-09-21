@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { leaveRooms } from '../lib/api'
+import { applyDefaultPrefs } from '../lib/defaultPrefs'
 import { normalizeInviteCode } from '../lib/invite'
 import { fetchLeaveRooms } from '../lib/roomMembership'
 import { supabase } from '../lib/supabase'
@@ -42,7 +43,10 @@ export default function JoinPage() {
     const { data, error: joinError } = await supabase.rpc('join_room', { p_code: code })
     if (joinError || !data) setError(joinError?.message?.includes('頻繁')
       ? '嘗試過於頻繁，請稍後再試' : '房間不存在或已開始')
-    else nav(`/room/${data}`, { replace: true })
+    else {
+      await applyDefaultPrefs(data)
+      nav(`/room/${data}`, { replace: true })
+    }
   }
 
   async function resolveInvite() {
