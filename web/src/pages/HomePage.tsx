@@ -12,6 +12,7 @@ import { Alert, Logo, LogOut, Spinner } from '../components/icons'
 import { LeaveConfirm } from '../components/LeaveConfirm'
 import LocationPicker from '../components/LocationPicker'
 import { RecentRatingPrompt } from '../components/RatingPrompt'
+import CustomWheel from '../components/CustomWheel'
 
 type PrivatePrefs = { default_prefs: Record<string, unknown> }
 
@@ -248,6 +249,7 @@ export default function HomePage() {
       </header>
 
       <main className="mx-auto w-full max-w-md space-y-4 p-4">
+        <CustomWheel />
         <section className="card animate-rise space-y-3 bg-linear-to-b from-brand-soft to-surface">
           <h1 className="text-2xl font-bold tracking-tight">開一場聚餐決策</h1>
           <p className="text-sm text-fg-muted">
