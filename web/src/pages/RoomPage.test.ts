@@ -12,8 +12,12 @@ const mocks = vi.hoisted(() => ({
   eq: vi.fn(),
   navigate: vi.fn(),
   getUid: vi.fn(),
+  getSession: vi.fn(),
   searchRoom: vi.fn(),
   editConditions: vi.fn(),
+  confirmDraw: vi.fn(),
+  redrawRoom: vi.fn(),
+  chooseLocation: vi.fn(async () => null),
   members: {} as { data?: unknown; error?: unknown },
   effects: [] as Array<() => void | (() => void)>,
 }))
@@ -46,12 +50,16 @@ vi.mock('../lib/uid', () => ({ getUid: mocks.getUid }))
 vi.mock('../lib/supabase', () => ({
   supabase: {
     from: mocks.from,
+    auth: { getSession: mocks.getSession },
   },
 }))
 
 vi.mock('../lib/api', () => ({
   searchRoom: mocks.searchRoom,
   editConditions: mocks.editConditions,
+  confirmDraw: mocks.confirmDraw,
+  redrawRoom: mocks.redrawRoom,
+  chooseLocation: mocks.chooseLocation,
   startVoting: vi.fn(async () => null),
 }))
 
@@ -189,6 +197,140 @@ describe('RoomPage voting controls', () => {
     expect(up?.props?.['aria-pressed']).toBe(true)
     expect(veto?.props?.['aria-pressed']).toBe(true)
     expect(veto?.props?.disabled).toBe(false)
+  })
+})
+
+describe('RoomPage pending selection controls', () => {
+  const candidate: CandidateRow = {
+    room_id: 'room-1', restaurant_id: 'r1', status: 'kept', probability: 1,
+    weight_breakdown: [], exclusion_reason: null, exclusion_kinds: [],
+    restaurants: { name: '店家', lat: 25, lng: 121, place_id: 'p1', source: 'google' },
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.stateIndex = 0; mocks.stateValues = [true]; mocks.stateSetters = []; mocks.effects = []
+    mocks.confirmDraw.mockResolvedValue(null); mocks.redrawRoom.mockResolvedValue(null)
+  })
+
+  function pendingState(myUserId: string) {
+    return {
+      room: { id: 'room-1', code: 'ABC123', host_id: 'host', status: 'pending',
+        exploration: 'balanced', meal_time: null, cuisine_filter: false, draw_version: 4 },
+      members: [], candidates: [candidate],
+      draw: { room_id: 'room-1', winner_restaurant_id: 'r1', seed: 'seed', probabilities: { r1: 1 }, version: 4 },
+      myUserId, connected: true, notFound: false, loadError: false, refetch: vi.fn(async (): Promise<void> => undefined),
+      toggleVote: vi.fn(), hasMyVote: vi.fn(), ups: new Map(), vetoesRemaining: 2,
+    }
+  }
+
+  it('只有房主能用版本 4 確認或排除重轉', async () => {
+    mocks.useRoom.mockReturnValue(pendingState('host'))
+    const tree = await renderRoomPage()
+    const confirm = findButton(tree, '確認就吃這家')
+    const redraw = findButton(tree, '排除這家並重轉')
+    if (!confirm.props?.onClick || !redraw.props?.onClick) throw new Error('找不到待確認操作')
+    await confirm.props.onClick()
+    expect(mocks.confirmDraw).toHaveBeenCalledWith('room-1', 4)
+
+    mocks.stateIndex = 0; mocks.stateValues = [true]; mocks.effects = []; mocks.useRoom.mockReturnValue(pendingState('member'))
+    const memberTree = await renderRoomPage()
+    expect(findButton(memberTree, '確認就吃這家').type).toBeUndefined()
+    expect(findButton(memberTree, '排除這家並重轉').type).toBeUndefined()
+  })
+
+  it.each([
+    ['確認就吃這家', mocks.confirmDraw, 'confirm'],
+    ['排除這家並重轉', mocks.redrawRoom, 'redraw'],
+  ] as const)('%s 成功後等 refetch 完成才解除 busy', async (label, action, kind) => {
+    const reload = deferred<void>()
+    const state = pendingState('host')
+    state.refetch.mockReturnValue(reload.promise)
+    mocks.useRoom.mockReturnValue(state)
+    const tree = await renderRoomPage()
+    const click = findButton(tree, label).props?.onClick
+    if (!click) throw new Error(`找不到${label}`)
+
+    const request = click()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(action).toHaveBeenCalledWith('room-1', 4)
+    expect(state.refetch).toHaveBeenCalledOnce()
+    expect(mocks.stateSetters[14]).toHaveBeenCalledWith(kind)
+    expect(mocks.stateSetters[14]).not.toHaveBeenCalledWith(null)
+
+    reload.resolve(undefined)
+    await request
+    expect(mocks.stateSetters[14]).toHaveBeenLastCalledWith(null)
+  })
+
+  it('確認回傳候選耗盡時，Realtime 斷線仍重新載入並回到準備畫面', async () => {
+    const api = await vi.importActual<typeof import('../lib/api')>('../lib/api')
+    mocks.getSession.mockResolvedValue({ data: { session: { access_token: 'token' } } })
+    mocks.confirmDraw.mockImplementation(api.confirmDraw)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      status: 'lobby', exhausted: true,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    const state = pendingState('host')
+    state.connected = false
+    state.refetch.mockImplementation(async () => {
+      mocks.useRoom.mockReturnValue({
+        ...state, room: { ...state.room, status: 'lobby' }, candidates: [],
+      })
+    })
+    mocks.useRoom.mockReturnValue(state)
+    const tree = await renderRoomPage()
+
+    await findButton(tree, '確認就吃這家').props!.onClick!()
+
+    expect(state.refetch).toHaveBeenCalledOnce()
+    expect(mocks.stateSetters[1]).toHaveBeenCalledTimes(1)
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('')
+    mocks.stateIndex = 0
+    const reloaded = await renderRoomPage()
+    expect(findButton(reloaded, '確認就吃這家').type).toBeUndefined()
+    expect(findButton(reloaded, '開始搜尋餐廳').type).toBe('button')
+  })
+
+  it.each([
+    ['確認就吃這家', mocks.confirmDraw],
+    ['排除這家並重轉', mocks.redrawRoom],
+  ] as const)('%s 失敗時顯示錯誤且不 refetch', async (label, action) => {
+    const state = pendingState('host')
+    action.mockResolvedValue('房間狀態已更新')
+    mocks.useRoom.mockReturnValue(state)
+    const tree = await renderRoomPage()
+
+    await findButton(tree, label).props!.onClick!()
+
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('房間狀態已更新')
+    expect(state.refetch).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[14]).toHaveBeenLastCalledWith(null)
+  })
+
+  it.each([
+    ['確認就吃這家', '確認成功，但重新載入失敗，請重新整理頁面'],
+    ['排除這家並重轉', '重轉成功，但重新載入失敗，請重新整理頁面'],
+  ] as const)('%s 成功但 refetch 拋錯時如實回報並解除 busy', async (label, message) => {
+    const state = pendingState('host')
+    state.refetch.mockRejectedValue(new Error('offline'))
+    mocks.useRoom.mockReturnValue(state)
+    const tree = await renderRoomPage()
+
+    await findButton(tree, label).props!.onClick!()
+
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith(message)
+    expect(mocks.stateSetters[14]).toHaveBeenLastCalledWith(null)
+  })
+
+  it('房間版本已前進時不顯示舊抽選或操作', async () => {
+    const state = pendingState('host')
+    state.room.draw_version = 5
+    mocks.useRoom.mockReturnValue(state)
+    const tree = await renderRoomPage()
+    expect(textContent(tree)).toContain('正在同步最新抽選結果')
+    expect(findButton(tree, '確認就吃這家').type).toBeUndefined()
+    expect(findButton(tree, '排除這家並重轉').type).toBeUndefined()
   })
 })
 
@@ -353,6 +495,23 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
       signal: expect.any(AbortSignal),
       onRequestStart: expect.any(Function),
     }))
+  })
+
+  it('改地點階段不等待已卸載條件表單，lobby 仍維持儲存閘門', async () => {
+    const room = { ...lobbyRoom, search_version: 2 }
+    mocks.useRoom.mockReturnValue(roomState({ room }))
+    const tree = await renderRoomPage()
+    const conditions = findNode(tree, el => typeof el.props?.onFlushAvailable === 'function')
+    const register = conditions!.props!.onFlushAvailable as (flush: null) => void
+    register(null)
+    const panel = findNode(tree, el => typeof el.props?.onChoose === 'function')
+    const choose = panel!.props!.onChoose as (point: { lat: number; lng: number; label: string }) => Promise<void>
+    const point = { lat: 25.05, lng: 121.52, label: '新地點' }
+    await choose(point)
+    expect(mocks.chooseLocation).not.toHaveBeenCalled()
+    room.status = 'relocating'
+    await choose(point)
+    expect(mocks.chooseLocation).toHaveBeenCalledWith('room-1', point.lat, point.lng, 2)
   })
 
   it('preflight pending 時 unmount，晚到結果不送 search、不啟動 timer、不 setState', async () => {

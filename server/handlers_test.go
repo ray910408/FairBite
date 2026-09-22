@@ -1845,17 +1845,29 @@ func TestSearchDrawRecordsHistory(t *testing.T) {
 		t.Fatalf("start-voting: want 200 got %d body %s", w.Code, w.Body.String())
 	}
 
-	if w := do("/api/rooms/" + roomID + "/draw"); w.Code != http.StatusOK {
-		t.Fatalf("draw: want 200 got %d body %s", w.Code, w.Body.String())
+	drawResponse := do("/api/rooms/" + roomID + "/draw")
+	if drawResponse.Code != http.StatusOK {
+		t.Fatalf("draw: want 200 got %d body %s", drawResponse.Code, drawResponse.Body.String())
 	}
 	var histCount, prefHitCount, chosenCount int
+	if err := pool.QueryRow(ctx, `select count(*) from public.dining_history where room_id=$1`, roomID).Scan(&histCount); err != nil {
+		t.Fatal(err)
+	}
+	if histCount != 0 {
+		t.Fatalf("待確認抽選不得寫同席紀錄，got %d", histCount)
+	}
+	version := responseVersion(t, drawResponse)
+	confirm := pendingPost(t, h, hostID, "/api/rooms/"+roomID+"/confirm", fmt.Sprintf(`{"version":%d}`, version))
+	if confirm.Code != http.StatusOK {
+		t.Fatalf("confirm: want 200 got %d body %s", confirm.Code, confirm.Body.String())
+	}
 	if err := pool.QueryRow(ctx,
 		`select count(*), count(pref_hit) from public.dining_history where room_id = $1 and user_id = $2`,
 		roomID, hostID).Scan(&histCount, &prefHitCount); err != nil {
 		t.Fatal(err)
 	}
 	if histCount != 1 {
-		t.Fatalf("draw 後每位成員應有 1 筆同席紀錄，got %d", histCount)
+		t.Fatalf("confirm 後每位成員應有 1 筆同席紀錄，got %d", histCount)
 	}
 	if prefHitCount != 1 {
 		t.Fatalf("有偏好成員的同席紀錄應寫入 pref_hit，got %d", prefHitCount)
@@ -1867,7 +1879,7 @@ func TestSearchDrawRecordsHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	if chosenCount != 1 {
-		t.Fatalf("draw 後 winner 的 chosen_count 應 +1，got %d", chosenCount)
+		t.Fatalf("confirm 後 winner 的 chosen_count 應 +1，got %d", chosenCount)
 	}
 }
 

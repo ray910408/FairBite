@@ -51,14 +51,35 @@ async function signup(page: Page, name: string, verifyTouch = false) {
   }
   await page.getByRole('button', { name: '註冊', exact: true }).click()
   await page.getByLabel('顯示名稱').fill(name)
-  await page.getByLabel('Email').fill(`e2e-${name}-${run}@test.dev`)
+  const email = `e2e-${name}-${run}@gmail.com`
+  await page.getByLabel('Email').fill(email)
   await page.getByLabel('密碼').fill('e2e-password-123')
   await page.getByRole('button', { name: '建立帳號' }).click()
+  if (process.env.TEST_MAILPIT_URL) {
+    await expect(page.getByText('驗證信已寄出。請完成 Email 驗證後回來登入。')).toBeVisible()
+    let verificationUrl = ''
+    await expect.poll(async () => {
+      const mailbox = await page.request.get(`${process.env.TEST_MAILPIT_URL}/api/v1/search`, {
+        params: { query: `to:${email}` },
+      })
+      const { messages } = await mailbox.json() as { messages: { ID: string }[] }
+      if (!messages.length) return false
+      const message = await page.request.get(`${process.env.TEST_MAILPIT_URL}/api/v1/message/${messages[0].ID}`)
+      const body = await message.json() as { HTML?: string; Text?: string }
+      verificationUrl = ((body.HTML ?? body.Text ?? '').match(/https?:\/\/[^\s"<>]+\/auth\/v1\/verify\?[^\s"<>]+/)?.[0] ?? '').replaceAll('&amp;', '&')
+      return Boolean(verificationUrl)
+    }).toBe(true)
+    await page.goto(verificationUrl)
+    await expect(page.getByLabel('Email')).toBeVisible()
+    await page.getByRole('button', { name: '登入', exact: true }).first().click()
+    await page.getByLabel('Email').fill(email)
+    await page.getByLabel('密碼').fill('e2e-password-123')
+    await page.getByRole('button', { name: '登入', exact: true }).last().click()
+  }
   await expect(page.getByRole('button', { name: '建立房間' })).toBeVisible()
 }
 
-async function createAndJoinRoom(a: Page, b: Page, verifyTouch = false) {
-  const aRealtimeReady = waitForRoomRealtime(a)
+async function createRoom(a: Page, verifyTouch = false) {
   if (verifyTouch) await expectButtonsAtLeast44px(a, ['馬上出發', '自訂時間'])
   await a.getByRole('button', { name: '選擇出發點' }).click()
   await a.getByRole('button', { name: '使用目前位置' }).click()
@@ -72,12 +93,17 @@ async function createAndJoinRoom(a: Page, b: Page, verifyTouch = false) {
     await a.getByLabel('用餐時間（時）').selectOption(hh)
     await a.getByLabel('用餐時間（分）').selectOption(mm)
   }
+  const aRealtimeReady = waitForRoomRealtime(a)
   await a.getByRole('button', { name: '建立房間' }).click()
   await expect(a.getByText('成員（1）')).toBeVisible()
   await aRealtimeReady
   const code = (await a.locator('header button.font-mono').innerText()).trim()
   expect(code).toMatch(/^[A-Z0-9]{12}$/)
+  return { code, hhmm }
+}
 
+async function createAndJoinRoom(a: Page, b: Page, verifyTouch = false) {
+  const { code, hhmm } = await createRoom(a, verifyTouch)
   const bRealtimeReady = waitForRoomRealtime(b)
   await b.getByLabel('邀請碼').fill(code)
   await b.getByRole('button', { name: '加入', exact: true }).click()
@@ -385,11 +411,11 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
 
     // BUG-007：guest Ready 先完成；room write 與 host condition flush 再分開驗證。
     const durabilityEvents: string[] = []
-    await b.route('**/rest/v1/room_members**', async route => {
+    await b.route(/\/rest\/v1\/(room_members|rpc\/set_member_ready)(\?|$)/, async route => {
       const request = route.request()
-      if (request.method() !== 'PATCH') return route.continue()
-      const payload = request.postDataJSON() as Record<string, unknown>
-      const kind = Object.hasOwn(payload, 'ready') ? 'ready' : 'conditions'
+      const isReady = request.url().includes('/rpc/set_member_ready')
+      if (request.method() !== (isReady ? 'POST' : 'PATCH')) return route.continue()
+      const kind = isReady ? 'ready' : 'conditions'
       durabilityEvents.push(`guest-${kind}:start`)
       await new Promise(resolve => setTimeout(resolve, 250))
       const response = await route.fetch()
@@ -629,6 +655,15 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await expect(a.getByRole('link', { name: navigationName })).toBeVisible({ timeout: 30_000 })
     await expect(b.getByRole('link', { name: navigationName })).toBeVisible({ timeout: 30_000 })
 
+    // 抽中尚未定案：其他成員不能確認，兩邊都不得先出現餐後評分。
+    await expect(a.getByRole('button', { name: '確認就吃這家' })).toBeVisible()
+    await expect(b.getByRole('button', { name: '確認就吃這家' })).toHaveCount(0)
+    await expect(a.getByText('今天就吃', { exact: true })).toHaveCount(0)
+    await expect(b.getByText(/滿意嗎？/)).toHaveCount(0)
+    await a.getByRole('button', { name: '確認就吃這家' }).click()
+    await expect(a.getByText('今天就吃', { exact: true })).toBeVisible()
+    await expect(b.getByText('今天就吃', { exact: true })).toBeVisible()
+
     // 店名先取（eng review C6）：B 段的 RLS 斷言需要它
     const winnerName = (await a.locator('div.card').filter({ hasText: '今天就吃' })
       .getByRole('heading').textContent())?.trim() ?? ''
@@ -677,6 +712,98 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
   } finally {
     await ctxA.close()
     await ctxB.close()
+  }
+})
+
+test('QR 訪客、改地點、房主繼任與排除重轉閉環', async ({ browser }) => {
+  test.setTimeout(120_000)
+  const hostContext = await browser.newContext({
+    viewport: { width: 375, height: 812 },
+    geolocation: { latitude: 25.0478, longitude: 121.517 },
+    permissions: ['geolocation', 'clipboard-read', 'clipboard-write'],
+  })
+  const guestContext = await browser.newContext({ viewport: { width: 375, height: 812 }, permissions: [] })
+  const otherContext = await browser.newContext({ viewport: { width: 375, height: 812 }, permissions: [] })
+  const host = await hostContext.newPage()
+  const guest = await guestContext.newPage()
+  const other = await otherContext.newPage()
+  try {
+    await signup(host, 'qrHost')
+    const { code } = await createRoom(host)
+    await expect(host.locator('svg').filter({ has: host.locator('title', { hasText: `加入房間 ${code}` }) })).toBeVisible()
+    await host.getByRole('button', { name: '複製邀請連結' }).click()
+    await expect(host.getByText('邀請連結已複製')).toBeVisible()
+    const invitation = await host.evaluate(() =>
+      (navigator as unknown as { clipboard: { readText(): Promise<string> } }).clipboard.readText())
+    expect(invitation).toContain(`#/join/${code}`)
+
+    for (const [page, name] of [[guest, '訪客甲'], [other, '訪客乙']] as const) {
+      const ready = waitForRoomRealtime(page)
+      await page.goto(invitation)
+      await expect(page.getByLabel('你的暱稱')).toBeVisible()
+      await expect(page.getByLabel('Email')).toHaveCount(0)
+      await page.getByLabel('你的暱稱').fill(name)
+      await page.getByRole('button', { name: '以訪客身分加入' }).click()
+      await ready
+      await expect(page.getByText(name, { exact: true })).toBeVisible()
+      await expect(page.getByText('保留這次聚餐紀錄？')).toHaveCount(0)
+      await setConditionsAndReady(page, 1600)
+    }
+    await expect(host.getByText('成員（3）')).toBeVisible()
+    await setConditions(host, 1600)
+    await host.getByRole('button', { name: '開始搜尋餐廳' }).click()
+    await host.getByRole('button', { name: '開始投票' }).click()
+    await expect(guest.getByLabel('我想換地點')).toBeVisible()
+    await guest.getByLabel('我想換地點').click()
+    await expect(host.getByText('目前 1/3 票，需 2 票才會換地點')).toBeVisible()
+    await expect(guest.getByLabel('我想換地點')).toBeChecked()
+    await expect(host.getByRole('button', { name: '啟動轉盤' })).toBeEnabled()
+    await host.getByLabel('我想換地點').click()
+    await expect(guest.getByText('等待房主選擇新地點')).toBeVisible()
+    await expect(host.getByRole('button', { name: '啟動轉盤' })).toHaveCount(0)
+
+    await leaveViaHome(host)
+    await expect(guest.getByRole('heading', { name: '選擇新地點' })).toBeVisible()
+    await guest.getByRole('button', { name: '選擇出發點' }).click()
+    await guest.locator('.leaflet-container').click({ position: { x: 160, y: 100 } })
+    await guest.getByRole('button', { name: '完成', exact: true }).click()
+    await guest.getByRole('button', { name: '確認新地點' }).click()
+    await expect(other.getByRole('button', { name: '我準備好了' })).toBeVisible()
+    await expect(other.getByRole('slider', { name: /價位偏好/ })).toHaveValue('1600')
+    await other.getByRole('button', { name: '我準備好了' }).click()
+    await guest.getByRole('button', { name: '開始搜尋餐廳' }).click()
+    await guest.getByRole('button', { name: '開始投票' }).click()
+    await guest.getByRole('button', { name: '啟動轉盤' }).click()
+    await expect(guest.getByRole('button', { name: '排除這家並重轉' })).toBeVisible({ timeout: 30_000 })
+    const pendingCard = (page: Page) => page.locator('div.card').filter({ has: page.getByText('抽中待確認', { exact: true }) })
+    const firstWinner = await pendingCard(guest).getByRole('heading').innerText()
+    await expect(other.getByRole('button', { name: '確認就吃這家' })).toHaveCount(0)
+    await expect(other.getByLabel('我想換地點')).toHaveCount(0)
+    await expect(other.getByText('保留這次聚餐紀錄？')).toHaveCount(0)
+    await guest.getByRole('button', { name: '排除這家並重轉' }).click()
+    await expect(pendingCard(guest).getByRole('heading')).not.toHaveText(firstWinner, { timeout: 30_000 })
+    const finalWinner = await pendingCard(guest).getByRole('heading').innerText()
+    await expect(pendingCard(other).getByRole('heading')).toHaveText(finalWinner, { timeout: 30_000 })
+    await guest.getByRole('button', { name: '確認就吃這家' }).click()
+    await expect(other.getByText('今天就吃', { exact: true })).toBeVisible()
+    await expect(other.getByText('保留這次聚餐紀錄？')).toBeVisible()
+    await other.getByRole('button', { name: '這次先不要' }).click()
+    await expect(other.getByText('保留這次聚餐紀錄？')).toHaveCount(0)
+    await other.goto(invitation)
+    await expect(other.getByText('今天就吃', { exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(other.getByLabel('你的暱稱')).toHaveCount(0)
+    await expect(other.getByText('保留這次聚餐紀錄？')).toHaveCount(0)
+    await guest.getByRole('link', { name: '足跡', exact: true }).click()
+    await expect(guest.getByRole('listitem')).toHaveCount(1)
+    await expect(guest.getByRole('listitem')).toContainText(finalWinner)
+    await expect(guest.getByRole('listitem')).not.toContainText(firstWinner)
+    await leaveViaHome(other)
+    await expect(other.getByRole('button', { name: '建立房間' })).toHaveCount(0)
+    await expect(other.getByRole('link', { name: '註冊後建立房間' })).toBeVisible()
+  } finally {
+    await hostContext.close()
+    await guestContext.close()
+    await otherContext.close()
   }
 })
 

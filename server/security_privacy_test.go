@@ -153,8 +153,8 @@ func TestLegacyScoringMigrationPreservesPrivateAudit(t *testing.T) {
 		insert into room_candidates(room_id,restaurant_id,status,probability,weight_breakdown) values
 		 ('27100000-0000-0000-0000-000000000010','27100000-0000-0000-0000-000000000020','kept',0.37,'[{"factor":"recency","mult":0.3,"reason":"1 private visit"}]'),
 		 ('27100000-0000-0000-0000-000000000011','27100000-0000-0000-0000-000000000020','kept',0.42,'[{"factor":"preference","mult":1.2,"reason":"fairness"}]');
-		insert into draws(id,room_id,seed,winner_restaurant_id,probabilities) values
-		 ('27100000-0000-0000-0000-000000000030','27100000-0000-0000-0000-000000000010','original-seed','27100000-0000-0000-0000-000000000020','{"27100000-0000-0000-0000-000000000020":0.37}');
+		insert into draws(id,room_id,version,seed,winner_restaurant_id,probabilities) values
+		 ('27100000-0000-0000-0000-000000000030','27100000-0000-0000-0000-000000000010',1,'original-seed','27100000-0000-0000-0000-000000000020','{"27100000-0000-0000-0000-000000000020":0.37}');
 		create temporary table original_candidates as select * from room_candidates;
 		create temporary table original_draws as select * from draws;`)
 	if err != nil {

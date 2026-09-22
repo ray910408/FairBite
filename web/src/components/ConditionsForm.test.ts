@@ -8,7 +8,9 @@ const mocks = vi.hoisted(() => ({
   stateSetters: [] as ReturnType<typeof vi.fn>[],
   effects: [] as Array<() => void | (() => void)>,
   refs: [] as Array<{ current: unknown }>,
+  refIndex: 0,
   from: vi.fn(),
+  rpc: vi.fn(),
   update: vi.fn(),
   eqRoom: vi.fn(),
   eqUser: vi.fn(),
@@ -25,15 +27,17 @@ vi.mock('react', async importOriginal => {
       return [index < mocks.stateValues.length ? mocks.stateValues[index] : initial, setter]
     },
     useRef: (initial: unknown) => {
+      const index = mocks.refIndex++
+      if (mocks.refs[index]) return mocks.refs[index]
       const ref = { current: initial }
-      mocks.refs.push(ref)
+      mocks.refs[index] = ref
       return ref
     },
     useEffect: (effect: () => void | (() => void)) => { mocks.effects.push(effect) },
   }
 })
 
-vi.mock('../lib/supabase', () => ({ supabase: { from: mocks.from } }))
+vi.mock('../lib/supabase', () => ({ supabase: { from: mocks.from, rpc: mocks.rpc } }))
 
 type ElementLike = {
   type?: unknown
@@ -132,10 +136,12 @@ describe('ConditionsForm 條件寫入防線', () => {
     mocks.stateSetters = []
     mocks.effects = []
     mocks.refs = []
+    mocks.refIndex = 0
     mocks.eqUser.mockReset().mockResolvedValue({ error: null, count: 1 })
     mocks.eqRoom.mockReset().mockReturnValue({ eq: mocks.eqUser })
     mocks.update.mockReset().mockReturnValue({ eq: mocks.eqRoom })
     mocks.from.mockReset().mockReturnValue({ update: mocks.update })
+    mocks.rpc.mockReset().mockResolvedValue({ data: true, error: null })
   })
 
   afterEach(() => {
@@ -145,7 +151,7 @@ describe('ConditionsForm 條件寫入防線', () => {
 
   async function clickReady() {
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({ me, isHost: false })
+    const tree = ConditionsForm({ searchVersion: 7, me, isHost: false })
     const ready = findButton(tree, '我準備好了')
     if (!ready.props?.onClick) throw new Error('找不到準備按鈕')
     await ready.props.onClick()
@@ -154,7 +160,7 @@ describe('ConditionsForm 條件寫入防線', () => {
   async function renderWithFlush(isHost = false) {
     let flush: (() => Promise<boolean>) | undefined
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({
+    const tree = ConditionsForm({ searchVersion: 7,
       me,
       isHost,
       ...({ onFlushAvailable: (fn: () => Promise<boolean>) => { flush = fn } } as object),
@@ -173,7 +179,7 @@ describe('ConditionsForm 條件寫入防線', () => {
       .mockResolvedValueOnce({ error: null, count: 1 })
 
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({ me, isHost: false })
+    const tree = ConditionsForm({ searchVersion: 7, me, isHost: false })
     const budget = findInput(tree)
     const ready = findButton(tree, '我準備好了')
     if (!budget.props?.onChange || !ready.props?.onClick) throw new Error('找不到條件或準備輸入')
@@ -184,16 +190,18 @@ describe('ConditionsForm 條件寫入防線', () => {
 
     expect(mocks.update).toHaveBeenCalledTimes(1)
     expect(mocks.update.mock.calls[0][0]).toMatchObject({ budget_max: 900 })
-    expect(mocks.update).not.toHaveBeenCalledWith({ ready: true }, { count: 'exact' })
+    expect(mocks.rpc).not.toHaveBeenCalled()
 
     condition.resolve({ error: null, count: 1 })
     await readyDone
-    expect(mocks.update.mock.calls[1][0]).toEqual({ ready: true })
+    expect(mocks.rpc).toHaveBeenCalledWith('set_member_ready', {
+      p_room_id: 'room-1', p_ready: true, p_search_version: 7,
+    })
   })
 
   it('價位偏好保留原生 slider 與質性說明', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({ me, isHost: false })
+    const tree = ConditionsForm({ searchVersion: 7, me, isHost: false })
     const budget = findInput(tree)
     const copy = textContent(tree)
 
@@ -208,7 +216,7 @@ describe('ConditionsForm 條件寫入防線', () => {
 
   it('飲食禁忌只提供有正向證據的素食選項', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const copy = textContent(ConditionsForm({ me, isHost: false }))
+    const copy = textContent(ConditionsForm({ searchVersion: 7, me, isHost: false }))
 
     expect(DIETARY_OPTIONS).toEqual([['vegetarian', '素食']])
     expect(copy).toContain('飲食禁忌')
@@ -219,7 +227,7 @@ describe('ConditionsForm 條件寫入防線', () => {
 
   it('legacy 無效價位偏好不誤顯示有效層級，仍可改回合法 slider 值', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({ me: { ...me, budget_max: 50 }, isHost: false })
+    const tree = ConditionsForm({ searchVersion: 7, me: { ...me, budget_max: 50 }, isHost: false })
     const budget = findInput(tree)
     const copy = textContent(tree)
     if (!budget.props?.onChange) throw new Error('找不到價位偏好輸入')
@@ -237,7 +245,7 @@ describe('ConditionsForm 條件寫入防線', () => {
 
   it('legacy 超過 slider 上限的價位偏好也顯示未設定', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({ me: { ...me, budget_max: 1700 }, isHost: false })
+    const tree = ConditionsForm({ searchVersion: 7, me: { ...me, budget_max: 1700 }, isHost: false })
     const copy = textContent(tree)
 
     expect(copy).toContain('未設定')
@@ -247,7 +255,7 @@ describe('ConditionsForm 條件寫入防線', () => {
   it('最新條件寫入失敗會回到最後 durable snapshot 並呈現 role=alert', async () => {
     mocks.eqUser.mockResolvedValueOnce({ error: { message: 'boom' }, count: 0 })
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({ me, isHost: false })
+    const tree = ConditionsForm({ searchVersion: 7, me, isHost: false })
     const budget = findInput(tree)
     if (!budget.props?.onChange) throw new Error('找不到預算輸入')
 
@@ -260,7 +268,7 @@ describe('ConditionsForm 條件寫入防線', () => {
     mocks.stateIndex = 0
     mocks.stateValues = [me, '儲存失敗：房間可能已開始選餐，條件已凍結']
     mocks.effects = []
-    const failedTree = ConditionsForm({ me, isHost: false })
+    const failedTree = ConditionsForm({ searchVersion: 7, me, isHost: false })
     expect(findNode(failedTree, el => el.props?.role === 'alert')).toBeDefined()
   })
 
@@ -328,7 +336,7 @@ describe('ConditionsForm 條件寫入防線', () => {
       .mockResolvedValueOnce({ error: null, count: 1 })
     const authoritativeReady = { ...me, ready: true }
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({ me: authoritativeReady, isHost: false })
+    const tree = ConditionsForm({ searchVersion: 7, me: authoritativeReady, isHost: false })
     const budget = findInput(tree)
     if (!budget.props?.onChange) throw new Error('找不到預算輸入')
     const saveErrorSetter = mocks.stateSetters[1]
@@ -341,14 +349,16 @@ describe('ConditionsForm 條件寫入防線', () => {
     if (!cancel.props?.onClick) throw new Error('找不到取消準備按鈕')
     await cancel.props.onClick()
 
-    expect(mocks.update).toHaveBeenLastCalledWith({ ready: false }, { count: 'exact' })
+    expect(mocks.rpc).toHaveBeenLastCalledWith('set_member_ready', {
+      p_room_id: 'room-1', p_ready: false, p_search_version: 7,
+    })
     expect(saveErrorSetter).toHaveBeenLastCalledWith(conditionError)
 
     // 取消成功只解除 ready 凍結；未 durable 的 condition gate 與可見 alert 必須保留。
     mocks.stateIndex = 0
     mocks.stateValues = [{ ...authoritativeReady, ready: false }, conditionError]
     mocks.effects = []
-    const cancelledTree = ConditionsForm({ me: { ...authoritativeReady, ready: false }, isHost: false })
+    const cancelledTree = ConditionsForm({ searchVersion: 7, me: { ...authoritativeReady, ready: false }, isHost: false })
     expect(findNode(cancelledTree, el => el.props?.role === 'alert')).toBeDefined()
 
     budget.props.onChange({ target: { value: '1000' } })
@@ -358,7 +368,7 @@ describe('ConditionsForm 條件寫入防線', () => {
 
   it('條件批次寫入只含五個條件欄位，不夾帶 ready', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({ me, isHost: false })
+    const tree = ConditionsForm({ searchVersion: 7, me, isHost: false })
     const budget = findInput(tree)
     if (!budget.props?.onChange) throw new Error('找不到預算輸入')
     budget.props.onChange({ target: { value: '900' } })
@@ -377,7 +387,7 @@ describe('ConditionsForm 條件寫入防線', () => {
 
   it('legacy dietary 成員修改其他條件時只回寫 supported 值', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({ me: { ...me, dietary: ['no_beef', 'no_pork'] }, isHost: false })
+    const tree = ConditionsForm({ searchVersion: 7, me: { ...me, dietary: ['no_beef', 'no_pork'] }, isHost: false })
     const budget = findInput(tree)
     if (!budget.props?.onChange) throw new Error('找不到預算輸入')
 
@@ -391,7 +401,7 @@ describe('ConditionsForm 條件寫入防線', () => {
 
   it('legacy dietary 成員切換素食時只回寫 vegetarian', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({ me: { ...me, dietary: ['no_beef'] }, isHost: false })
+    const tree = ConditionsForm({ searchVersion: 7, me: { ...me, dietary: ['no_beef'] }, isHost: false })
     const vegetarian = findButton(tree, '素食')
     if (!vegetarian.props?.onClick) throw new Error('找不到素食選項')
 
@@ -403,19 +413,19 @@ describe('ConditionsForm 條件寫入防線', () => {
     }), { count: 'exact' })
   })
 
-  it('ready 點擊立即走專用 count:exact 寫入，不等待 debounce', async () => {
+  it('ready 點擊攜帶目前搜尋版本走專用 RPC，不等待 debounce', async () => {
     await clickReady()
-    expect(mocks.update).toHaveBeenCalledWith({ ready: true }, { count: 'exact' })
-    expect(mocks.eqRoom).toHaveBeenCalledWith('room_id', 'room-1')
-    expect(mocks.eqUser).toHaveBeenCalledWith('user_id', 'user-b')
-    expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(mocks.rpc).toHaveBeenCalledWith('set_member_ready', {
+      p_room_id: 'room-1', p_ready: true, p_search_version: 7,
+    })
+    expect(mocks.update).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(401)
-    expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(mocks.rpc).toHaveBeenCalledTimes(1)
   })
 
   it('pending 條件寫入成功不會倒退 ready 專用寫入保存的值', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({ me, isHost: false })
+    const tree = ConditionsForm({ searchVersion: 7, me, isHost: false })
     const budget = findInput(tree)
     const ready = findButton(tree, '我準備好了')
     if (!budget.props?.onChange || !ready.props?.onClick) throw new Error('找不到條件或準備輸入')
@@ -427,18 +437,21 @@ describe('ConditionsForm 條件寫入防線', () => {
     expect((mocks.refs[0].current as MemberRow).ready).toBe(true)
   })
 
-  it('ready 專用寫入 count 0 時還原 ready 並顯示凍結錯誤', async () => {
-    mocks.eqUser.mockResolvedValue({ error: null, count: 0 })
+  it.each([
+    { data: false, error: null },
+    { data: null, error: { message: 'denied' } },
+  ])('ready RPC 未確認寫入時還原 ready 並顯示錯誤：%j', async result => {
+    mocks.rpc.mockResolvedValue(result)
     await clickReady()
     const rollback = mocks.stateSetters[0].mock.calls.at(-1)?.[0]
     expect(rollback).toBeTypeOf('function')
     expect(rollback({ ...me, ready: true }).ready).toBe(false)
-    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('儲存失敗：房間可能已開始選餐，條件已凍結')
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('準備狀態更新失敗：請確認最新地點與房間狀態後再試')
   })
 
   it('me.ready 變更的同步 effect 會把權威 ready 寫回 form（雙分頁凍結不被 stale 繞過）', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    ConditionsForm({ me: { ...me, ready: true }, isHost: false })
+    ConditionsForm({ searchVersion: 7, me: { ...me, ready: true }, isHost: false })
     for (const fn of mocks.effects) fn()
     // setForm 收到 updater：以 stale form（ready:false）餵入，必須修正為權威 ready:true
     const updaterCalls = mocks.stateSetters[0].mock.calls
@@ -446,6 +459,51 @@ describe('ConditionsForm 條件寫入防線', () => {
     expect(updaterCalls.length).toBeGreaterThan(0)
     const updated = updaterCalls.at(-1)!({ ...me, ready: false })
     expect(updated.ready).toBe(true)
+  })
+
+  it('條件 flush 期間地點版本改變，不送出舊準備請求', async () => {
+    const condition = deferred<{ error: null; count: number }>()
+    mocks.eqUser.mockReturnValueOnce(condition.promise)
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me, isHost: false, searchVersion: 7 })
+    findInput(tree).props!.onChange!({ target: { value: '900' } })
+    const pending = findButton(tree, '我準備好了').props!.onClick!()
+    await Promise.resolve()
+    mocks.stateIndex = 0
+    mocks.refIndex = 0
+    ConditionsForm({ me, isHost: false, searchVersion: 8 })
+    condition.resolve({ error: null, count: 1 })
+    await pending
+    expect(mocks.rpc).not.toHaveBeenCalled()
+  })
+
+  it('舊準備回應晚於新地點，不把新地點畫面改回已準備', async () => {
+    const response = deferred<{ data: boolean; error: null }>()
+    mocks.rpc.mockReturnValueOnce(response.promise)
+    const { default: ConditionsForm } = await import('./ConditionsForm')
+    const tree = ConditionsForm({ me, isHost: false, searchVersion: 7 })
+    const oldSetter = mocks.stateSetters[0]
+    const pending = findButton(tree, '我準備好了').props!.onClick!()
+    await Promise.resolve()
+    await Promise.resolve()
+    const calls = oldSetter.mock.calls.length
+    mocks.stateIndex = 0
+    mocks.refIndex = 0
+    mocks.effects = []
+    ConditionsForm({ me, isHost: false, searchVersion: 8 })
+    for (const effect of mocks.effects) effect()
+    response.resolve({ data: true, error: null })
+    await pending
+    expect(oldSetter).toHaveBeenCalledTimes(calls)
+    expect((mocks.refs[0].current as MemberRow).ready).toBe(false)
+  })
+
+  it('準備 RPC 網路失敗會還原並顯示可重試錯誤', async () => {
+    mocks.rpc.mockRejectedValueOnce(new Error('offline'))
+    await clickReady()
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('準備狀態更新失敗：請確認最新地點與房間狀態後再試')
+    const rollback = mocks.stateSetters[0].mock.calls.at(-1)![0]
+    expect(rollback({ ...me, ready: true }).ready).toBe(false)
   })
 })
 
@@ -456,11 +514,12 @@ describe('ConditionsForm 凍結（準備／搜尋中）', () => {
     mocks.stateSetters = []
     mocks.effects = []
     mocks.refs = []
+    mocks.refIndex = 0
   })
 
   it('成員 ready 時所有條件輸入凍結、ready 鈕仍可點', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({ me: { ...me, ready: true }, isHost: false })
+    const tree = ConditionsForm({ searchVersion: 7, me: { ...me, ready: true }, isHost: false })
     const ready = findButton(tree, '已準備（點擊取消）')
     expect(ready.type).toBe('button')
     expect((ready as InputLike).props?.disabled).not.toBe(true)
@@ -472,14 +531,14 @@ describe('ConditionsForm 凍結（準備／搜尋中）', () => {
 
   it('disabled prop（房主搜尋中）時全部輸入凍結', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({ me, isHost: true, disabled: true })
+    const tree = ConditionsForm({ searchVersion: 7, me, isHost: true, disabled: true })
     const states = collectDisabledStates(tree)
     expect(states.every(s => s)).toBe(true) // 房主無 ready 鈕，全凍
   })
 
   it('未準備且未搜尋時可編輯', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const tree = ConditionsForm({ me, isHost: false })
+    const tree = ConditionsForm({ searchVersion: 7, me, isHost: false })
     const states = collectDisabledStates(tree)
     expect(states.some(s => !s)).toBe(true)
     expect(states.filter(s => s)).toHaveLength(0)
@@ -493,11 +552,12 @@ describe('ConditionsForm 選取樣式', () => {
     mocks.stateSetters = []
     mocks.effects = []
     mocks.refs = []
+    mocks.refIndex = 0
   })
 
   it('選取的交通方式使用既有品牌色 classes', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
-    const walking = findButton(ConditionsForm({ me, isHost: true }), '步行')
+    const walking = findButton(ConditionsForm({ searchVersion: 7, me, isHost: true }), '步行')
     expect(walking.props?.className).toContain(
       'border-brand bg-brand text-white hover:bg-brand-strong',
     )

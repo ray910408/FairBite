@@ -1,5 +1,12 @@
 import type { CandidateRow, TraceEntry } from './types'
 
+export function snapshotCandidates(rows: CandidateRow[], probabilities: Record<string, number>): CandidateRow[] {
+  return rows.map(row => ({ ...row,
+    status: Object.hasOwn(probabilities, row.restaurant_id) ? 'kept' : 'excluded',
+    probability: probabilities[row.restaurant_id] ?? null,
+  }))
+}
+
 export const FACTOR_LABELS: Record<string, string> = {
   preference: '偏好',
   distance: '距離',

@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   stateValues: [] as unknown[],
   stateSetters: [] as ReturnType<typeof vi.fn>[],
   effects: [] as Array<() => void | (() => void)>,
+  unsubscribe: vi.fn(),
+  authQuery: '',
 }))
 
 vi.mock('react', async importOriginal => {
@@ -18,16 +20,25 @@ vi.mock('react', async importOriginal => {
     useEffect: (effect: () => void | (() => void)) => { mocks.effects.push(effect) },
     useState: (initial: unknown) => {
       const index = mocks.stateIndex++
-      const value = mocks.stateValues[index] === undefined ? initial : mocks.stateValues[index]
+      const fallback = typeof initial === 'function' ? (initial as () => unknown)() : initial
+      const value = mocks.stateValues[index] === undefined ? fallback : mocks.stateValues[index]
       const setter = vi.fn()
       mocks.stateSetters[index] = setter
       return [value, setter]
     },
   }
 })
-vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.navigate }))
+vi.mock('react-router-dom', () => ({
+  useNavigate: () => mocks.navigate,
+  useSearchParams: () => [new URLSearchParams(mocks.authQuery)],
+  Link: (props: Record<string, unknown>) => ({ type: 'a', props }),
+}))
 vi.mock('../lib/supabase', () => ({
-  supabase: { auth: { signUp: vi.fn(), signInWithPassword: vi.fn() } },
+  supabase: { auth: {
+    signUp: vi.fn(), signInWithPassword: vi.fn(), updateUser: vi.fn(), getSession: vi.fn(),
+    getUser: vi.fn(() => Promise.resolve({ data: { user: null } })),
+    onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: mocks.unsubscribe } } })),
+  } },
 }))
 
 type NodeLike = { type?: unknown; props?: Record<string, unknown> }
@@ -60,6 +71,20 @@ function findForm(node: unknown): NodeLike | undefined {
   return element.type === 'form' ? element : findForm(element.props?.children)
 }
 
+function findById(node: unknown, id: string): NodeLike | undefined {
+  if (Array.isArray(node)) return node.map(child => findById(child, id)).find(Boolean)
+  if (!node || typeof node !== 'object') return undefined
+  const element = node as NodeLike
+  return element.props?.id === id ? element : findById(element.props?.children, id)
+}
+
+function findDialog(node: unknown): NodeLike | undefined {
+  if (Array.isArray(node)) return node.map(findDialog).find(Boolean)
+  if (!node || typeof node !== 'object') return undefined
+  const element = node as NodeLike
+  return element.props?.role === 'dialog' ? element : findDialog(element.props?.children)
+}
+
 async function submitAuth(mode: 'login' | 'register', email: string) {
   mocks.stateValues = [mode, email, 'password123', '顯示名', '', false]
   const { default: AuthPage } = await import('./AuthPage')
@@ -80,11 +105,20 @@ describe('AuthPage segmented control', () => {
   beforeEach(() => {
     vi.mocked(supabase.auth.signUp).mockReset().mockResolvedValue({ data: { user: null, session: null }, error: null })
     vi.mocked(supabase.auth.signInWithPassword).mockReset()
+    vi.mocked(supabase.auth.getSession).mockReset().mockResolvedValue({ data: { session: null }, error: null })
+    vi.mocked(supabase.auth.updateUser).mockReset().mockResolvedValue({ data: { user: null }, error: null } as never)
+    vi.mocked(supabase.auth.getUser).mockReset().mockResolvedValue({ data: { user: null }, error: null } as never)
+    vi.mocked(supabase.auth.onAuthStateChange).mockClear()
+    mocks.unsubscribe.mockReset()
     mocks.navigate.mockReset()
     mocks.stateIndex = 0
     mocks.stateValues = []
     mocks.stateSetters = []
     mocks.effects = []
+    mocks.authQuery = ''
+    vi.stubGlobal('window', { location: { origin: 'https://example.test', pathname: '/app/', search: '' } })
+    vi.stubGlobal('localStorage', { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() })
+    vi.stubGlobal('sessionStorage', { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() })
   })
 
   afterEach(() => {
@@ -112,6 +146,7 @@ describe('AuthPage segmented control', () => {
     if (typeof cleanup !== 'function') throw new Error('缺少離頁清理')
     cleanup()
     expect(signal.aborted).toBe(true)
+    expect(mocks.unsubscribe).toHaveBeenCalledOnce()
   })
 
   it.each(['pending', 'failed'])('預熱 %s 時仍可送出註冊，未設 API URL 使用本機 proxy', async status => {
@@ -126,12 +161,13 @@ describe('AuthPage segmented control', () => {
     const cleanup = mocks.effects[0]()
     await Promise.resolve()
     expect(fetchMock.mock.calls[0][0]).toBe('/healthz')
-    for (const setter of mocks.stateSetters) expect(setter).not.toHaveBeenCalled()
+    for (const setter of mocks.stateSetters.slice(0, 6)) expect(setter).not.toHaveBeenCalled()
 
     mocks.stateIndex = 0
     await submitAuth('register', 'user@example.com')
     expect(supabase.auth.signUp).toHaveBeenCalledOnce()
-    expect(mocks.navigate).toHaveBeenCalledWith('/')
+    expect(mocks.stateSetters[8]).toHaveBeenCalledWith('驗證信已寄出。請完成 Email 驗證後回來登入。')
+    expect(mocks.navigate).not.toHaveBeenCalled()
     if (typeof cleanup === 'function') cleanup()
   })
 
@@ -160,9 +196,12 @@ describe('AuthPage segmented control', () => {
     await submitAuth('register', email)
 
     expect(supabase.auth.signUp).toHaveBeenCalledExactlyOnceWith({
-      email: email.trim(), password: 'password123', options: { data: { display_name: '顯示名' } },
+      email: email.trim(), password: 'password123', options: {
+        data: { display_name: '顯示名' }, emailRedirectTo: 'https://example.test/app/#/auth',
+      },
     })
-    expect(mocks.navigate).toHaveBeenCalledWith('/')
+    expect(mocks.stateSetters[8]).toHaveBeenCalledWith('驗證信已寄出。請完成 Email 驗證後回來登入。')
+    expect(mocks.navigate).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -197,12 +236,240 @@ describe('AuthPage segmented control', () => {
     expect(mocks.stateSetters[4]).toHaveBeenLastCalledWith('Email 或密碼錯誤')
   })
 
+  it('訪客每次提交既有帳號登入都只開離房確認，不會第二次繞過', async () => {
+    const guest = { id: 'guest-1', is_anonymous: true }
+    mocks.stateValues = ['login', 'member@example.com', 'password123', '', '', false, guest, true]
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: guest, access_token: 'guest-token' } }, error: null,
+    } as never)
+    const { default: AuthPage } = await import('./AuthPage')
+    const form = findForm(AuthPage())
+    if (!form?.props?.onSubmit) throw new Error('找不到登入表單')
+    await (form.props.onSubmit as (event: { preventDefault: () => void }) => Promise<void>)({ preventDefault: vi.fn() })
+
+    expect(mocks.stateSetters[7]).toHaveBeenCalledWith(true)
+    expect(supabase.auth.signInWithPassword).not.toHaveBeenCalled()
+  })
+
+  it('初始 getUser 尚未完成時，匿名 session 登入仍只開離房確認', async () => {
+    const guest = { id: 'guest-pending', is_anonymous: true }
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: guest, access_token: 'guest-token' } }, error: null,
+    } as never)
+    await submitAuth('login', 'member@example.com')
+
+    expect(mocks.stateSetters[7]).toHaveBeenCalledWith(true)
+    expect(supabase.auth.signInWithPassword).not.toHaveBeenCalled()
+  })
+
+  it('升級尚未完成時登入既有帳號仍需離房確認', async () => {
+    const pending = { id: 'guest-pending', is_anonymous: false, email: 'guest@gmail.com', email_confirmed_at: null }
+    vi.mocked(localStorage.getItem).mockReturnValue('guest@gmail.com')
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: pending, access_token: 'guest-token' } }, error: null,
+    } as never)
+    await submitAuth('login', 'member@example.com')
+
+    expect(mocks.stateSetters[7]).toHaveBeenCalledWith(true)
+    expect(supabase.auth.signInWithPassword).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['leave-http', '離開目前房間失敗，仍保留訪客身分；請稍後再試'],
+    ['leave-network', '連線失敗，請檢查網路後再試'],
+    ['login-credentials', 'Email 或密碼錯誤'],
+    ['login-network', '連線失敗，請檢查網路後再試'],
+  ])('切換帳號失敗 %s 在有效確認視窗顯示錯誤', async (failure, message) => {
+    const guest = { id: 'guest-1', is_anonymous: true }
+    mocks.stateValues = ['login', 'member@example.com', 'password123', '', '', false, guest, true]
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: guest, access_token: 'guest-token' } }, error: null,
+    } as never)
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: failure === 'leave-http' ? 500 : 200 }))
+    if (failure === 'leave-network') fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.mocked(supabase.auth.signInWithPassword).mockResolvedValue({
+      data: { user: null, session: null }, error: new AuthError('Invalid login credentials', 400, 'invalid_credentials'),
+    })
+    if (failure === 'login-network') vi.mocked(supabase.auth.signInWithPassword).mockRejectedValue(new TypeError('Failed to fetch'))
+
+    const { default: AuthPage } = await import('./AuthPage')
+    const button = findButton(AuthPage(), '離房並登入')
+    if (!button?.props?.onClick) throw new Error('找不到離房並登入按鈕')
+    await (button.props.onClick as () => Promise<void>)()
+
+    expect(mocks.stateSetters[4]).toHaveBeenLastCalledWith(message)
+    expect(mocks.stateSetters[5]).toHaveBeenLastCalledWith(false)
+    expect(mocks.stateSetters[7]).not.toHaveBeenCalledWith(false)
+    expect(mocks.navigate).not.toHaveBeenCalled()
+    if (failure.startsWith('leave-')) expect(supabase.auth.signInWithPassword).not.toHaveBeenCalled()
+    else expect(supabase.auth.signInWithPassword).toHaveBeenCalledExactlyOnceWith({ email: 'member@example.com', password: 'password123' })
+
+    // Apply the captured error to the next render and check its accessible location.
+    mocks.stateValues[4] = mocks.stateSetters[4].mock.calls.at(-1)?.[0]
+    mocks.stateIndex = 0
+    const tree = AuthPage()
+    const dialog = findDialog(tree)
+    expect(textContent(dialog)).toContain(message)
+    expect(renderToStaticMarkup(dialog as Parameters<typeof renderToStaticMarkup>[0])).toContain('role="alert"')
+    expect(textContent(findForm(tree))).not.toContain(message)
+  })
+
+  it('初始 getUser 尚未完成時，匿名 session 註冊走驗證升級而非 signUp', async () => {
+    const guest = { id: 'guest-pending', is_anonymous: true }
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: guest, access_token: 'guest-token' } }, error: null,
+    } as never)
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await submitAuth('register', 'guest@gmail.com')
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/validate-upgrade-email', expect.objectContaining({
+      method: 'POST', headers: expect.objectContaining({ Authorization: 'Bearer guest-token' }),
+    }))
+    expect(supabase.auth.updateUser).toHaveBeenCalledWith(
+      { email: 'guest@gmail.com' }, { emailRedirectTo: 'https://example.test/app/#/auth' },
+    )
+    expect(supabase.auth.signUp).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['guest@gmail.com', null, false],
+    ['other@gmail.com', '2026-09-20T00:00:00Z', false],
+    ['guest@gmail.com', '2026-09-20T00:00:00Z', true],
+  ] as const)('重載升級頁只在對應 Email 已驗證時顯示設密碼：%s / %s', async (email, confirmedAt, canResume) => {
+    const current = { id: 'guest-pending', is_anonymous: false, email, email_confirmed_at: confirmedAt }
+    vi.mocked(localStorage.getItem).mockReturnValue('guest@gmail.com')
+    vi.mocked(supabase.auth.getUser).mockResolvedValue({ data: { user: current }, error: null } as never)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}')))
+    const { default: AuthPage } = await import('./AuthPage')
+    AuthPage()
+    const cleanup = mocks.effects[0]()
+    await Promise.resolve()
+
+    expect(mocks.stateSetters[9]).toHaveBeenCalledWith(canResume)
+    expect(mocks.stateSetters[10]).toHaveBeenCalledWith(!canResume)
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('guest@gmail.com')
+    if (typeof cleanup === 'function') cleanup()
+  })
+
+  it('匿名旗標已清除仍可更正待驗證 Email，保留同一身分', async () => {
+    const pending = { id: 'guest-pending', is_anonymous: false, email_confirmed_at: null }
+    vi.mocked(localStorage.getItem).mockReturnValue('wrong@gmail.com')
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: pending, access_token: 'guest-token' } }, error: null,
+    } as never)
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}'))
+    vi.stubGlobal('fetch', fetchMock)
+    await submitAuth('register', 'corrected@gmail.com')
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/validate-upgrade-email', expect.objectContaining({
+      body: JSON.stringify({ email: 'corrected@gmail.com' }),
+      headers: expect.objectContaining({ Authorization: 'Bearer guest-token' }),
+    }))
+    expect(supabase.auth.updateUser).toHaveBeenCalledWith(
+      { email: 'corrected@gmail.com' }, { emailRedirectTo: 'https://example.test/app/#/auth' },
+    )
+    expect(localStorage.setItem).toHaveBeenCalledWith('guest-upgrade:guest-pending', 'corrected@gmail.com')
+    expect(supabase.auth.signUp).not.toHaveBeenCalled()
+    expect(mocks.navigate).not.toHaveBeenCalled()
+  })
+
+  it('遠端升級回應遺失前已保留更正後 Email 以供恢復', async () => {
+    const guest = { id: 'guest-interrupted', is_anonymous: true }
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: guest, access_token: 'guest-token' } }, error: null,
+    } as never)
+    vi.mocked(supabase.auth.updateUser).mockRejectedValue(new TypeError('Failed to fetch'))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}')))
+
+    await submitAuth('register', 'Corrected@Gmail.com')
+
+    expect(localStorage.setItem).toHaveBeenCalledWith('guest-upgrade:guest-interrupted', 'corrected@gmail.com')
+    expect(vi.mocked(localStorage.setItem).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(supabase.auth.updateUser).mock.invocationCallOrder[0])
+  })
+
+  it('無法保留升級 Email 時不開始遠端更新', async () => {
+    const guest = { id: 'guest-storage-failed', is_anonymous: true }
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: guest, access_token: 'guest-token' } }, error: null,
+    } as never)
+    vi.mocked(localStorage.setItem).mockImplementation(() => { throw new DOMException('Quota exceeded', 'QuotaExceededError') })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}')))
+
+    await submitAuth('register', 'guest@gmail.com')
+
+    expect(supabase.auth.updateUser).not.toHaveBeenCalled()
+  })
+
+  it('resume submit 重新確認 session，未驗證 Email 不可設定密碼', async () => {
+    const pending = { id: 'guest-pending', is_anonymous: false, email: 'guest@gmail.com', email_confirmed_at: null }
+    mocks.stateValues = ['register', 'guest@gmail.com', 'password123', '', '', false, pending, false, '', true]
+    vi.mocked(localStorage.getItem).mockReturnValue('guest@gmail.com')
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({ data: { session: { user: pending } }, error: null } as never)
+    const { default: AuthPage } = await import('./AuthPage')
+    const form = findForm(AuthPage())
+    if (!form?.props?.onSubmit) throw new Error('找不到註冊表單')
+    await (form.props.onSubmit as (event: { preventDefault: () => void }) => Promise<void>)({ preventDefault: vi.fn() })
+
+    expect(supabase.auth.updateUser).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[8]).toHaveBeenCalledWith('請先完成 Email 驗證，再回來設定密碼。')
+    expect(localStorage.removeItem).not.toHaveBeenCalled()
+    expect(mocks.navigate).not.toHaveBeenCalled()
+  })
+
+  it('resume submit 只接受 marker 對應的已驗證 Email', async () => {
+    const confirmed = { id: 'guest-confirmed', is_anonymous: false, email: 'guest@gmail.com', email_confirmed_at: '2026-09-20T00:00:00Z' }
+    mocks.stateValues = ['register', 'guest@gmail.com', 'password123', '', '', false, confirmed, false, '', true]
+    vi.mocked(localStorage.getItem).mockReturnValue('guest@gmail.com')
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({ data: { session: { user: confirmed } }, error: null } as never)
+    const { default: AuthPage } = await import('./AuthPage')
+    const form = findForm(AuthPage())
+    if (!form?.props?.onSubmit) throw new Error('找不到註冊表單')
+    await (form.props.onSubmit as (event: { preventDefault: () => void }) => Promise<void>)({ preventDefault: vi.fn() })
+
+    expect(supabase.auth.updateUser).toHaveBeenCalledExactlyOnceWith({ password: 'password123' })
+    expect(localStorage.removeItem).toHaveBeenCalledWith('guest-upgrade:guest-confirmed')
+    expect(mocks.navigate).toHaveBeenCalledWith('/', { replace: true })
+  })
+
+  it.each(['pending', 'rejected'])('初始 getUser %s 時，已驗證 session 直接完成升級而非重新 signUp', async status => {
+    const confirmed = { id: 'guest-confirmed', is_anonymous: false, email: 'guest@gmail.com', email_confirmed_at: '2026-09-20T00:00:00Z' }
+    mocks.stateValues = ['register', 'guest@gmail.com', 'password123', '', '', false]
+    vi.mocked(localStorage.getItem).mockReturnValue('guest@gmail.com')
+    vi.mocked(supabase.auth.getUser).mockImplementation(() => status === 'rejected'
+      ? Promise.reject(new TypeError('Failed to fetch'))
+      : new Promise(() => {}))
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({ data: { session: { user: confirmed } }, error: null } as never)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}')))
+    const { default: AuthPage } = await import('./AuthPage')
+    const form = findForm(AuthPage())
+    const cleanup = mocks.effects[0]()
+    if (!form?.props?.onSubmit) throw new Error('找不到註冊表單')
+    await (form.props.onSubmit as (event: { preventDefault: () => void }) => Promise<void>)({ preventDefault: vi.fn() })
+
+    expect(supabase.auth.updateUser).toHaveBeenCalledExactlyOnceWith({ password: 'password123' })
+    expect(supabase.auth.signUp).not.toHaveBeenCalled()
+    expect(localStorage.removeItem).toHaveBeenCalledWith('guest-upgrade:guest-confirmed')
+    expect(mocks.navigate).toHaveBeenCalledWith('/', { replace: true })
+    if (typeof cleanup === 'function') cleanup()
+  })
+
   it('登入與註冊按鈕都有至少 44px 的 class', async () => {
     const { default: AuthPage } = await import('./AuthPage')
     const tree = AuthPage()
     for (const label of ['登入', '註冊']) {
       expect(findButton(tree, label)?.props?.className).toContain('min-h-11')
     }
+  })
+
+  it('註冊提示連結直接開啟註冊模式', async () => {
+    mocks.authQuery = 'mode=register'
+    const { default: AuthPage } = await import('./AuthPage')
+    const html = renderToStaticMarkup(AuthPage())
+    expect(html).toContain('建立帳號')
+    expect(html).toContain('顯示名稱')
   })
 
   it('實際切換模式時保留 email、清空密碼與既有錯誤', async () => {
@@ -231,5 +498,49 @@ describe('AuthPage segmented control', () => {
     ;(button.props.onClick as () => void)()
 
     for (const setter of mocks.stateSetters) expect(setter).not.toHaveBeenCalled()
+  })
+
+  it('完成 Email 驗證的升級流程切回登入時可輸入既有帳號 Email', async () => {
+    const upgraded = { id: 'guest-confirmed', is_anonymous: false, email: 'guest@gmail.com', email_confirmed_at: '2026-09-20T00:00:00Z' }
+    mocks.stateValues = ['register', 'guest@gmail.com', 'password123', '', '', false, upgraded, false, '', true]
+    vi.mocked(localStorage.getItem).mockReturnValue('guest@gmail.com')
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: upgraded, access_token: 'guest-token' } }, error: null,
+    } as never)
+    vi.mocked(supabase.auth.signInWithPassword).mockResolvedValue({ data: { user: null, session: null }, error: null } as never)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}')))
+    const { default: AuthPage } = await import('./AuthPage')
+    const tree = AuthPage()
+
+    const button = findButton(tree, '登入')
+    if (!button?.props?.onClick) throw new Error('找不到登入按鈕')
+    ;(button.props.onClick as () => void)()
+    expect(mocks.stateSetters[0]).toHaveBeenCalledWith('login')
+
+    mocks.stateValues[0] = 'login'
+    mocks.stateIndex = 0
+    const loginTree = AuthPage()
+    const emailInput = findById(loginTree, 'email')
+    if (!emailInput?.props?.onChange) throw new Error('登入模式缺少 Email 欄位')
+    ;(emailInput.props.onChange as (event: { target: { value: string } }) => void)({
+      target: { value: 'member@example.com' },
+    })
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('member@example.com')
+
+    mocks.stateValues[1] = 'member@example.com'
+    mocks.stateIndex = 0
+    const form = findForm(AuthPage())
+    if (!form?.props?.onSubmit) throw new Error('找不到登入表單')
+    await (form.props.onSubmit as (event: { preventDefault: () => void }) => Promise<void>)({ preventDefault: vi.fn() })
+    expect(mocks.stateSetters[7]).toHaveBeenCalledWith(true)
+
+    mocks.stateValues[7] = true
+    mocks.stateIndex = 0
+    const confirmButton = findButton(AuthPage(), '離房並登入')
+    if (!confirmButton?.props?.onClick) throw new Error('找不到離房並登入按鈕')
+    await (confirmButton.props.onClick as () => Promise<void>)()
+    expect(supabase.auth.signInWithPassword).toHaveBeenCalledExactlyOnceWith({
+      email: 'member@example.com', password: 'password123',
+    })
   })
 })
