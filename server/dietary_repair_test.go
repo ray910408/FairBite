@@ -7,14 +7,9 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestLegacyDietaryRepair(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; requires local Supabase")
-	}
 	// Read the actual operational SQL. Supabase's pgTAP runner only mounts tests/,
 	// so a psql include outside that directory would not run in CI.
 	repair, err := os.ReadFile("../supabase/repairs/20260906_legacy_dietary.sql")
@@ -22,11 +17,7 @@ func TestLegacyDietaryRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
+	pool := newTestPool(t, ctx)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)

@@ -280,37 +280,37 @@ func signHS256(t *testing.T, secret, sub string) string {
 }
 
 func TestAuthMiddleware(t *testing.T) {
-	t.Setenv("SUPABASE_JWT_SECRET", "test-secret-test-secret-test-secret!")
-	t.Setenv("SUPABASE_JWKS_URL", "") // 外部環境設了就會誤走 JWKS 路徑，HS256 測試必失敗
-	v, err := NewVerifier()
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := v.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(UserID(r)))
-	}))
-
-	r1 := httptest.NewRequest("GET", "/x", nil)
-	w1 := httptest.NewRecorder()
-	h.ServeHTTP(w1, r1)
-	if w1.Code != http.StatusUnauthorized {
-		t.Fatalf("no token: want 401 got %d", w1.Code)
-	}
-
-	r2 := httptest.NewRequest("GET", "/x", nil)
-	r2.Header.Set("Authorization", "Bearer not-a-jwt")
-	w2 := httptest.NewRecorder()
-	h.ServeHTTP(w2, r2)
-	if w2.Code != http.StatusUnauthorized {
-		t.Fatalf("bad token: want 401 got %d", w2.Code)
-	}
-
-	r3 := httptest.NewRequest("GET", "/x", nil)
-	r3.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", "user-123"))
-	w3 := httptest.NewRecorder()
-	h.ServeHTTP(w3, r3)
-	if w3.Code != http.StatusOK || w3.Body.String() != "user-123" {
-		t.Fatalf("valid token: got %d %q", w3.Code, w3.Body.String())
+	const secret = "test-secret-test-secret-test-secret!"
+	t.Setenv("SUPABASE_JWT_SECRET", secret)
+	t.Setenv("SUPABASE_JWKS_URL", "")
+	for _, tc := range []struct {
+		name, token string
+		wantStatus  int
+		wantUser    string
+	}{
+		{"missing token", "", http.StatusUnauthorized, ""},
+		{"malformed token", "not-a-jwt", http.StatusUnauthorized, ""},
+		{"valid token exposes subject", signHS256(t, secret, "user-123"), http.StatusOK, "user-123"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := NewVerifier()
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := v.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, UserID(r)) }))
+			r := httptest.NewRequest("GET", "/x", nil)
+			if tc.token != "" {
+				r.Header.Set("Authorization", "Bearer "+tc.token)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantUser != "" && w.Body.String() != tc.wantUser {
+				t.Fatalf("subject = %q, want %q", w.Body.String(), tc.wantUser)
+			}
+		})
 	}
 }
 

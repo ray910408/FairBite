@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,16 +18,19 @@ import (
 
 func TestGoogleSearchRequestBudget(t *testing.T) {
 	for _, tc := range []struct {
+		name  string
 		terms []string
 		want  int
 	}{
-		{nil, 2},
-		{[]string{"taiwanese"}, 6},
-		{[]string{"taiwanese", "taiwanese", "ramen", "unknown"}, 8},
+		{"nearby only", nil, 2},
+		{"Taiwanese multi-query branch", []string{"taiwanese"}, 6},
+		{"deduplicate terms and ignore unknown", []string{"taiwanese", "taiwanese", "ramen", "unknown"}, 8},
 	} {
-		if got := googleSearchRequestBudget(tc.terms); got != tc.want {
-			t.Fatalf("budget(%v) = %d, want %d", tc.terms, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := googleSearchRequestBudget(tc.terms); got != tc.want {
+				t.Fatalf("budget(%v)=%d, want %d", tc.terms, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -82,16 +84,8 @@ func (*paidCountingProvider) Source() string { return "google" }
 
 func quotaTestDB(t *testing.T) (*pgxpool.Pool, string) {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; database integration test requires local Supabase")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
+	pool := newTestPool(t, ctx)
 	var uid string
 	if err := pool.QueryRow(ctx, `insert into auth.users (id, email) values (gen_random_uuid(), gen_random_uuid()::text || '@quota.test') returning id`).Scan(&uid); err != nil {
 		t.Fatal(err)

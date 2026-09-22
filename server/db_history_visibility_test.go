@@ -2,27 +2,16 @@ package main
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ADR-0007 前置：吃過的店在房刪後仍可讀（restaurants_select 的 dining_history 條款）。
 // room_id = null 模擬「房已刪」（0011 set null 後的長期形態）。
 func TestDinedRestaurantVisibleWithoutRoomMembership(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const diner = "a7a7a7a7-a7a7-a7a7-a7a7-a7a7a7a7a7a7"
 	const stranger = "b7b7b7b7-b7b7-b7b7-b7b7-b7b7b7b7b7b7"
@@ -49,7 +38,8 @@ func TestDinedRestaurantVisibleWithoutRoomMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	countAs := func(uid string) int {
+	countAs := func(t *testing.T, uid string) int {
+		t.Helper()
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -71,10 +61,17 @@ func TestDinedRestaurantVisibleWithoutRoomMembership(t *testing.T) {
 		return n
 	}
 
-	if got := countAs(diner); got != 1 {
-		t.Fatalf("吃過的人應看得到餐廳（無 membership）：got %d rows, want 1", got)
-	}
-	if got := countAs(stranger); got != 0 {
-		t.Fatalf("沒吃過也非成員的人不應看到：got %d rows, want 0", got)
+	for _, tc := range []struct {
+		name, uid string
+		want      int
+	}{
+		{"diner retains access after room deletion", diner, 1},
+		{"stranger has no access", stranger, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := countAs(t, tc.uid); got != tc.want {
+				t.Fatalf("visible rows=%d, want %d", got, tc.want)
+			}
+		})
 	}
 }

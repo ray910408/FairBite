@@ -243,9 +243,11 @@ func TestSignupEmailLiveDNS(t *testing.T) {
 		{"probe@example.com", "signup_email_no_mx"},
 		{"probe@fairbite-mx-check-nonexistent-20260912.com", "signup_email_no_mx"},
 	} {
-		code := checkSignupEmail(context.Background(), tc.email, net.DefaultResolver.LookupMX)
-		if code != tc.want {
-			t.Errorf("%s: code=%q, want %q", tc.email, code, tc.want)
-		}
+		t.Run(tc.email, func(t *testing.T) {
+			code := checkSignupEmail(context.Background(), tc.email, net.DefaultResolver.LookupMX)
+			if code != tc.want {
+				t.Errorf("%s: code=%q, want %q", tc.email, code, tc.want)
+			}
+		})
 	}
 }

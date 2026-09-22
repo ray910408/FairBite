@@ -84,61 +84,35 @@ func TestBudgetMaxGooglePriceLevel(t *testing.T) {
 }
 
 func TestBudgetGooglePriceLevelFilter(t *testing.T) {
-	for _, tc := range []struct {
+	type testCase struct {
 		name               string
 		budget, priceLevel int
 		wantExcluded       bool
-	}{
-		{"同層級保留", 200, 1, false},
-		{"高於偏好排除", 200, 2, true},
-		{"未知價位保留", 100, PriceLevelUnknown, false},
-	} {
+	}
+	cases := []testCase{
+		{"same price level kept", 200, 1, false},
+		{"higher than preference excluded", 200, 2, true},
+		{"unknown price kept", 100, PriceLevelUnknown, false},
+	}
+	for budget := 100; budget <= 1600; budget += 100 {
+		cases = append(cases, testCase{fmt.Sprintf("free at budget %d", budget), budget, 0, false})
+	}
+	for level := 0; level <= 4; level++ {
+		cases = append(cases, testCase{fmt.Sprintf("unset preference at level %d", level), 50, level, false})
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			res := Evaluate(EngineInput{
-				Restaurants: []Restaurant{rest(func(r *Restaurant) { r.PriceLevel = tc.priceLevel })},
-				Members:     []Member{member(func(m *Member) { m.BudgetMax = tc.budget })},
-				Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
-			})
-			if got := len(res.Excluded) == 1; got != tc.wantExcluded {
-				t.Fatalf("excluded = %t, want %t: kept=%+v excluded=%+v", got, tc.wantExcluded, res.Kept, res.Excluded)
-			}
+			res := Evaluate(EngineInput{Restaurants: []Restaurant{rest(func(r *Restaurant) { r.PriceLevel = tc.priceLevel })}, Members: []Member{member(func(m *Member) { m.BudgetMax = tc.budget })}, Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170})
 			if tc.wantExcluded {
+				if len(res.Excluded) != 1 || len(res.Kept) != 0 || !hasKind(res.Excluded[0].Kinds, "budget") {
+					t.Fatalf("expected budget exclusion: %+v", res)
+				}
 				reason := res.Excluded[0].Reason
 				if strings.Contains(reason, "NT$") || !strings.Contains(reason, "偏好") {
-					t.Errorf("預算排除理由必須是 qualitative labels，got %q", reason)
+					t.Errorf("expected qualitative price label, got %q", reason)
 				}
-			}
-		})
-	}
-}
-
-func TestBudgetGoogleFreePriceLevelNeverExcludes(t *testing.T) {
-	for budget := 100; budget <= 1600; budget += 100 {
-		t.Run(fmt.Sprintf("%d", budget), func(t *testing.T) {
-			res := Evaluate(EngineInput{
-				Restaurants: []Restaurant{rest(func(r *Restaurant) { r.PriceLevel = 0 })},
-				Members:     []Member{member(func(m *Member) { m.BudgetMax = budget })},
-				Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
-			})
-			if len(res.Kept) != 1 {
-				t.Fatalf("Google level 0 在偏好刻度 %d 應保留，got excluded=%+v", budget, res.Excluded)
-			}
-		})
-	}
-}
-
-func TestUnsetBudgetPreferenceNeverExcludes(t *testing.T) {
-	// legacy budget_max < 100 對應 PriceLevelUnknown＝未設定，UI 也顯示「未設定」。
-	// 未設定不得參與硬排除，否則 -1 會排掉每一個已知價位（含免費的 0）。
-	for level := 0; level <= 4; level++ {
-		t.Run(fmt.Sprintf("level%d", level), func(t *testing.T) {
-			res := Evaluate(EngineInput{
-				Restaurants: []Restaurant{rest(func(r *Restaurant) { r.PriceLevel = level })},
-				Members:     []Member{member(func(m *Member) { m.BudgetMax = 50 })},
-				Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
-			})
-			if len(res.Kept) != 1 {
-				t.Fatalf("未設定價位偏好不應排除 Google level %d，got excluded=%+v", level, res.Excluded)
+			} else if len(res.Kept) != 1 || len(res.Excluded) != 0 {
+				t.Fatalf("expected candidate kept: %+v", res)
 			}
 		})
 	}
@@ -264,42 +238,35 @@ func TestScoringFactors(t *testing.T) {
 	}
 }
 
-func TestDistFactorClamp(t *testing.T) {
-	in := EngineInput{Members: []Member{member(nil)},
-		CenterLat: 25.0478, CenterLng: 121.5170}
-	near := rest(func(r *Restaurant) { r.Lat = 25.0478; r.Lng = 121.5170 }) // 0m → ≤5min
-	if e := distFactor(near, in); e.Mult != DistMultBest {
-		t.Errorf("近距離應夾至 %v，got %v", DistMultBest, e.Mult)
-	}
-	far := rest(func(r *Restaurant) { r.Lat = 25.0478; r.Lng = 121.5430 }) // ~2.6km 步行 ~35min → ≥25min
-	if e := distFactor(far, in); e.Mult != DistMultWorst {
-		t.Errorf("遠距離應夾至 %v，got %v", DistMultWorst, e.Mult)
-	}
-}
-
-func TestDistOverheadAndSlowest(t *testing.T) {
-	// 兩位成員：步行 vs 大眾運輸。距離 ~1500m：
-	// 步行 0 + 1500/75 = 20 分；大眾運輸 8 + 1500/200 = 15.5 分 → 最慢是步行
-	in := EngineInput{
-		Members: []Member{
-			member(nil), // walking
-			member(func(m *Member) { m.UserID = "u2"; m.Transport = "transit" }),
-		},
-		CenterLat: 25.0478, CenterLng: 121.5170,
-	}
-	r := rest(func(r *Restaurant) { r.Lat = 25.0478; r.Lng = 121.5319 }) // 東移 ~1500m
-	e := distFactor(r, in)
-	if !strings.Contains(e.Reason, "最慢") || !strings.Contains(e.Reason, "步行") {
-		t.Errorf("reason 應標示最慢成員與交通方式：%q", e.Reason)
-	}
-	// transit 的 overhead 生效：純除法是 7.5 分，加 8 分 overhead 後 >15 分
-	solo := EngineInput{
-		Members:   []Member{member(func(m *Member) { m.Transport = "transit" })},
-		CenterLat: 25.0478, CenterLng: 121.5170,
-	}
-	e2 := distFactor(r, solo)
-	if !strings.Contains(e2.Reason, "16 分鐘") && !strings.Contains(e2.Reason, "15 分鐘") {
-		t.Errorf("transit overhead 應計入估時：%q", e2.Reason)
+func TestDistFactor(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		lng           float64
+		members       []Member
+		wantMult      float64
+		wantReasons   []string
+		checkOverhead bool
+	}{
+		{"near clamp", 121.5170, []Member{member(nil)}, DistMultBest, nil, false},
+		{"far clamp", 121.5430, []Member{member(nil)}, DistMultWorst, nil, false},
+		{"slowest member", 121.5319, []Member{member(nil), member(func(m *Member) { m.UserID = "u2"; m.Transport = "transit" })}, 0, []string{"最慢", "步行"}, false},
+		{"transit overhead", 121.5319, []Member{member(func(m *Member) { m.Transport = "transit" })}, 0, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := rest(func(r *Restaurant) { r.Lat = 25.0478; r.Lng = tc.lng })
+			entry := distFactor(r, EngineInput{Members: tc.members, CenterLat: 25.0478, CenterLng: 121.5170})
+			if tc.wantMult != 0 && entry.Mult != tc.wantMult {
+				t.Fatalf("mult = %v, want %v", entry.Mult, tc.wantMult)
+			}
+			for _, reason := range tc.wantReasons {
+				if !strings.Contains(entry.Reason, reason) {
+					t.Errorf("reason %q missing %q", entry.Reason, reason)
+				}
+			}
+			if tc.checkOverhead && !strings.Contains(entry.Reason, "16 分鐘") && !strings.Contains(entry.Reason, "15 分鐘") {
+				t.Fatalf("overhead missing: %q", entry.Reason)
+			}
+		})
 	}
 }
 
@@ -477,63 +444,61 @@ func TestClosingSoonDemoted(t *testing.T) {
 	}
 }
 
-func TestVoteFactor(t *testing.T) {
-	rA := rest(func(r *Restaurant) { r.PlaceID = "a" })
-	rB := rest(func(r *Restaurant) { r.PlaceID = "b" })
-	res := Evaluate(EngineInput{
-		Restaurants: []Restaurant{rA, rB},
-		Members:     []Member{member(nil)},
-		Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
-		Votes: map[string]VoteInfo{"a": {Ups: 2}},
-	})
-	byID := map[string]Candidate{}
-	for _, c := range res.Kept {
-		byID[c.PlaceID] = c
-	}
-	// 每張贊成票 +10%（spec §5）：兩票 → ×1.2
-	want := byID["b"].Score * (1 + 2*VoteBoostPerUp)
-	got := byID["a"].Score
-	if got < want-0.0001 || got > want+0.0001 {
-		t.Errorf("2 張贊成票應 ×%.1f：got %f want %f", 1+2*VoteBoostPerUp, got, want)
-	}
-	for _, c := range res.Kept {
-		if len(c.Trace) != 4 {
-			t.Errorf("%s trace 應有 4 個公開因素，got %d", c.PlaceID, len(c.Trace))
-		}
-	}
-}
-
-func TestVetoExcludes(t *testing.T) {
-	rA := rest(func(r *Restaurant) { r.PlaceID = "a" })
-	rB := rest(func(r *Restaurant) { r.PlaceID = "b" })
-	res := Evaluate(EngineInput{
-		Restaurants: []Restaurant{rA, rB},
-		Members:     []Member{member(nil)},
-		Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
-		Votes: map[string]VoteInfo{"a": {Vetoers: []string{"小明", "小華"}}},
-	})
-	if len(res.Kept) != 1 || res.Kept[0].PlaceID != "b" {
-		t.Fatalf("被否決者應移出轉盤，kept=%+v", res.Kept)
-	}
-	e := res.Excluded[0]
-	if !hasKind(e.Kinds, "veto") {
-		t.Errorf("kind 應含 veto，got %v", e.Kinds)
-	}
-	if e.Reason != "遭 小明、小華 否決（可收回）" {
-		t.Errorf("reason 格式不符：%q", e.Reason)
-	}
-	// 唯一候選機率應為 1
-	if p := res.Kept[0].Probability; p < 0.9999 || p > 1.0001 {
-		t.Errorf("唯一候選機率應為 1，got %f", p)
-	}
-}
-
-func TestNilVotesNeutral(t *testing.T) {
-	res := Evaluate(EngineInput{Restaurants: []Restaurant{rest(nil)},
-		Members: []Member{member(nil)}, Now: lunchMonday,
-		CenterLat: 25.0478, CenterLng: 121.5170})
-	if len(res.Kept) != 1 {
-		t.Fatalf("nil Votes 不應影響保留，got %+v", res.Excluded)
+func TestEvaluateVotes(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		votes map[string]VoteInfo
+		veto  bool
+		boost float64
+		solo  bool
+	}{
+		{"two up votes boost score", map[string]VoteInfo{"a": {Ups: 2}}, false, 1 + 2*VoteBoostPerUp, false},
+		{"veto removes candidate", map[string]VoteInfo{"a": {Vetoers: []string{"小明", "小華"}}}, true, 0, false},
+		{"nil votes keep candidates neutral", nil, false, 1, false},
+		{"solo nil votes", nil, false, 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := rest(func(r *Restaurant) { r.PlaceID = "a" })
+			b := rest(func(r *Restaurant) { r.PlaceID = "b" })
+			restaurants := []Restaurant{a, b}
+			if tc.solo {
+				restaurants = restaurants[:1]
+			}
+			res := Evaluate(EngineInput{Restaurants: restaurants, Members: []Member{member(nil)}, Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170, Votes: tc.votes})
+			if tc.solo {
+				if len(res.Kept) != 1 {
+					t.Fatalf("nil votes excluded solo candidate: %+v", res.Excluded)
+				}
+				return
+			}
+			if tc.veto {
+				if len(res.Kept) != 1 || res.Kept[0].PlaceID != "b" || len(res.Excluded) != 1 {
+					t.Fatalf("veto kept=%+v excluded=%+v", res.Kept, res.Excluded)
+				}
+				e := res.Excluded[0]
+				if !hasKind(e.Kinds, "veto") || e.Reason != "遭 小明、小華 否決（可收回）" {
+					t.Errorf("veto exclusion=%+v", e)
+				}
+				if p := res.Kept[0].Probability; p < 0.9999 || p > 1.0001 {
+					t.Errorf("only candidate probability=%f, want 1", p)
+				}
+				return
+			}
+			if len(res.Kept) != 2 {
+				t.Fatalf("expected both candidates: %+v", res)
+			}
+			byID := map[string]Candidate{}
+			for _, c := range res.Kept {
+				byID[c.PlaceID] = c
+				if len(c.Trace) != 4 {
+					t.Errorf("%s public trace length=%d, want 4", c.PlaceID, len(c.Trace))
+				}
+			}
+			want := byID["b"].Score * tc.boost
+			if got := byID["a"].Score; math.Abs(got-want) > 0.0001 {
+				t.Errorf("score=%f, want %f", got, want)
+			}
+		})
 	}
 }
 
@@ -579,28 +544,22 @@ func TestRecencyFactor(t *testing.T) {
 		{"熟悉檔懲罰減半", RecencyCount{Fresh: 4}, "familiar", 4, 0.65},
 		{"explore 的 recency 與 balanced 等價（探索語意改由 exposure 因素承擔）", RecencyCount{Fresh: 4}, "explore", 4, 0.3},
 		{"空字串視為 balanced", RecencyCount{Fresh: 4}, "", 4, 0.3},
+		{"mixed fresh and fading private reason", RecencyCount{Fresh: 1, Fading: 2}, "balanced", 4, 0.65},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := recencyMult(t, recencyIn(c.rc, c.expl, c.n))
+			in := recencyIn(c.rc, c.expl, c.n)
+			got := recencyMult(t, in)
+			for _, entry := range Evaluate(in).Kept[0].Trace {
+				if entry.Factor == "recency" && entry.Reason != "依群體近期用餐概況調整" {
+					t.Errorf("recency reason=%q", entry.Reason)
+				}
+			}
 			if got < c.want-0.0001 || got > c.want+0.0001 {
 				t.Errorf("want %f got %f", c.want, got)
 			}
 		})
 	}
-}
-
-func TestRecencyReason(t *testing.T) {
-	res := Evaluate(recencyIn(RecencyCount{Fresh: 1, Fading: 2}, "balanced", 4))
-	for _, e := range res.Kept[0].Trace {
-		if e.Factor == "recency" {
-			if e.Reason != "依群體近期用餐概況調整" {
-				t.Errorf("reason 格式不符：%q", e.Reason)
-			}
-			return
-		}
-	}
-	t.Fatal("trace 缺 recency")
 }
 
 // 場上固定放一家「舊店」（Recommended>0）：新店加成只在混合場景有相對意義，
@@ -658,37 +617,27 @@ func TestExposureFactor(t *testing.T) {
 	}
 }
 
-func TestNilExposureNeutral(t *testing.T) {
-	in := exposureIn(ExposureCount{}, "balanced")
-	in.Exposure = nil
-	if _, hasTrace := exposureMult(t, in); hasTrace {
-		t.Fatal("Exposure nil 不應產生 exposure trace")
-	}
-}
-
-// D21/OV#7：全場皆新（區域首搜）時一致加成會被正規化抵銷 → 必須中性、不出虛構 chip
-func TestAllNewCandidatesNeutral(t *testing.T) {
-	in := exposureIn(ExposureCount{}, "balanced")
-	in.Exposure["p-old"] = ExposureCount{} // 對照組也歸零 → 全場皆新
-	if _, hasTrace := exposureMult(t, in); hasTrace {
-		t.Fatal("全場皆新不應產生 exposure trace（加成會被 normalize 抵銷）")
-	}
-}
-
-func TestExposureAllNewSurvivorsNeutralWhenOldCandidateExcluded(t *testing.T) {
-	in := exposureIn(ExposureCount{}, "balanced")
-	in.Restaurants[1].PriceLevel = 4 // p-old 超過成員預算，會在 factor pipeline 前被排除
-	if _, hasTrace := exposureMult(t, in); hasTrace {
-		t.Fatal("所有存活候選皆新時不應讓已排除舊店觸發 exposure trace")
-	}
-}
-
-func TestExposureBaselineTreatsOwnSearchAsNew(t *testing.T) {
-	in := exposureIn(ExposureCount{Recommended: 4}, "balanced")
-	in.ExposureCounted = map[string]bool{"p1": true}
-	got, hasTrace := exposureMult(t, in)
-	if !hasTrace || got != 1.1 {
-		t.Fatalf("Recommended 等於本房 baseline 應視為新店：got %v trace=%v", got, hasTrace)
+func TestExposureContext(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		count     ExposureCount
+		setup     func(*EngineInput)
+		want      float64
+		wantTrace bool
+	}{
+		{"nil history", ExposureCount{}, func(in *EngineInput) { in.Exposure = nil }, 1, false},
+		{"all new", ExposureCount{}, func(in *EngineInput) { in.Exposure["p-old"] = ExposureCount{} }, 1, false},
+		{"excluded old candidate cannot enable bonus", ExposureCount{}, func(in *EngineInput) { in.Restaurants[1].PriceLevel = 4 }, 1, false},
+		{"own search baseline remains new", ExposureCount{Recommended: 4}, func(in *EngineInput) { in.ExposureCounted = map[string]bool{"p1": true} }, 1.1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := exposureIn(tc.count, "balanced")
+			tc.setup(&in)
+			got, hasTrace := exposureMult(t, in)
+			if got != tc.want || hasTrace != tc.wantTrace {
+				t.Fatalf("mult=%v trace=%v, want %v/%v", got, hasTrace, tc.want, tc.wantTrace)
+			}
+		})
 	}
 }
 
@@ -782,119 +731,105 @@ func TestRainFactor(t *testing.T) {
 }
 
 func TestTimeSlotFactor(t *testing.T) {
-	slotMult := func(now time.Time, tags []string) (float64, bool) {
-		res := Evaluate(EngineInput{
-			Restaurants: []Restaurant{rest(func(r *Restaurant) { r.CuisineTags = tags })},
-			Members:     []Member{member(nil)},
-			Now:         now, CenterLat: 25.0478, CenterLng: 121.5170})
-		if len(res.Kept) != 1 {
-			t.Fatalf("應保留，got %+v", res.Excluded)
-		}
-		for _, e := range res.Kept[0].Trace {
-			if e.Factor == "timeslot" {
-				return e.Mult, true
-			}
-		}
-		return 1.0, false
-	}
-	morning := at(time.Monday, 8, 0)
-	if m, ok := slotMult(morning, []string{"breakfast", "taiwanese"}); !ok || m != TimeSlotBoostMult {
-		t.Errorf("早餐時段 breakfast 應加成，got %v %v", m, ok)
-	}
-	if _, ok := slotMult(lunchMonday, []string{"breakfast"}); ok {
-		t.Error("午餐時段不在任何 slot，不應有 timeslot trace")
-	}
-	if _, ok := slotMult(morning, []string{"japanese"}); ok {
-		t.Error("早餐時段未命中 tag 不應有 trace")
-	}
-	// D23：晚餐 slot 不存在（hotpot 無真實 tag 來源），晚上不得有任何 timeslot trace
-	if _, ok := slotMult(at(time.Monday, 19, 0), []string{"hotpot"}); ok {
-		t.Error("晚餐時段已移除，不應有 trace")
-	}
-	// 時段邊界（2026-08-10 eng review Test Review）
-	for _, c := range []struct {
-		name string
-		now  time.Time
-		tags []string
-		want bool
+	for _, tc := range []struct {
+		name      string
+		now       time.Time
+		tags      []string
+		wantTrace bool
 	}{
-		{"05:59 不在早餐時段", at(time.Monday, 5, 59), []string{"breakfast"}, false},
-		{"06:00 起算", at(time.Monday, 6, 0), []string{"breakfast"}, true},
-		{"10:59 仍算", at(time.Monday, 10, 59), []string{"breakfast"}, true},
+		{"早餐命中", at(time.Monday, 8, 0), []string{"breakfast", "taiwanese"}, true},
+		{"午餐不加成", lunchMonday, []string{"breakfast"}, false},
+		{"早餐未命中", at(time.Monday, 8, 0), []string{"japanese"}, false},
+		{"晚餐時段已移除", at(time.Monday, 19, 0), []string{"hotpot"}, false},
+		{"05:59 尚未開始", at(time.Monday, 5, 59), []string{"breakfast"}, false},
+		{"06:00 開始", at(time.Monday, 6, 0), []string{"breakfast"}, true},
+		{"10:59 尚未結束", at(time.Monday, 10, 59), []string{"breakfast"}, true},
 		{"11:00 結束", at(time.Monday, 11, 0), []string{"breakfast"}, false},
 	} {
-		if _, ok := slotMult(c.now, c.tags); ok != c.want {
-			t.Errorf("%s: trace presence = %v, want %v", c.name, ok, c.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			res := Evaluate(EngineInput{Restaurants: []Restaurant{rest(func(r *Restaurant) { r.CuisineTags = tc.tags })}, Members: []Member{member(nil)}, Now: tc.now, CenterLat: 25.0478, CenterLng: 121.5170})
+			if len(res.Kept) != 1 {
+				t.Fatalf("expected kept candidate: %+v", res.Excluded)
+			}
+			found := false
+			for _, e := range res.Kept[0].Trace {
+				if e.Factor == "timeslot" {
+					found = true
+					if e.Mult != TimeSlotBoostMult {
+						t.Errorf("mult = %v, want %v", e.Mult, TimeSlotBoostMult)
+					}
+				}
+			}
+			if found != tc.wantTrace {
+				t.Fatalf("trace presence = %v, want %v", found, tc.wantTrace)
+			}
+		})
 	}
 }
 
 func TestSatisfactionEMA(t *testing.T) {
-	if got := satisfactionEMA([]float64{1}); got != 1 {
-		t.Fatalf("單樣本即初值，got %v", got)
-	}
-	// 由舊到新折入：初值 1.0，新樣本 0.0 → 0.3*0 + 0.7*1 = 0.7
-	if got := satisfactionEMA([]float64{1, 0}); got < 0.699 || got > 0.701 {
-		t.Fatalf("got %v, want 0.7", got)
+	for _, tc := range []struct {
+		name            string
+		samples         []float64
+		want, tolerance float64
+	}{
+		{"single sample initializes EMA", []float64{1}, 1, 0},
+		{"fold oldest to newest", []float64{1, 0}, 0.7, 0.001},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := satisfactionEMA(tc.samples); math.Abs(got-tc.want) > tc.tolerance {
+				t.Fatalf("EMA = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
 func TestPrefFairnessBoost(t *testing.T) {
-	in := EngineInput{
-		Restaurants: []Restaurant{rest(nil)}, // japanese
-		Members: []Member{
-			member(nil), // u1 小明 japanese
-			member(func(m *Member) { m.UserID = "u2"; m.DisplayName = "小華"; m.Cuisines = []string{"taiwanese"} }),
-		},
-		Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
-	}
-	prefMult := func(in EngineInput) (float64, string) {
-		for _, e := range Evaluate(in).Kept[0].Trace {
-			if e.Factor == "preference" {
-				return e.Mult, e.Reason
+	for _, tc := range []struct {
+		name                    string
+		satisfaction            map[string]float64
+		emptyFirst, emptySecond bool
+		want                    float64
+		wantFairness            bool
+	}{
+		{"無資料", nil, false, false, 1.05, false},
+		{"最低者加重且匿名", map[string]float64{"u1": 0.2, "u2": 0.8}, false, false, 1.2, true},
+		{"差距不足", map[string]float64{"u1": 0.50, "u2": 0.55}, false, false, 1.05, false},
+		{"只有單人資料", map[string]float64{"u1": 0.2}, false, false, 1.05, false},
+		{"最低者空偏好不宣告校正", map[string]float64{"u1": 0.1, "u2": 0.9}, true, false, 0, false},
+		{"空偏好者仍納入比較", map[string]float64{"u1": 0.2, "u2": 0.8}, false, true, 1.2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ms := []Member{member(nil), member(func(m *Member) { m.UserID = "u2"; m.DisplayName = "小華"; m.Cuisines = []string{"taiwanese"} })}
+			if tc.emptyFirst {
+				ms[0].Cuisines = nil
 			}
-		}
-		t.Fatal("trace 缺 preference 因素")
-		return 0, ""
-	}
-	// 無滿足度資料：一半命中 → 0.6 + 0.9*0.5 = 1.05
-	if m, reason := prefMult(in); m < 1.049 || m > 1.051 || strings.Contains(reason, "公平") {
-		t.Fatalf("無資料不應校正，got %v %q", m, reason)
-	}
-	// u1 最不滿足（且差距 ≥ FairnessMinGap）→ u1 權重 2：ratio 2/3 → 0.6 + 0.9*(2/3) = 1.2
-	// trace 匿名（D7）：說有校正、不說是誰
-	in.Satisfaction = map[string]float64{"u1": 0.2, "u2": 0.8}
-	if m, reason := prefMult(in); m < 1.199 || m > 1.201 ||
-		!strings.Contains(reason, "公平校正") || strings.Contains(reason, "小明") {
-		t.Fatalf("應匿名加重 u1，got %v %q", m, reason)
-	}
-	// 差距小於 FairnessMinGap → 不校正
-	in.Satisfaction = map[string]float64{"u1": 0.50, "u2": 0.55}
-	if m, _ := prefMult(in); m < 1.049 || m > 1.051 {
-		t.Fatalf("差距不足不應校正，got %v", m)
-	}
-	// 只有一人有 EMA → 不校正（沒得比較）
-	in.Satisfaction = map[string]float64{"u1": 0.2}
-	if m, _ := prefMult(in); m < 1.049 || m > 1.051 {
-		t.Fatalf("單人資料不應校正，got %v", m)
-	}
-	// D22/OV#8：最低者沒填偏好 → 加重是 no-op，不選拔、不宣告假校正
-	in.Members[0].Cuisines = nil // u1 空偏好
-	in.Satisfaction = map[string]float64{"u1": 0.1, "u2": 0.9}
-	if _, reason := prefMult(in); strings.Contains(reason, "公平校正") {
-		t.Fatalf("空偏好成員不應觸發公平校正宣告，got %q", reason)
-	}
-	// 空偏好者仍應計入比較域：u1 有偏好且較不滿足時，必須加重 u1。
-	in.Members[0].Cuisines = []string{"japanese"}
-	in.Members[1].Cuisines = nil
-	in.Satisfaction = map[string]float64{"u1": 0.2, "u2": 0.8}
-	if m, reason := prefMult(in); m < 1.199 || m > 1.201 || !strings.Contains(reason, "公平校正") {
-		t.Fatalf("混合偏好房應加重 u1，got %v %q", m, reason)
+			if tc.emptySecond {
+				ms[1].Cuisines = nil
+			}
+			result := Evaluate(EngineInput{Restaurants: []Restaurant{rest(nil)}, Members: ms, Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170, Satisfaction: tc.satisfaction})
+			if len(result.Kept) != 1 {
+				t.Fatalf("expected kept candidate: %+v", result)
+			}
+			for _, e := range result.Kept[0].Trace {
+				if e.Factor != "preference" {
+					continue
+				}
+				if tc.want != 0 && math.Abs(e.Mult-tc.want) > 0.001 {
+					t.Errorf("mult = %v, want %v", e.Mult, tc.want)
+				}
+				if strings.Contains(e.Reason, "公平") != tc.wantFairness || (tc.wantFairness && (!strings.Contains(e.Reason, "公平校正") || strings.Contains(e.Reason, "小明"))) {
+					t.Errorf("unexpected fairness reason: %q", e.Reason)
+				}
+				return
+			}
+			t.Fatal("trace 缺 preference 因素")
+		})
 	}
 }
 
 func TestNewFactorsChangeOutcome(t *testing.T) {
-	probOf := func(in EngineInput, key string) float64 {
+	probOf := func(t *testing.T, in EngineInput, key string) float64 {
 		t.Helper()
 		for _, c := range Evaluate(in).Kept {
 			if c.PlaceID == key {
@@ -911,138 +846,121 @@ func TestNewFactorsChangeOutcome(t *testing.T) {
 			Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170}
 	}
 
-	t.Run("大雨天讓遠的步行選項掉 ≥5%", func(t *testing.T) {
-		dry, wet := base(), base()
-		wet.Weather = &Weather{RainMM: 5}
-		if diff := probOf(dry, "far") - probOf(wet, "far"); diff < 0.05 {
-			t.Fatalf("weather 位移不足：%v", diff)
-		}
-	})
-	t.Run("explore 檔新出現店家加成 ≥3%", func(t *testing.T) {
-		off, on := base(), base()
-		on.Exploration = "explore"
-		on.Exposure = map[string]ExposureCount{"near": {}, "far": {Recommended: 5}}
-		if diff := probOf(on, "near") - probOf(off, "near"); diff < 0.03 {
-			t.Fatalf("new-store 位移不足：%v", diff)
-		}
-	})
-	t.Run("人均熟店降權 ≥2%（spec 輕降權）", func(t *testing.T) {
-		off, on := base(), base()
-		on.Exposure = map[string]ExposureCount{"near": {Recommended: 30, Chosen: 20}, "far": {Recommended: 30}}
-		if diff := probOf(off, "near") - probOf(on, "near"); diff < 0.02 {
-			t.Fatalf("chosen-penalty 位移不足：%v", diff)
-		}
-	})
-	t.Run("早餐時段加成 ≥3%", func(t *testing.T) {
-		bf := rest(func(r *Restaurant) { r.PlaceID = "bf"; r.CuisineTags = []string{"breakfast", "japanese"} })
-		off, on := base(), base()
-		off.Restaurants = []Restaurant{near, bf}
-		on.Restaurants = []Restaurant{near, bf}
-		on.Now = at(time.Monday, 8, 0)
-		if diff := probOf(on, "bf") - probOf(off, "bf"); diff < 0.03 {
-			t.Fatalf("timeslot 位移不足：%v", diff)
-		}
-	})
-	t.Run("四人房公平校正拉抬最低者偏好 ≥4%", func(t *testing.T) {
-		jp := rest(func(r *Restaurant) { r.PlaceID = "jp" })
-		tw := rest(func(r *Restaurant) { r.PlaceID = "tw"; r.CuisineTags = []string{"taiwanese"} })
-		mk := func() EngineInput {
-			return EngineInput{Restaurants: []Restaurant{jp, tw},
-				Members: []Member{member(nil),
-					member(func(m *Member) { m.UserID = "u3" }),
-					member(func(m *Member) { m.UserID = "u4"; m.Cuisines = []string{"taiwanese"} }),
-					member(func(m *Member) { m.UserID = "u2"; m.Cuisines = []string{"taiwanese"} })},
-				Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170}
-		}
-		off, on := mk(), mk()
-		on.Satisfaction = map[string]float64{"u1": 0.2, "u2": 0.8}
-		if diff := probOf(on, "jp") - probOf(off, "jp"); diff < 0.04 {
-			t.Fatalf("fairness 位移不足：%v", diff)
-		}
-	})
+	for _, tc := range []struct {
+		name, key string
+		minimum   float64
+		decrease  bool
+		inputs    func() (EngineInput, EngineInput)
+	}{
+		{"heavy rain demotes distant walking option", "far", 0.05, true, func() (EngineInput, EngineInput) {
+			off, on := base(), base()
+			on.Weather = &Weather{RainMM: 5}
+			return off, on
+		}},
+		{"explore boosts new restaurant", "near", 0.03, false, func() (EngineInput, EngineInput) {
+			off, on := base(), base()
+			on.Exploration = "explore"
+			on.Exposure = map[string]ExposureCount{"near": {}, "far": {Recommended: 5}}
+			return off, on
+		}},
+		{"per-capita chosen penalty", "near", 0.02, true, func() (EngineInput, EngineInput) {
+			off, on := base(), base()
+			on.Exposure = map[string]ExposureCount{"near": {Recommended: 30, Chosen: 20}, "far": {Recommended: 30}}
+			return off, on
+		}},
+		{"breakfast time boost", "bf", 0.03, false, func() (EngineInput, EngineInput) {
+			bf := rest(func(r *Restaurant) { r.PlaceID = "bf"; r.CuisineTags = []string{"breakfast", "japanese"} })
+			off, on := base(), base()
+			off.Restaurants = []Restaurant{near, bf}
+			on.Restaurants = []Restaurant{near, bf}
+			on.Now = at(time.Monday, 8, 0)
+			return off, on
+		}},
+		{"four-person fairness boosts least satisfied preference", "jp", 0.04, false, func() (EngineInput, EngineInput) {
+			mk := func() EngineInput {
+				return EngineInput{
+					Restaurants: []Restaurant{rest(func(r *Restaurant) { r.PlaceID = "jp" }), rest(func(r *Restaurant) { r.PlaceID = "tw"; r.CuisineTags = []string{"taiwanese"} })},
+					Members:     []Member{member(nil), member(func(m *Member) { m.UserID = "u3" }), member(func(m *Member) { m.UserID = "u4"; m.Cuisines = []string{"taiwanese"} }), member(func(m *Member) { m.UserID = "u2"; m.Cuisines = []string{"taiwanese"} })},
+					Now:         lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+				}
+			}
+			off, on := mk(), mk()
+			on.Satisfaction = map[string]float64{"u1": 0.2, "u2": 0.8}
+			return off, on
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			off, on := tc.inputs()
+			diff := probOf(t, on, tc.key) - probOf(t, off, tc.key)
+			if tc.decrease {
+				diff = -diff
+			}
+			if diff < tc.minimum {
+				t.Fatalf("probability shift=%v, want at least %v", diff, tc.minimum)
+			}
+		})
+	}
 }
 
 func TestCuisineFilterAndQueryMatches(t *testing.T) {
-	now := at(time.Monday, 12, 0)
 	ramenFan := Member{UserID: "u1", DisplayName: "小明", BudgetMax: 1600, Cuisines: []string{"ramen"}, MaxDistanceM: 3000, Transport: "walking"}
 	noPref := Member{UserID: "u2", DisplayName: "無偏好", BudgetMax: 1600, MaxDistanceM: 3000, Transport: "walking"}
+	taiwaneseFan := Member{UserID: "u-tw", DisplayName: "台菜", BudgetMax: 1600, Cuisines: []string{"taiwanese"}, MaxDistanceM: 3000, Transport: "walking"}
+	veg := Member{UserID: "u4", DisplayName: "吃素", BudgetMax: 1600, Dietary: []string{"vegetarian"}, MaxDistanceM: 3000, Transport: "walking"}
 	tagged := Restaurant{PlaceID: "p-tag", Name: "正牌拉麵", CuisineTags: []string{"japanese", "ramen"}, PriceLevel: 1, Hours: daily([2]int{0, 1440})}
-	matched := Restaurant{PlaceID: "p-qm", Name: "麵框框", CuisineTags: nil, QueryMatches: []string{"ramen"}, PriceLevel: 1, Hours: daily([2]int{0, 1440})}
+	matched := Restaurant{PlaceID: "p-qm", Name: "麵框框", QueryMatches: []string{"ramen"}, PriceLevel: 1, Hours: daily([2]int{0, 1440})}
 	other := Restaurant{PlaceID: "p-other", Name: "無關店", CuisineTags: []string{"korean"}, PriceLevel: 1, Hours: daily([2]int{0, 1440})}
+	noodle := Restaurant{PlaceID: "p-tw-qm", Name: "台式麵店", CuisineTags: []string{}, QueryMatches: []string{"taiwanese"}, PriceLevel: 1, Hours: daily([2]int{0, 1440})}
+	queryOnly := Restaurant{ID: "veg-query-only", Name: "素坊燒肉", CuisineTags: []string{"korean"}, QueryMatches: []string{"vegetarian"}, PriceLevel: 1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440})}
+	canonical := Restaurant{ID: "veg-real", Name: "春天素食", CuisineTags: []string{"vegetarian_friendly", "taiwanese"}, PriceLevel: 1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440})}
+	for _, tc := range []struct {
+		name                 string
+		restaurants          []Restaurant
+		member               Member
+		filter               bool
+		wantKept             int
+		wantKind, wantReason string
+	}{
+		{"filter accepts tags and query matches", []Restaurant{tagged, matched, other}, ramenFan, true, 2, "cuisine", "不符成員菜系偏好"},
+		{"empty preference disables filter", []Restaurant{other}, noPref, true, 1, "", ""},
+		{"filter off keeps unrelated cuisine", []Restaurant{other}, ramenFan, false, 1, "", ""},
+		{"Taiwanese query evidence does not change canonical tags", []Restaurant{noodle}, taiwaneseFan, true, 1, "", ""},
+		{"strict dietary rejects query-only evidence", []Restaurant{queryOnly}, veg, false, 0, "dietary", ""},
+		{"strict dietary accepts canonical evidence", []Restaurant{canonical}, veg, false, 1, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := Evaluate(EngineInput{Restaurants: tc.restaurants, Members: []Member{tc.member}, Now: lunchMonday, CuisineFilter: tc.filter})
+			if len(res.Kept) != tc.wantKept {
+				t.Fatalf("kept=%+v excluded=%+v, want %d kept", res.Kept, res.Excluded, tc.wantKept)
+			}
+			if tc.wantKind != "" {
+				if len(res.Excluded) != 1 || !hasKind(res.Excluded[0].Kinds, tc.wantKind) || !strings.Contains(res.Excluded[0].Reason, tc.wantReason) {
+					t.Fatalf("exclusions=%+v, want kind=%s reason containing %q", res.Excluded, tc.wantKind, tc.wantReason)
+				}
+			}
+			for _, r := range res.Kept {
+				if r.PlaceID == noodle.PlaceID && hasTag(r.CuisineTags, "taiwanese") {
+					t.Fatal("room query evidence must not become canonical tag")
+				}
+			}
+		})
+	}
+}
 
-	t.Run("query match 命中偏好因素", func(t *testing.T) {
-		if !memberLikes(ramenFan, matched) {
-			t.Fatal("query_matches 應納入 memberLikes 命中定義（spec §5.4）")
-		}
-	})
-	t.Run("開關開：無關店被排除、kind=cuisine", func(t *testing.T) {
-		res := Evaluate(EngineInput{Restaurants: []Restaurant{tagged, matched, other},
-			Members: []Member{ramenFan}, Now: now, CuisineFilter: true})
-		if len(res.Kept) != 2 {
-			t.Fatalf("kept = %d, want 2（tags 命中＋query match 命中）", len(res.Kept))
-		}
-		if len(res.Excluded) != 1 || !hasKind(res.Excluded[0].Kinds, "cuisine") {
-			t.Fatalf("無關店應以 cuisine kind 排除：%+v", res.Excluded)
-		}
-		if !strings.Contains(res.Excluded[0].Reason, "不符成員菜系偏好") {
-			t.Fatalf("排除理由應含固定文案：%s", res.Excluded[0].Reason)
-		}
-	})
-	t.Run("開關開但全員無偏好：不作用", func(t *testing.T) {
-		res := Evaluate(EngineInput{Restaurants: []Restaurant{other},
-			Members: []Member{noPref}, Now: now, CuisineFilter: true})
-		if len(res.Kept) != 1 {
-			t.Fatalf("聯集為空時開關不得排除任何店：%+v", res.Excluded)
-		}
-	})
-	t.Run("開關關：無關店照常保留", func(t *testing.T) {
-		res := Evaluate(EngineInput{Restaurants: []Restaurant{other},
-			Members: []Member{ramenFan}, Now: now})
-		if len(res.Kept) != 1 {
-			t.Fatal("開關關時菜系不觸發排除（維持偏好制）")
-		}
-	})
-	t.Run("台式 query match 是房間層證據、不改 canonical tag", func(t *testing.T) {
-		taiwaneseFan := Member{UserID: "u-tw", DisplayName: "台菜", BudgetMax: 1600,
-			Cuisines: []string{"taiwanese"}, MaxDistanceM: 3000, Transport: "walking"}
-		noodle := Restaurant{PlaceID: "p-tw-qm", Name: "台式麵店", CuisineTags: []string{},
-			QueryMatches: []string{"taiwanese"}, PriceLevel: 1, Hours: daily([2]int{0, 1440})}
-		res := Evaluate(EngineInput{Restaurants: []Restaurant{noodle}, Members: []Member{taiwaneseFan},
-			Now: now, CuisineFilter: true})
-		if len(res.Kept) != 1 || hasTag(noodle.CuisineTags, "taiwanese") {
-			t.Fatalf("Taiwanese query match must satisfy this room only: kept=%+v tags=%v", res.Kept, noodle.CuisineTags)
-		}
-	})
-	t.Run("嚴格禁忌不吃 query match（vegetarian 側，對稱於上一案）", func(t *testing.T) {
-		// Task 2 之後「素食」成為定向檢索詞，命中的店會拿到 QueryMatches ["vegetarian"]。
-		// 那是文字相關性——店名帶「素」的葷餐廳就能拿到——不是素食認證。
-		// engine.go hardExclude 的 DietaryRequires 只讀 canonical tags（ADR-0006），
-		// 這個 case 就是把那條規定釘死：誤放行的後果是素食者吃到葷的。
-		r := Restaurant{ID: "veg-query-only", Name: "素坊燒肉",
-			CuisineTags: []string{"korean"}, QueryMatches: []string{"vegetarian"},
-			PriceLevel: 1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440})}
-		veg := Member{UserID: "u4", DisplayName: "吃素", BudgetMax: 1600,
-			Dietary: []string{"vegetarian"}, MaxDistanceM: 3000, Transport: "walking"}
-		res := Evaluate(EngineInput{Restaurants: []Restaurant{r}, Members: []Member{veg}, Now: now})
-		if len(res.Kept) != 0 {
-			t.Fatalf("query_match=vegetarian 不得滿足 DietaryRequires（canonical tag 才算）：%+v", res.Kept)
-		}
-		if !hasKind(res.Excluded[0].Kinds, "dietary") {
-			t.Fatalf("應以 kind=dietary 排除，got %v", res.Excluded[0].Kinds)
-		}
-	})
-
-	t.Run("正向保留：具 vegetarian_friendly canonical tag 應保留", func(t *testing.T) {
-		// TODOS.md:109 記錄的既有缺口：引擎正向保留路徑無測試。
-		// 沒有這一半，Task 3 收緊 tag 來源之後「收太緊」不會被任何測試發現。
-		r := Restaurant{ID: "veg-real", Name: "春天素食",
-			CuisineTags: []string{"vegetarian_friendly", "taiwanese"},
-			PriceLevel:  1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440})}
-		veg := Member{UserID: "u5", DisplayName: "吃素", BudgetMax: 1600,
-			Dietary: []string{"vegetarian"}, MaxDistanceM: 3000, Transport: "walking"}
-		res := Evaluate(EngineInput{Restaurants: []Restaurant{r}, Members: []Member{veg}, Now: now})
-		if len(res.Kept) != 1 {
-			t.Fatalf("具 vegetarian_friendly 的店應保留：%+v", res.Excluded)
-		}
-	})
+func TestMemberLikesQueryMatches(t *testing.T) {
+	m := member(func(m *Member) { m.Cuisines = []string{"ramen"} })
+	for _, tc := range []struct {
+		name    string
+		matches []string
+		want    bool
+	}{
+		{"matching room query", []string{"ramen"}, true},
+		{"unrelated room query", []string{"korean"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := memberLikes(m, Restaurant{QueryMatches: tc.matches}); got != tc.want {
+				t.Fatalf("memberLikes=%v, want %v", got, tc.want)
+			}
+		})
+	}
 }
