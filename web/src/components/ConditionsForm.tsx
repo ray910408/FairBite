@@ -6,8 +6,8 @@ import { Alert, Check } from './icons'
 
 const TRANSPORTS = Object.entries(TRANSPORT_LABELS) as [MemberRow['transport'], string][]
 
-export default function ConditionsForm({ me, isHost, disabled = false, onFlushAvailable }:
-  { me: MemberRow; isHost: boolean; disabled?: boolean;
+export default function ConditionsForm({ me, isHost, searchVersion, disabled = false, onFlushAvailable }:
+  { me: MemberRow; isHost: boolean; searchVersion: number; disabled?: boolean;
     onFlushAvailable?: (flush: (() => Promise<boolean>) | null) => void }) {
   const [form, setForm] = useState(me)
   const [saveError, setSaveError] = useState('')
@@ -22,6 +22,8 @@ export default function ConditionsForm({ me, isHost, disabled = false, onFlushAv
   // ready 鈕不受 frozen 影響——取消準備即解凍。
   const frozen = disabled || (!isHost && form.ready)
   const pushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const currentVersion = useRef(searchVersion)
+  currentVersion.current = searchVersion
   useEffect(() => {
     setForm(me)
     savedRef.current = me
@@ -33,7 +35,7 @@ export default function ConditionsForm({ me, isHost, disabled = false, onFlushAv
   useEffect(() => {
     setForm(f => ({ ...f, ready: me.ready }))
     savedRef.current = { ...savedRef.current, ready: me.ready }
-  }, [me.ready])
+  }, [me.ready, searchVersion])
 
   function enqueuePending() {
     const pending = pendingWrite.current
@@ -105,17 +107,23 @@ export default function ConditionsForm({ me, isHost, disabled = false, onFlushAv
   }
 
   // ready 是獨立房態動作，不隨條件批次寫入——pending 條件寫入永遠不可能
-  // 夾帶 stale ready（PR #16 review 第二輪）。即時寫、失敗還原＋橫幅（count:exact 防 RLS 靜默）。
+  // 夾帶 stale ready。RPC 在 room lock 內核對點擊時的版本，換地點後舊請求不得恢復準備。
   async function toggleReady() {
     const next = !form.ready
     if (next && !await flushPending()) return
+    if (currentVersion.current !== searchVersion) return
     setForm(f => ({ ...f, ready: next }))
-    const { error, count } = await supabase.from('room_members')
-      .update({ ready: next }, { count: 'exact' })
-      .eq('room_id', me.room_id).eq('user_id', me.user_id)
-    if (error || count === 0) {
+    let saved = false
+    try {
+      const { data, error } = await supabase.rpc('set_member_ready', {
+        p_room_id: me.room_id, p_ready: next, p_search_version: searchVersion,
+      })
+      saved = !error && data === true
+    } catch { /* A lost response cannot acknowledge durable readiness. */ }
+    if (currentVersion.current !== searchVersion) return
+    if (!saved) {
       setForm(f => ({ ...f, ready: !next }))
-      setSaveError('儲存失敗：房間可能已開始選餐，條件已凍結')
+      setSaveError('準備狀態更新失敗：請確認最新地點與房間狀態後再試')
     } else {
       savedRef.current = { ...savedRef.current, ready: next }
       // ready=false 只解除凍結；不能掩蓋仍未由較新 condition generation 修復的 failure gate。

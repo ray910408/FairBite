@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { voteRoom } from '../lib/api'
 import { classifyRoomLoad } from '../lib/roomLoad'
 import { supabase } from '../lib/supabase'
-import type { CandidateRow, DrawRow, MemberRow, Room, VoteRow } from '../lib/types'
+import type { CandidateRow, DrawRow, LocationVoteRow, MemberRow, Room, VoteRow } from '../lib/types'
 import { getUid } from '../lib/uid'
 import { VETO_QUOTA, applyVoteMirror, hasMyVote, myVetoCount, upCounts } from '../lib/votes'
 
@@ -12,6 +12,7 @@ export function useRoom(roomId: string) {
   const [candidates, setCandidates] = useState<CandidateRow[]>([])
   const [draw, setDraw] = useState<DrawRow | null>(null)
   const [votes, setVotes] = useState<VoteRow[]>([])
+  const [locationVotes, setLocationVotes] = useState<LocationVoteRow[]>([])
   const [myUserId, setMyUserId] = useState('')
   const [connected, setConnected] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -20,23 +21,25 @@ export function useRoom(roomId: string) {
 
   const refetch = useCallback(async () => {
     const gen = ++refetchGen.current
-    const [r, m, c, d, v] = await Promise.all([
+    const [r, m, c, d, v, lv] = await Promise.all([
       // 欄位得寫明：select('*') 會展開成全欄位，撞上 0015 的欄級 grant（center_* 只給
       // service role）會整包 permission denied
       supabase.from('rooms')
-        .select('id, code, host_id, status, exploration, meal_time, cuisine_filter').eq('id', roomId).single(),
+        .select('id, code, host_id, status, exploration, meal_time, cuisine_filter, draw_version, search_version').eq('id', roomId).single(),
       supabase.from('room_members').select('*, profiles(display_name)').eq('room_id', roomId),
       supabase.from('room_candidates')
         .select('*, restaurants(name, lat, lng, place_id, source)').eq('room_id', roomId)
         .order('restaurant_id'),
-      supabase.from('draws').select('*').eq('room_id', roomId).maybeSingle(),
+      supabase.from('draws').select('*').eq('room_id', roomId)
+        .order('version', { ascending: false }).limit(1).maybeSingle(),
       supabase.from('votes').select('*').eq('room_id', roomId),
+      supabase.from('location_change_votes').select('*').eq('room_id', roomId),
     ])
     if (gen !== refetchGen.current) return // 有更新一輪在跑，這輪結果作廢
     // 讀不到房間要讓 UI 停止無限「載入中」；DB/網路錯誤與查無列分開呈現（QA ISSUE-002）
     // 任一查詢失敗都算 loadError；失敗的資料集不覆寫既有 state。
     const state = classifyRoomLoad(r.data, r.error)
-    const siblingError = [m, c, d, v].some(x => x.error)
+    const siblingError = [m, c, d, v, lv].some(x => x.error)
     setNotFound(state === 'not-found')
     setLoadError(state === 'error' || siblingError)
     if (r.data) setRoom(r.data as Room)
@@ -44,6 +47,7 @@ export function useRoom(roomId: string) {
     if (!c.error) setCandidates((c.data ?? []) as CandidateRow[])
     if (!d.error) setDraw((d.data ?? null) as DrawRow | null)
     if (!v.error) setVotes((v.data ?? []) as VoteRow[])
+    if (!lv.error) setLocationVotes((lv.data ?? []) as LocationVoteRow[])
   }, [roomId])
 
   useEffect(() => {
@@ -56,6 +60,7 @@ export function useRoom(roomId: string) {
       { table: 'room_candidates', filter: `room_id=eq.${roomId}` },
       { table: 'draws', filter: `room_id=eq.${roomId}` },
       { table: 'votes', filter: `room_id=eq.${roomId}` },
+      { table: 'location_change_votes', filter: `room_id=eq.${roomId}` },
     ]
     // roomId/refetch 變動會重跑本 effect：舊 channel 的 CLOSED 會晚於新 channel 的
     // SUBSCRIBED 抵達，沒有 live 旗標就會把已連線的狀態蓋回「斷線」
@@ -124,6 +129,6 @@ export function useRoom(roomId: string) {
   const ups = upCounts(votes)
   const vetoesRemaining = VETO_QUOTA - myVetoCount(votes, myUserId)
 
-  return { room, members, candidates, draw, myUserId, connected, notFound, loadError,
+  return { room, members, candidates, draw, locationVotes, myUserId, connected, notFound, loadError,
     refetch, toggleVote, hasMyVote: hasMyVoteForRestaurant, ups, vetoesRemaining }
 }

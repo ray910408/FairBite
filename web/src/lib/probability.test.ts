@@ -1,11 +1,17 @@
 import { describe, expect, it, test } from 'vitest'
-import { chipLabel, formatPercent, formatPercents, sortKept } from './probability'
+import { chipLabel, formatPercent, formatPercents, snapshotCandidates, sortKept } from './probability'
 import type { CandidateRow } from './types'
 
 const cand = (p: number | null, status: 'kept' | 'excluded' = 'kept'): CandidateRow => ({
   room_id: 'r', restaurant_id: String(p), status, probability: p,
   weight_breakdown: [], exclusion_reason: null, exclusion_kinds: [],
   restaurants: { name: 'x', lat: 0, lng: 0, place_id: 'p', source: 'google' },
+})
+
+test('轉盤使用不可變 draw snapshot，不讀重算後的 live odds', () => {
+  const live = [cand(0.9), { ...cand(0.1), restaurant_id: 'other' }]
+  expect(snapshotCandidates(live, { '0.9': 0.25, other: 0.75 }).map(r => r.probability))
+    .toEqual([0.25, 0.75])
 })
 
 test('P2 新因素有中文標籤', () => {

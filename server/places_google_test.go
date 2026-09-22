@@ -119,36 +119,28 @@ const gSample = `{"places":[
 ]}`
 
 func TestCuisinePrimaryTypeProductBoundaries(t *testing.T) {
-	for _, primaryType := range []string{"meal_delivery", "pizza_delivery"} {
-		if gIsMealPrimaryType(primaryType) {
-			t.Errorf("%s 是純外送類型，不得進入前往用餐候選", primaryType)
-		}
-	}
-	if !gIsMealPrimaryType("meal_takeaway") {
-		t.Error("meal_takeaway 有可前往取餐的地點，仍應保留")
-	}
-	for _, primaryType := range []string{"dessert_restaurant", "ice_cream_shop", "dessert_shop"} {
-		if !gIsMealPrimaryType(primaryType) {
-			t.Errorf("擁有者決定納入甜點候選，%s 必須保留", primaryType)
-		}
-	}
-	for _, primaryType := range []string{"cafe", "coffee_shop"} {
-		if !gIsMealPrimaryType(primaryType) {
-			t.Errorf("擁有者決定咖啡店算輕食，%s 必須保留", primaryType)
-		}
-	}
-	for _, primaryType := range []string{"bakery", "bar"} {
-		if gIsMealPrimaryType(primaryType) {
-			t.Errorf("未納入的邊界類型 %s 必須維持排除", primaryType)
-		}
+	for _, tc := range []struct {
+		primaryType string
+		want        bool
+	}{
+		{"meal_delivery", false}, {"pizza_delivery", false}, {"meal_takeaway", true},
+		{"dessert_restaurant", true}, {"ice_cream_shop", true}, {"dessert_shop", true},
+		{"cafe", true}, {"coffee_shop", true}, {"bakery", false}, {"bar", false},
+	} {
+		t.Run(tc.primaryType, func(t *testing.T) {
+			if got := gIsMealPrimaryType(tc.primaryType); got != tc.want {
+				t.Fatalf("meal primary type = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
-func TestCuisineTagsFastFoodDessertAndLightMeal(t *testing.T) {
+func TestGoogleCuisineTags(t *testing.T) {
 	tests := []struct {
-		name  string
-		types []string
-		want  []string
+		name   string
+		types  []string
+		want   []string
+		absent []string
 	}{
 		{
 			name:  "麥當勞同時是速食與西式",
@@ -165,6 +157,18 @@ func TestCuisineTagsFastFoodDessertAndLightMeal(t *testing.T) {
 		{name: "咖啡吧", types: []string{"coffee_shop", "cafe"}, want: []string{"light_meal"}},
 		{name: "早餐店", types: []string{"breakfast_restaurant"}, want: []string{"breakfast"}},
 		{name: "早午餐店", types: []string{"brunch_restaurant"}, want: []string{"breakfast"}},
+		{name: "dim sum", types: []string{"dim_sum_restaurant"}, want: []string{"cantonese"}},
+		{name: "canonical Taiwanese", types: []string{"restaurant", "taiwanese_restaurant"}, want: []string{"taiwanese"}},
+		{name: "western restaurant", types: []string{"restaurant", "western_restaurant"}, want: []string{"western"}},
+		{name: "European restaurant", types: []string{"restaurant", "european_restaurant"}, want: []string{"western"}},
+		{name: "izakaya", types: []string{"restaurant", "japanese_izakaya_restaurant"}, want: []string{"japanese"}},
+		{name: "yakiniku", types: []string{"restaurant", "yakiniku_restaurant"}, want: []string{"japanese"}},
+		{name: "Japanese curry", types: []string{"restaurant", "japanese_curry_restaurant"}, want: []string{"japanese"}},
+		{name: "Chinese alone is ambiguous", types: []string{"restaurant", "chinese_restaurant"}, absent: []string{"taiwanese"}},
+		{name: "Taiwanese plus Chinese", types: []string{"restaurant", "taiwanese_restaurant", "chinese_restaurant"}, want: []string{"taiwanese"}},
+		{name: "Cantonese is not Taiwanese", types: []string{"restaurant", "chinese_restaurant", "cantonese_restaurant"}, want: []string{"cantonese"}, absent: []string{"taiwanese"}},
+		{name: "vegetarian restaurant", types: []string{"restaurant", "vegetarian_restaurant"}, want: []string{"vegetarian_friendly"}},
+		{name: "vegan restaurant", types: []string{"restaurant", "vegan_restaurant"}, want: []string{"vegetarian_friendly"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -172,6 +176,11 @@ func TestCuisineTagsFastFoodDessertAndLightMeal(t *testing.T) {
 			for _, want := range tc.want {
 				if !hasTag(tags, want) {
 					t.Errorf("types %v 應產生 %q，got %v", tc.types, want, tags)
+				}
+			}
+			for _, absent := range tc.absent {
+				if hasTag(tags, absent) {
+					t.Errorf("types %v must not produce %q: %v", tc.types, absent, tags)
 				}
 			}
 		})
@@ -182,13 +191,6 @@ func TestGRestaurantKeepsEmptyCuisineTagsAsNonNilSlice(t *testing.T) {
 	r := gRestaurant(gPlace{PrimaryType: "restaurant"})
 	if r.CuisineTags == nil || len(r.CuisineTags) != 0 {
 		t.Fatalf("無 type 命中時 CuisineTags 必須是非 nil 空 slice，got %#v", r.CuisineTags)
-	}
-}
-
-func TestDimSumRestaurantTagsIncludeCuisine(t *testing.T) {
-	tags := gTags(gPlace{Types: []string{"dim_sum_restaurant"}})
-	if !hasTag(tags, "cantonese") {
-		t.Errorf("dim_sum_restaurant 應產生 cantonese，got %v", tags)
 	}
 }
 
@@ -839,147 +841,70 @@ func TestGoogleSearchNearbyTaiwaneseStopsOnCancellation(t *testing.T) {
 	}
 }
 
-func TestGoogleSearchNearbyTaiwanesePageTwoFailureRetainsPageOne(t *testing.T) {
-	var textCalls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/v1/places:searchNearby" {
-			_, _ = w.Write([]byte(`{"places":[]}`))
-			return
-		}
-		var request struct {
-			TextQuery string `json:"textQuery"`
-			PageToken string `json:"pageToken"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Errorf("decode text request: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		textCalls.Add(1)
-		switch request.TextQuery + "/" + request.PageToken {
-		case "台式料理/":
-			_, _ = w.Write([]byte(`{"places":[{"id":"tw-page-one","primaryType":"noodle_shop","displayName":{"text":"頁一麵店"},"types":["noodle_shop"],"location":{"latitude":25.0478,"longitude":121.5170}}],"nextPageToken":"page-2"}`))
-		case "台式料理/page-2":
-			w.WriteHeader(http.StatusInternalServerError)
-		case "台灣小吃/":
-			w.WriteHeader(http.StatusInternalServerError)
-		default:
-			t.Errorf("unexpected text request %+v", request)
-			w.WriteHeader(http.StatusBadRequest)
-		}
-	}))
-	defer srv.Close()
-
-	result, err := NewGooglePlacesProvider("test-key", srv.URL).SearchNearby(
-		context.Background(), 25.0478, 121.5170, 1000, []string{"taiwanese"})
-	if err != nil {
-		t.Fatalf("page-two failure must be partial success, got %v", err)
-	}
-	if got := textCalls.Load(); got != 3 {
-		t.Fatalf("Text calls = %d, want 3 with no retry", got)
-	}
-	byID := map[string]Restaurant{}
-	for _, restaurant := range result.Restaurants {
-		byID[restaurant.PlaceID] = restaurant
-	}
-	if !slices.Equal(byID["tw-page-one"].QueryMatches, []string{"taiwanese"}) || len(byID) != 1 {
-		t.Fatalf("page-one results must survive page-two failure: %+v", result.Restaurants)
-	}
-	if len(result.UnfulfilledTerms) != 0 {
-		t.Fatalf("one decoded page is fulfilled even after a later failure: %v", result.UnfulfilledTerms)
-	}
-}
-
-func TestGoogleSearchNearbyTaiwaneseSecondQueryPageOneSuccessIsFulfilled(t *testing.T) {
-	var textCalls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/v1/places:searchNearby" {
-			_, _ = w.Write([]byte(`{"places":[]}`))
-			return
-		}
-		var request struct {
-			TextQuery string `json:"textQuery"`
-			PageToken string `json:"pageToken"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Errorf("decode text request: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		textCalls.Add(1)
-		switch request.TextQuery + "/" + request.PageToken {
-		case "台式料理/":
-			w.WriteHeader(http.StatusInternalServerError)
-		case "台灣小吃/":
-			_, _ = w.Write([]byte(`{"places":[{"id":"tw-second-query-page-one","primaryType":"dumpling_restaurant","displayName":{"text":"第二查詢水餃"},"types":["dumpling_restaurant"],"location":{"latitude":25.0479,"longitude":121.5170}}]}`))
-		default:
-			t.Errorf("unexpected text request %+v", request)
-			w.WriteHeader(http.StatusBadRequest)
-		}
-	}))
-	defer srv.Close()
-
-	result, err := NewGooglePlacesProvider("test-key", srv.URL).SearchNearby(
-		context.Background(), 25.0478, 121.5170, 1000, []string{"taiwanese"})
-	if err != nil {
-		t.Fatalf("second query page-one success must be partial success, got %v", err)
-	}
-	if got := textCalls.Load(); got != 2 {
-		t.Fatalf("A page-one failure must not retry and B must still run once, got %d calls", got)
-	}
-	if len(result.Restaurants) != 1 || result.Restaurants[0].PlaceID != "tw-second-query-page-one" ||
-		!slices.Equal(result.Restaurants[0].QueryMatches, []string{"taiwanese"}) {
-		t.Fatalf("second query page one must be retained as Taiwanese evidence: %+v", result.Restaurants)
-	}
-	if len(result.UnfulfilledTerms) != 0 {
-		t.Fatalf("A page-one fail plus B page-one success must be fulfilled: %v", result.UnfulfilledTerms)
-	}
-}
-
-func TestGoogleSearchNearbyTaiwaneseBothPageOneFailuresAreUnfulfilled(t *testing.T) {
-	var textCalls atomic.Int32
-	var mu sync.Mutex
-	var queries []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/places:searchNearby" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"places":[]}`))
-			return
-		}
-		var request struct {
-			TextQuery string `json:"textQuery"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Errorf("decode text request: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		textCalls.Add(1)
-		mu.Lock()
-		queries = append(queries, request.TextQuery)
-		mu.Unlock()
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	result, err := NewGooglePlacesProvider("test-key", srv.URL).SearchNearby(
-		context.Background(), 25.0478, 121.5170, 1000, []string{"taiwanese"})
-	if err != nil {
-		t.Fatalf("Text-only failures must not fail Nearby search: %v", err)
-	}
-	if got := textCalls.Load(); got != 2 {
-		t.Fatalf("both page-one failures must not retry or page: got %d calls", got)
-	}
-	mu.Lock()
-	gotQueries := append([]string(nil), queries...)
-	mu.Unlock()
-	if !slices.Equal(gotQueries, []string{"台式料理", "台灣小吃"}) {
-		t.Fatalf("both configured Taiwanese queries must each run once: %v", gotQueries)
-	}
-	if !slices.Equal(result.UnfulfilledTerms, []string{"taiwanese"}) {
-		t.Fatalf("both failed Taiwanese page ones must be unfulfilled: %v", result.UnfulfilledTerms)
+func TestGoogleSearchNearbyTaiwanesePartialFailures(t *testing.T) {
+	const pageOne = `{"places":[{"id":"tw-page-one","primaryType":"noodle_shop","displayName":{"text":"頁一麵店"},"types":["noodle_shop"],"location":{"latitude":25.0478,"longitude":121.5170}}],"nextPageToken":"page-2"}`
+	const secondQuery = `{"places":[{"id":"tw-second-query-page-one","primaryType":"dumpling_restaurant","displayName":{"text":"第二查詢水餃"},"types":["dumpling_restaurant"],"location":{"latitude":25.0479,"longitude":121.5170}}]}`
+	for _, tc := range []struct {
+		name            string
+		successes       map[string]string
+		wantRequests    []string
+		wantID          string
+		wantUnfulfilled []string
+	}{
+		{"page two failure retains page one", map[string]string{"台式料理/": pageOne}, []string{"台式料理/", "台式料理/page-2", "台灣小吃/"}, "tw-page-one", nil},
+		{"second query succeeds after first query failure", map[string]string{"台灣小吃/": secondQuery}, []string{"台式料理/", "台灣小吃/"}, "tw-second-query-page-one", nil},
+		{"both first pages fail without retry", nil, []string{"台式料理/", "台灣小吃/"}, "", []string{"taiwanese"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var requests []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/v1/places:searchNearby" {
+					_, _ = w.Write([]byte(`{"places":[]}`))
+					return
+				}
+				var request struct {
+					TextQuery string `json:"textQuery"`
+					PageToken string `json:"pageToken"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				key := request.TextQuery + "/" + request.PageToken
+				mu.Lock()
+				requests = append(requests, key)
+				mu.Unlock()
+				if body, ok := tc.successes[key]; ok {
+					_, _ = w.Write([]byte(body))
+				} else {
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			result, err := NewGooglePlacesProvider("test-key", srv.URL).SearchNearby(context.Background(), 25.0478, 121.5170, 1000, []string{"taiwanese"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			gotRequests := append([]string(nil), requests...)
+			mu.Unlock()
+			if !slices.Equal(gotRequests, tc.wantRequests) {
+				t.Fatalf("requests=%v, want %v without retries", gotRequests, tc.wantRequests)
+			}
+			if tc.wantID != "" {
+				if len(result.Restaurants) != 1 || result.Restaurants[0].PlaceID != tc.wantID || !slices.Equal(result.Restaurants[0].QueryMatches, []string{"taiwanese"}) {
+					t.Fatalf("successful page lost: %+v", result)
+				}
+			} else if len(result.Restaurants) != 0 {
+				t.Fatalf("failed pages produced restaurants: %+v", result)
+			}
+			if !slices.Equal(result.UnfulfilledTerms, tc.wantUnfulfilled) {
+				t.Fatalf("unfulfilled=%v, want %v", result.UnfulfilledTerms, tc.wantUnfulfilled)
+			}
+		})
 	}
 }
 
@@ -1106,119 +1031,53 @@ func TestGoogleSearchNearbyDedupesChainToNearestBranch(t *testing.T) {
 	}
 }
 
-func TestGoogleSearchNearbyTombstonesDiscardedClosedBranch(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/v1/places:searchNearby" {
-			_, _ = w.Write([]byte(`{"places":[{"id":"closed-near","businessStatus":"CLOSED_PERMANENTLY","primaryType":"restaurant","displayName":{"text":"一蘭 台北本店"},"types":["restaurant"],"location":{"latitude":25.0479,"longitude":121.5170}}]}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"places":[{"id":"open-far","businessStatus":"OPERATIONAL","primaryType":"restaurant","displayName":{"text":"一蘭 信義店"},"types":["restaurant"],"location":{"latitude":25.0520,"longitude":121.5170}}]}`))
-	}))
-	defer srv.Close()
-
-	p := NewGooglePlacesProvider("test-key", srv.URL)
-	result, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000, []string{"ramen"})
-	if err != nil || len(result.Restaurants) != 1 || result.Restaurants[0].PlaceID != "open-far" {
-		t.Fatalf("歇業近店必須讓位給營業中分店，got %+v err %v", result.Restaurants, err)
-	}
-	if !slices.Contains(result.DiscardedClosedPlaceIDs, "closed-near") {
-		t.Fatalf("落選歇業分店應供 handler tombstone：%v", result.DiscardedClosedPlaceIDs)
-	}
-	if slices.Contains(result.RejectedPlaceIDs, "closed-near") {
-		t.Fatalf("落選歇業分店不可混入 RejectedPlaceIDs：%v", result.RejectedPlaceIDs)
-	}
-}
-
-func TestGoogleSearchNearbyTombstonesClosedBranchDiscardedWithoutReplacement(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/v1/places:searchNearby" {
-			_, _ = w.Write([]byte(`{"places":[{"id":"open-far","businessStatus":"OPERATIONAL","primaryType":"restaurant","displayName":{"text":"一蘭 台北本店"},"types":["restaurant"],"location":{"latitude":25.0520,"longitude":121.5170}}]}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"places":[{"id":"closed-near","businessStatus":"CLOSED_PERMANENTLY","primaryType":"restaurant","displayName":{"text":"一蘭 信義店"},"types":["restaurant"],"location":{"latitude":25.0479,"longitude":121.5170}}]}`))
-	}))
-	defer srv.Close()
-
-	p := NewGooglePlacesProvider("test-key", srv.URL)
-	result, err := p.SearchNearby(context.Background(), 25.0478, 121.5170, 1000, []string{"ramen"})
-	if err != nil || len(result.Restaurants) != 1 || result.Restaurants[0].PlaceID != "open-far" {
-		t.Fatalf("營業中分店必須保留，got %+v err %v", result.Restaurants, err)
-	}
-	if !slices.Contains(result.DiscardedClosedPlaceIDs, "closed-near") {
-		t.Fatalf("未取代留存者的落選歇業分店應供 handler tombstone：%v", result.DiscardedClosedPlaceIDs)
+func TestGoogleSearchNearbyTombstonesClosedBranches(t *testing.T) {
+	const closed = `{"places":[{"id":"closed-near","businessStatus":"CLOSED_PERMANENTLY","primaryType":"restaurant","displayName":{"text":"一蘭 台北本店"},"types":["restaurant"],"location":{"latitude":25.0479,"longitude":121.5170}}]}`
+	const open = `{"places":[{"id":"open-far","businessStatus":"OPERATIONAL","primaryType":"restaurant","displayName":{"text":"一蘭 信義店"},"types":["restaurant"],"location":{"latitude":25.0520,"longitude":121.5170}}]}`
+	for _, tc := range []struct{ name, nearby, text string }{
+		{"closed branch replaced by open branch", closed, open},
+		{"closed branch discarded without replacement", open, closed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				body := tc.text
+				if r.URL.Path == "/v1/places:searchNearby" {
+					body = tc.nearby
+				}
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(srv.Close)
+			result, err := NewGooglePlacesProvider("test-key", srv.URL).SearchNearby(context.Background(), 25.0478, 121.5170, 1000, []string{"ramen"})
+			if err != nil || len(result.Restaurants) != 1 || result.Restaurants[0].PlaceID != "open-far" {
+				t.Fatalf("open branch must survive: %+v err=%v", result, err)
+			}
+			if !slices.Contains(result.DiscardedClosedPlaceIDs, "closed-near") || slices.Contains(result.RejectedPlaceIDs, "closed-near") {
+				t.Fatalf("closed branch must only be tombstoned: %+v", result)
+			}
+		})
 	}
 }
 
 func TestDedupeChainsFiltersTier1InheritedMatches(t *testing.T) {
-	got, _ := dedupeChains([]Restaurant{
-		{PlaceID: "dessert-near", Name: "連鎖品牌 台北店", PrimaryType: "dessert_shop", Lat: 25.0479, Lng: 121.5170},
-		{PlaceID: "meal-far", Name: "連鎖品牌 信義店", PrimaryType: "restaurant", QueryMatches: []string{"ramen"}, Lat: 25.0520, Lng: 121.5170},
-	}, 25.0478, 121.5170)
-	if len(got) != 1 || got[0].PlaceID != "dessert-near" || slices.Contains(got[0].QueryMatches, "ramen") {
-		t.Fatalf("甜品留存分店不可繼承姐妹店的熱食 match，got %+v", got)
-	}
-	got, _ = dedupeChains([]Restaurant{
-		{PlaceID: "hotpot-near", Name: "連鎖品牌 台北店", PrimaryType: "hot_pot_restaurant", CuisineTags: []string{"hotpot"}, Lat: 25.0479, Lng: 121.5170},
-		{PlaceID: "generic-far", Name: "連鎖品牌 信義店", PrimaryType: "restaurant", QueryMatches: []string{"dessert"}, Lat: 25.0520, Lng: 121.5170},
-	}, 25.0478, 121.5170)
-	if len(got) != 1 || got[0].PlaceID != "hotpot-near" || slices.Contains(got[0].QueryMatches, "dessert") {
-		t.Fatalf("hot meal canonical tags cannot inherit dessert evidence from a sibling, got %+v", got)
-	}
-}
-
-// 本輪（2026-08-16 普查）新增的對映逐條釘住。只釘新增的：既有對映已在線上跑過，
-// 把整張表抄一遍是 DRY 違反，且未來每次正常擴充都要改兩個地方。
-func TestNewGoogleTypeMappings(t *testing.T) {
 	for _, tc := range []struct {
-		gtype string
-		want  []string
+		name         string
+		near         Restaurant
+		farID, match string
 	}{
-		{"taiwanese_restaurant", []string{"taiwanese"}},
-		{"western_restaurant", []string{"western"}},
-		{"european_restaurant", []string{"western"}},
-		{"japanese_izakaya_restaurant", []string{"japanese"}},
-		{"yakiniku_restaurant", []string{"japanese"}},
-		{"japanese_curry_restaurant", []string{"japanese"}},
+		{"dessert rejects hot meal", Restaurant{PlaceID: "dessert-near", PrimaryType: "dessert_shop"}, "meal-far", "ramen"},
+		{"hot meal rejects dessert", Restaurant{PlaceID: "hotpot-near", PrimaryType: "hot_pot_restaurant", CuisineTags: []string{"hotpot"}}, "generic-far", "dessert"},
 	} {
-		got := gTags(gPlace{Types: []string{"restaurant", tc.gtype}})
-		for _, want := range tc.want {
-			if !hasTag(got, want) {
-				t.Errorf("%s 應產出 %q，got %v", tc.gtype, want, got)
+		t.Run(tc.name, func(t *testing.T) {
+			near := tc.near
+			near.Name = "連鎖品牌 台北店"
+			near.Lat = 25.0479
+			near.Lng = 121.5170
+			got, _ := dedupeChains([]Restaurant{near, {PlaceID: tc.farID, Name: "連鎖品牌 信義店", PrimaryType: "restaurant", QueryMatches: []string{tc.match}, Lat: 25.0520, Lng: 121.5170}}, 25.0478, 121.5170)
+			if len(got) != 1 || got[0].PlaceID != near.PlaceID || slices.Contains(got[0].QueryMatches, tc.match) {
+				t.Fatalf("incompatible inherited match: %+v", got)
 			}
-		}
-	}
-}
-
-// chinese_restaurant 涵蓋台菜、港式與其他中菜。2026-08-16 實測 259 家樣本中 165 家帶此
-// type：15% 也有 taiwanese_restaurant（真台菜）、14% 也有 cantonese/dim_sum（港式，卻被
-// 標成台式）、72% 兩者皆無而無從分辨。誤標實例：玖龍冰室香港茶餐廳、富宴精緻粵菜港式飲茶。
-// 精確訊號 taiwanese_restaurant 已於同批變更對映，這條猜測不再需要。
-func TestChineseRestaurantDoesNotImplyTaiwanese(t *testing.T) {
-	p := gPlace{Types: []string{"restaurant", "chinese_restaurant"}}
-	if hasTag(gTags(p), "taiwanese") {
-		t.Errorf("chinese_restaurant 單獨產出 taiwanese；gTags = %v", gTags(p))
-	}
-}
-
-// 反向：真台菜店的 canonical tag 必須留住。
-func TestTaiwaneseRestaurantTypeGrantsTaiwanese(t *testing.T) {
-	p := gPlace{Types: []string{"restaurant", "taiwanese_restaurant", "chinese_restaurant"}}
-	if !hasTag(gTags(p), "taiwanese") {
-		t.Errorf("taiwanese_restaurant 沒有產出 taiwanese；gTags = %v", gTags(p))
-	}
-}
-
-// 港式店最常見的 type 組合不得再被標成台式。
-func TestCantoneseRestaurantIsNotTaggedTaiwanese(t *testing.T) {
-	p := gPlace{Types: []string{"restaurant", "chinese_restaurant", "cantonese_restaurant"}}
-	tags := gTags(p)
-	if hasTag(tags, "taiwanese") {
-		t.Errorf("港式店被標成 taiwanese；gTags = %v", tags)
-	}
-	if !hasTag(tags, "cantonese") {
-		t.Errorf("港式店少了 cantonese；gTags = %v", tags)
+		})
 	}
 }
 
@@ -1233,16 +1092,6 @@ func TestChineseOnlyRestaurantHasNoTaiwaneseSignalWithoutQueryMatch(t *testing.T
 	}
 	if len(r.QueryMatches) != 0 {
 		t.Errorf("未經 textSearch 的列不得帶 query match：%v", r.QueryMatches)
-	}
-}
-
-// 真素食店的 canonical tag 必須留住，否則 Task 2 補的召回會白費。
-func TestVegetarianRestaurantTypeStillGrantsTag(t *testing.T) {
-	for _, gt := range []string{"vegetarian_restaurant", "vegan_restaurant"} {
-		p := gPlace{Types: []string{"restaurant", gt}}
-		if !hasTag(gTags(p), "vegetarian_friendly") {
-			t.Errorf("type %q 沒有產出 vegetarian_friendly；gTags = %v", gt, gTags(p))
-		}
 	}
 }
 

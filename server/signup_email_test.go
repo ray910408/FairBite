@@ -128,6 +128,8 @@ func TestSignupHook(t *testing.T) {
 		wantDNS            bool
 	}{
 		{"accept", "{\"user\":{\"email\":\"user@gmail.com\"}}", secret, nil, 200, "", true},
+		{"anonymous without email", "{\"user\":{\"email\":\"\",\"is_anonymous\":true}}", secret, nil, 200, "", false},
+		{"non-anonymous without email", "{\"user\":{\"email\":\"\",\"is_anonymous\":false}}", secret, nil, 200, "signup_email_invalid", false},
 		{"MX rejection", "{\"user\":{\"email\":\"user@example.com\"}}", secret, nil, 200, "signup_email_no_mx", true},
 		{"invalid format", "{\"user\":{\"email\":\"23@d.d\"}}", secret, nil, 200, "signup_email_invalid", false},
 		{"invalid JSON", "{", secret, nil, 400, "", false},
@@ -243,9 +245,11 @@ func TestSignupEmailLiveDNS(t *testing.T) {
 		{"probe@example.com", "signup_email_no_mx"},
 		{"probe@fairbite-mx-check-nonexistent-20260912.com", "signup_email_no_mx"},
 	} {
-		code := checkSignupEmail(context.Background(), tc.email, net.DefaultResolver.LookupMX)
-		if code != tc.want {
-			t.Errorf("%s: code=%q, want %q", tc.email, code, tc.want)
-		}
+		t.Run(tc.email, func(t *testing.T) {
+			code := checkSignupEmail(context.Background(), tc.email, net.DefaultResolver.LookupMX)
+			if code != tc.want {
+				t.Errorf("%s: code=%q, want %q", tc.email, code, tc.want)
+			}
+		})
 	}
 }

@@ -28,8 +28,15 @@ select throws_like($$update room_members set cuisines=jsonb_build_array(repeat('
  '%room_members_cuisines_bounds%', 'long element rejected');
 select throws_like($$update room_members set dietary='["unknown"]' where user_id=auth.uid()$$,
  '%room_members_dietary_bounds%', 'unknown dietary rejected');
-select lives_ok($$update room_members set cuisines='["japanese","taiwanese"]',dietary='["vegetarian"]',ready=true where user_id=auth.uid()$$,
- 'normal preferences and ready remain writable');
+select lives_ok($$update room_members set cuisines='["japanese","taiwanese"]',dietary='["vegetarian"]' where user_id=auth.uid()$$,
+ 'normal preferences remain writable');
+select throws_like($$update room_members set ready=true where user_id=auth.uid()$$,
+ '%permission denied%', 'ready cannot bypass its round-bound RPC');
+select is(set_member_ready(
+  (select id from rooms where host_id=auth.uid()),
+  true,
+  (select search_version from rooms where host_id=auth.uid())),true,
+ 'current-round readiness remains writable through the RPC');
 select throws_like($$update room_members set joined_at='1900-01-01' where user_id=auth.uid()$$,
  '%permission denied%', 'joined_at is server owned');
 select throws_like($$update room_members set room_id=room_id where user_id=auth.uid()$$,

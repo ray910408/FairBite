@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -29,89 +30,50 @@ func TestOpenMeteoParsesAndCaches(t *testing.T) {
 	}
 }
 
-func TestOpenMeteoNon200IsError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-	if _, err := NewOpenMeteoProvider(srv.URL).Current(context.Background(), 25, 121, clockNow()); err == nil {
-		t.Fatal("500 應回傳 error（呼叫端據此降級為中性）")
-	}
-}
-
-func TestCurrentCachedNeverFetches(t *testing.T) {
-	calls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		fmt.Fprint(w, `{"current":{"precipitation":0.8}}`)
-	}))
-	defer srv.Close()
-	p := NewOpenMeteoProvider(srv.URL)
-	if _, ok := p.CurrentCached(25.0478, 121.5170, clockNow()); ok || calls != 0 {
-		t.Fatalf("冷快取應 miss 且不發網路：ok=%v calls=%d", ok, calls)
-	}
-	if _, err := p.Current(context.Background(), 25.0478, 121.5170, clockNow()); err != nil {
-		t.Fatal(err)
-	}
-	w, ok := p.CurrentCached(25.0478, 121.5170, clockNow())
-	if !ok || w.RainMM != 0.8 || calls != 1 {
-		t.Fatalf("暖快取應 hit 且不再發網路：w=%v ok=%v calls=%d", w, ok, calls)
-	}
-}
-
-// D24：serve-stale——TTL 過期後 CurrentCached 仍回舊值（投票期間因素不跳動）
-func TestCurrentCachedServesStale(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"current":{"precipitation":0.8}}`)
-	}))
-	defer srv.Close()
+func TestCurrentCached(t *testing.T) {
 	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
-	originalNow := clockNow
-	clockNow = func() time.Time { return base }
-	t.Cleanup(func() { clockNow = originalNow })
-	p := NewOpenMeteoProvider(srv.URL)
-	if _, err := p.Current(context.Background(), 25, 121, base); err != nil {
-		t.Fatal(err)
-	}
-	clockNow = func() time.Time { return base.Add(WeatherCacheTTL + time.Hour) }
-	if w, ok := p.CurrentCached(25, 121, base); !ok || w.RainMM != 0.8 {
-		t.Fatalf("TTL 過期後 CurrentCached 應 serve-stale：w=%v ok=%v", w, ok)
-	}
-}
-
-func TestCurrentCachedFallsBackToPreviousHourBucket(t *testing.T) {
-	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
-	originalNow := clockNow
-	clockNow = func() time.Time { return base }
-	t.Cleanup(func() { clockNow = originalNow })
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"current":{"precipitation":0.8}}`)
-	}))
-	defer srv.Close()
-	p := NewOpenMeteoProvider(srv.URL)
-	want, err := p.Current(context.Background(), 25, 121, base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	future := base.Add(time.Hour)
-	if got, ok := p.CurrentCached(25, 121, future); ok {
-		t.Fatalf("未來時段不得撿前一小時桶：got=%v", got)
-	}
-	clockNow = func() time.Time { return future }
-	if got, ok := p.CurrentCached(25, 121, future); !ok || got != want {
-		t.Fatalf("牆鐘跨整點後，當下小時應命中前桶：got=%v want=%v ok=%v", got, want, ok)
-	}
-	if got, ok := p.CurrentCached(25, 121, base.Add(2*time.Hour)); ok {
-		t.Fatalf("跨兩個整點應 miss：got=%v", got)
+	for _, tc := range []struct {
+		name                   string
+		warm                   bool
+		nowOffset, queryOffset time.Duration
+		wantHit                bool
+	}{
+		{"cold cache never fetches", false, 0, 0, false},
+		{"warm cache never refetches", true, 0, 0, true},
+		{"expired entry serves stale", true, WeatherCacheTTL + time.Hour, 0, true},
+		{"future hour cannot borrow previous bucket", true, 0, time.Hour, false},
+		{"current hour falls back to previous bucket", true, time.Hour, time.Hour, true},
+		{"two hours away misses", true, time.Hour, 2 * time.Hour, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				fmt.Fprint(w, `{"current":{"precipitation":0.8}}`)
+			}))
+			t.Cleanup(srv.Close)
+			now := base
+			setTestClock(t, func() time.Time { return now })
+			p := NewOpenMeteoProvider(srv.URL)
+			wantCalls := int32(0)
+			if tc.warm {
+				if _, err := p.Current(context.Background(), 25.0478, 121.5170, base); err != nil {
+					t.Fatal(err)
+				}
+				wantCalls = 1
+			}
+			now = base.Add(tc.nowOffset)
+			got, ok := p.CurrentCached(25.0478, 121.5170, base.Add(tc.queryOffset))
+			if ok != tc.wantHit || (ok && got.RainMM != 0.8) || calls.Load() != wantCalls {
+				t.Fatalf("cached=%v hit=%v calls=%d, want hit=%v calls=%d", got, ok, calls.Load(), tc.wantHit, wantCalls)
+			}
+		})
 	}
 }
 
 func TestWeatherCacheEvictsOldEntriesOnSuccessfulCurrent(t *testing.T) {
 	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
-	originalNow := clockNow
-	clockNow = func() time.Time { return base }
-	t.Cleanup(func() { clockNow = originalNow })
+	setTestClock(t, func() time.Time { return base })
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"current":{"precipitation":0.8}}`)
@@ -137,10 +99,8 @@ func TestWeatherCacheEvictsOldEntriesOnSuccessfulCurrent(t *testing.T) {
 
 func TestMarkFailEvictsExpiredFailures(t *testing.T) {
 	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
-	originalNow := clockNow
 	now := base.Add(-time.Hour - time.Second)
-	clockNow = func() time.Time { return now }
-	t.Cleanup(func() { clockNow = originalNow })
+	setTestClock(t, func() time.Time { return now })
 
 	p := NewOpenMeteoProvider("").(*openMeteoProvider)
 	p.markFail("old-bucket", fmt.Errorf("old failure"))
@@ -164,9 +124,7 @@ func TestWeatherNegativeCache(t *testing.T) {
 	}))
 	defer srv.Close()
 	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
-	originalNow := clockNow
-	clockNow = func() time.Time { return base }
-	t.Cleanup(func() { clockNow = originalNow })
+	setTestClock(t, func() time.Time { return base })
 	p := NewOpenMeteoProvider(srv.URL)
 	if _, err := p.Current(context.Background(), 25, 121, base); err == nil || calls != 1 {
 		t.Fatalf("首抓應失敗：err=%v calls=%d", nil, calls)
@@ -209,9 +167,7 @@ func TestOpenMeteoCacheExpires(t *testing.T) {
 	}))
 	defer srv.Close()
 	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
-	originalNow := clockNow
-	clockNow = func() time.Time { return base }
-	t.Cleanup(func() { clockNow = originalNow })
+	setTestClock(t, func() time.Time { return base })
 	p := NewOpenMeteoProvider(srv.URL)
 	if _, err := p.Current(context.Background(), 25, 121, base); err != nil || calls != 1 {
 		t.Fatalf("first fetch: err=%v calls=%d", err, calls)
@@ -225,9 +181,7 @@ func TestOpenMeteoCacheExpires(t *testing.T) {
 // meal_time 在未來 → 改打 hourly forecast，取目標小時的降雨量
 func TestFutureHourUsesHourlyForecast(t *testing.T) {
 	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
-	orig := clockNow
-	clockNow = func() time.Time { return base }
-	defer func() { clockNow = orig }()
+	setTestClock(t, func() time.Time { return base })
 
 	var gotQuery url.Values
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -249,9 +203,7 @@ func TestFutureHourUsesHourlyForecast(t *testing.T) {
 // 同座標不同小時是不同快取條目；同小時命中快取不再打 API
 func TestHourBucketsSeparateCacheEntries(t *testing.T) {
 	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
-	orig := clockNow
-	clockNow = func() time.Time { return base }
-	defer func() { clockNow = orig }()
+	setTestClock(t, func() time.Time { return base })
 
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

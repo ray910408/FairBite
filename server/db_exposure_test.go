@@ -2,25 +2,14 @@ package main
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestLoadExposureAggregatesAcrossMembers(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const u1 = "d7d7d7d7-d7d7-d7d7-d7d7-d7d7d7d7d7d7"
 	const u2 = "e7e7e7e7-e7e7-e7e7-e7e7-e7e7e7e7e7e7"

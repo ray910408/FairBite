@@ -12,7 +12,7 @@ vi.mock('./supabase', () => ({
   supabase: { auth: { getSession: mocks.getSession } },
 }))
 
-import { editConditions, searchRoom } from './api'
+import { chooseLocation, confirmDraw, editConditions, redrawRoom, searchRoom, voteLocation } from './api'
 
 const degradedWarning = '外部搜尋暫時失敗，本次使用 30 天內的快取資料'
 
@@ -171,6 +171,46 @@ describe('editConditions', () => {
   })
 })
 
+describe('pending draw actions', () => {
+  beforeEach(() => {
+    mocks.getSession.mockResolvedValue({ data: { session: { access_token: 'token' } } })
+    vi.unstubAllGlobals()
+  })
+
+  it.each([
+    ['confirm', confirmDraw],
+    ['redraw', redrawRoom],
+  ] as const)('%s 綁定所見 draw version', async (action, fn) => {
+    const fetchStub = vi.fn().mockResolvedValue(new Response('{}'))
+    vi.stubGlobal('fetch', fetchStub)
+    await expect(fn('room-1', 7)).resolves.toBeNull()
+    expect(fetchStub).toHaveBeenCalledWith(`/api/rooms/room-1/${action}`, expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ version: 7 }),
+    }))
+  })
+})
+
+describe('location actions', () => {
+  beforeEach(() => {
+    mocks.getSession.mockResolvedValue({ data: { session: { access_token: 'token' } } })
+    vi.unstubAllGlobals()
+  })
+
+  it('表決與選點都綁定 search version', async () => {
+    const fetchStub = vi.fn().mockResolvedValue(new Response('{}'))
+    vi.stubGlobal('fetch', fetchStub)
+    await voteLocation('room-1', true, 3)
+    await chooseLocation('room-1', 25.1, 121.6, 3)
+    expect(fetchStub).toHaveBeenNthCalledWith(1, '/api/rooms/room-1/location-vote', expect.objectContaining({
+      body: JSON.stringify({ want: true, version: 3 }),
+    }))
+    expect(fetchStub).toHaveBeenNthCalledWith(2, '/api/rooms/room-1/location', expect.objectContaining({
+      body: JSON.stringify({ lat: 25.1, lng: 121.6, version: 3 }),
+    }))
+  })
+})
+
 describe('leaveRooms', () => {
   const fetchStub = vi.fn()
 
@@ -186,10 +226,25 @@ describe('leaveRooms', () => {
     vi.unstubAllGlobals()
   })
 
-  it('fetch 失敗時靜默 resolve，不向外 throw', async () => {
+  it('fetch 失敗時傳遞錯誤，下一次可重新離席', async () => {
     fetchStub.mockRejectedValue(new Error('down'))
     const { leaveRooms } = await import('./api')
+    await expect(leaveRooms()).rejects.toThrow('down')
+    fetchStub.mockResolvedValue(new Response('{}'))
     await expect(leaveRooms()).resolves.toBeUndefined()
+    expect(fetchStub).toHaveBeenCalledTimes(2)
+  })
+
+  it('HTTP 500 不可視為已成功離席', async () => {
+    fetchStub.mockResolvedValue(new Response('{}', { status: 500 }))
+    const { leaveRooms } = await import('./api')
+    await expect(leaveRooms()).rejects.toThrow('離席失敗（500）')
+  })
+
+  it('逾時向呼叫端傳遞，不靜默成功', async () => {
+    fetchStub.mockRejectedValue(new DOMException('timed out', 'TimeoutError'))
+    const { leaveRooms } = await import('./api')
+    await expect(leaveRooms()).rejects.toMatchObject({ name: 'TimeoutError' })
   })
 
   it('正常路徑打 POST /api/leave 且帶 5 秒 AbortSignal', async () => {

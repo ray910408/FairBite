@@ -1,6 +1,20 @@
 import { isGoogleSourced } from './placesSource'
 import type { MemberRow } from './types'
 
+export function buildGoogleMapsPlaceUrl(
+  name: string, lat: number, lng: number, placeId: string, source: string,
+): string {
+  const q = new URLSearchParams({
+    api: '1',
+    query: `${name} ${lat},${lng}`,
+  })
+  // mock identifiers are local fixtures, never Google Place IDs.
+  if (placeId && isGoogleSourced(source) && !placeId.startsWith('mock-')) {
+    q.set('query_place_id', placeId)
+  }
+  return `https://www.google.com/maps/search/?${q.toString()}`
+}
+
 export function buildMapsUrl(
   lat: number, lng: number, placeId: string, source: string,
   transport: MemberRow['transport'],

@@ -31,62 +31,51 @@ func TestLoadAppLocationAfterDotenv(t *testing.T) {
 		})
 	}
 
-	t.Run("先載入 dotenv 再解析 APP_TZ", func(t *testing.T) {
-		unsetAppTZ(t)
-		location, err := loadAppLocationAfterDotenv(writeEnv(t, "Asia/Tokyo"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if location.String() != "Asia/Tokyo" {
-			t.Fatalf("location = %q, want Asia/Tokyo", location)
-		}
-	})
-
-	t.Run("真環境變數優先於 dotenv", func(t *testing.T) {
-		t.Setenv("APP_TZ", "Asia/Taipei")
-		location, err := loadAppLocationAfterDotenv(writeEnv(t, "Asia/Tokyo"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if location.String() != "Asia/Taipei" {
-			t.Fatalf("location = %q, want Asia/Taipei", location)
-		}
-	})
-
-	t.Run("dotenv 的無效時區必須回傳錯誤", func(t *testing.T) {
-		unsetAppTZ(t)
-		if _, err := loadAppLocationAfterDotenv(writeEnv(t, "Invalid/NotAZone")); err == nil {
-			t.Fatal("invalid APP_TZ must fail")
-		}
-	})
-
-	t.Run("真環境變數的無效時區必須回傳錯誤", func(t *testing.T) {
-		t.Setenv("APP_TZ", "Invalid/NotAZone")
-		if _, err := loadAppLocationAfterDotenv(writeEnv(t, "Asia/Taipei")); err == nil {
-			t.Fatal("invalid environment APP_TZ must fail")
-		}
-	})
+	for _, tc := range []struct {
+		name, dotenv, env, want string
+		wantErr                 bool
+	}{
+		{"dotenv 時區", "Asia/Tokyo", "", "Asia/Tokyo", false},
+		{"環境變數優先", "Asia/Tokyo", "Asia/Taipei", "Asia/Taipei", false},
+		{"無效 dotenv 時區", "Invalid/NotAZone", "", "", true},
+		{"無效環境時區", "Asia/Taipei", "Invalid/NotAZone", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.env == "" {
+				unsetAppTZ(t)
+			} else {
+				t.Setenv("APP_TZ", tc.env)
+			}
+			location, err := loadAppLocationAfterDotenv(writeEnv(t, tc.dotenv))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error = %v, wantErr = %v", err, tc.wantErr)
+			}
+			if !tc.wantErr && location.String() != tc.want {
+				t.Fatalf("location = %q, want %q", location, tc.want)
+			}
+		})
+	}
 }
 
 func TestRoomEvalTime(t *testing.T) {
 	base := time.Date(2026, 8, 13, 14, 0, 0, 0, appLocation)
-	orig := clockNow
-	clockNow = func() time.Time { return base }
-	defer func() { clockNow = orig }()
-
-	if got := roomEvalTime(RoomRow{}); !got.Equal(base) {
-		t.Fatalf("meal_time NULL 應回現在：%v", got)
-	}
-	future := base.Add(5 * time.Hour)
-	if got := roomEvalTime(RoomRow{MealTime: &future}); !got.Equal(future) {
-		t.Fatalf("未來的 meal_time 應原樣採用：%v", got)
-	}
-	past := base.Add(-2 * time.Hour)
-	if got := roomEvalTime(RoomRow{MealTime: &past}); !got.Equal(base) {
-		t.Fatalf("過期的 meal_time 應取 max 回現在：%v", got)
-	}
-	if loc := roomEvalTime(RoomRow{MealTime: &future}).Location(); loc != appLocation {
-		t.Fatalf("回傳值必須在 appLocation：%v", loc)
+	setTestClock(t, func() time.Time { return base })
+	future, past := base.Add(5*time.Hour), base.Add(-2*time.Hour)
+	for _, tc := range []struct {
+		name string
+		meal *time.Time
+		want time.Time
+	}{
+		{"未設定採用現在", nil, base},
+		{"未來用餐時間", &future, future},
+		{"過期採用現在", &past, base},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := roomEvalTime(RoomRow{MealTime: tc.meal})
+			if !got.Equal(tc.want) || got.Location() != appLocation {
+				t.Fatalf("roomEvalTime = %v (%v), want %v in %v", got, got.Location(), tc.want, appLocation)
+			}
+		})
 	}
 }
 

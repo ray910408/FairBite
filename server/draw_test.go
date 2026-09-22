@@ -13,22 +13,26 @@ func cands(ps ...float64) []Candidate {
 	return out
 }
 
-func TestDrawReplayDeterministic(t *testing.T) {
-	ks := cands(0.5, 0.3, 0.2)
-	winner, seed := Draw(ks)
-	if seed == "" {
-		t.Fatal("seed 不可為空")
-	}
-	for i := 0; i < 10; i++ {
-		if got := ReplayWinner(ks, seed); got != winner {
-			t.Fatalf("replay 不一致：%s vs %s", got, winner)
-		}
-	}
-}
-
-func TestDrawEmptyCandidates(t *testing.T) {
-	if w, seed := Draw(nil); w != "" || seed == "" {
-		t.Fatalf("空清單應回空 winner 與非空 seed，got %q %q", w, seed)
+func TestDraw(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		candidates []Candidate
+		wantEmpty  bool
+	}{
+		{"weighted candidates replay deterministically", cands(0.5, 0.3, 0.2), false},
+		{"empty candidates retain a seed", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			winner, seed := Draw(tc.candidates)
+			if seed == "" || (winner == "") != tc.wantEmpty {
+				t.Fatalf("Draw = (%q, %q)", winner, seed)
+			}
+			for i := 0; i < 10; i++ {
+				if got := ReplayWinner(tc.candidates, seed); got != winner {
+					t.Fatalf("replay = %q, want %q", got, winner)
+				}
+			}
+		})
 	}
 }
 

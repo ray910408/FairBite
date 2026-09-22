@@ -85,6 +85,7 @@ type EngineInput struct {
 	Satisfaction         map[string]float64       // key = UserID；無樣本的成員不在 map；nil = 無資料
 	Exploration          string                   // familiar/balanced/explore；"" 視為 balanced
 	CuisineFilter        bool                     // 房主菜系過濾開關（Round 3 spec §6）：開啟時菜系成為房間層硬性條件
+	BatchExcluded        map[string]bool          // 本批重轉排除；重算與退房不得讓它復活
 }
 
 type EngineResult struct {
@@ -535,6 +536,11 @@ func Evaluate(in EngineInput) EngineResult {
 	var res EngineResult
 	survivors := make([]Restaurant, 0, len(in.Restaurants))
 	for _, r := range in.Restaurants {
+		if in.BatchExcluded[rkey(r)] {
+			res.Excluded = append(res.Excluded, Excluded{Restaurant: r,
+				Kinds: []string{"batch"}, Reason: "本批已排除"})
+			continue
+		}
 		if kinds, reasons := hardExclude(r, in.Members, in.Now, in.CuisineFilter); len(kinds) > 0 {
 			res.Excluded = append(res.Excluded, Excluded{r, kinds, strings.Join(reasons, "；")})
 			continue

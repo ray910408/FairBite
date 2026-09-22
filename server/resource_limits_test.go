@@ -60,10 +60,8 @@ func TestFullWeatherCacheDoesNotReturnUncacheableScoringData(t *testing.T) {
 }
 
 func TestLimiterStoreBoundAndRecovery(t *testing.T) {
-	originalNow := clockNow
 	now := clockNow()
-	clockNow = func() time.Time { return now }
-	t.Cleanup(func() { clockNow = originalNow })
+	setTestClock(t, func() time.Time { return now })
 	s := newLimiterStore(2, 1)
 	for i := 0; i < 10000; i++ {
 		if !s.allow(fmt.Sprint(i)) {
@@ -90,10 +88,8 @@ func TestLimiterCleanupNeverResetsUnreplenishedBucket(t *testing.T) {
 	if !s.allow("original") {
 		t.Fatal("first request denied")
 	}
-	originalNow := clockNow
 	now := clockNow().Add(5 * time.Minute)
-	clockNow = func() time.Time { return now }
-	t.Cleanup(func() { clockNow = originalNow })
+	setTestClock(t, func() time.Time { return now })
 	if !s.allow("new") {
 		t.Fatal("new identity denied")
 	}
@@ -103,10 +99,8 @@ func TestLimiterCleanupNeverResetsUnreplenishedBucket(t *testing.T) {
 }
 
 func TestWeatherCleanupIsAmortized(t *testing.T) {
-	originalNow := clockNow
 	now := clockNow()
-	clockNow = func() time.Time { return now }
-	t.Cleanup(func() { clockNow = originalNow })
+	setTestClock(t, func() time.Time { return now })
 	p := NewOpenMeteoProvider("").(*openMeteoProvider)
 	p.markFail("first", fmt.Errorf("failure"))
 	p.failAt["old"] = now.Add(-2 * time.Hour)

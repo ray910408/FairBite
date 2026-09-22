@@ -8,6 +8,7 @@ import { suggestCuisines, type HistoryRow } from '../lib/prefsLearning'
 import { loadLastDeparture, saveLastDeparture, type DeparturePoint } from '../lib/departure'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import { getUid } from '../lib/uid'
+import { applyDefaultPrefs } from '../lib/defaultPrefs'
 import { Alert, Logo, LogOut, Spinner } from '../components/icons'
 import { LeaveConfirm } from '../components/LeaveConfirm'
 import LocationPicker from '../components/LocationPicker'
@@ -15,31 +16,6 @@ import { RecentRatingPrompt } from '../components/RatingPrompt'
 import CustomWheel from '../components/CustomWheel'
 
 type PrivatePrefs = { default_prefs: Record<string, unknown> }
-
-// default_prefs 帶入（spec §4；eng review D18 客戶端直寫版，取代 RPC 五欄位框架）：
-// 建/加成功後、導頁前，若有預設偏好就寫進自己的 member row（lobby 的 members_update
-// RLS 本來就允許）。失敗只影響預設值（罕見：搜尋凍結競態），靜默接受不擋導頁。
-async function applyDefaultPrefs(roomId: string) {
-  const uid = await getUid()
-  if (!uid) return
-  const appliedKey = `prefs-applied:${roomId}:${uid}`
-  if (localStorage.getItem(appliedKey)) return
-  const { data: profile, error: profileError } = await supabase.rpc('get_my_default_prefs').single<PrivatePrefs>()
-  if (profileError) return
-  const raw = (profile?.default_prefs as { cuisines?: string[] } | null)?.cuisines
-  // 詞彙可能收縮（如 2026-08-13 移除 sichuan）：只帶入仍在選單上的 tag，
-  // 免得既存預設偏好裡的死選項繼續拖低滿足度 EMA（永無 pref hit）
-  const allowed = new Set(CUISINE_OPTIONS.map(([k]) => k))
-  const cuisines = Array.isArray(raw) ? raw.filter(c => allowed.has(c)) : raw
-  if (!Array.isArray(cuisines) || cuisines.length === 0) {
-    localStorage.setItem(appliedKey, '1')
-    return
-  }
-  const { error } = await supabase.from('room_members').update({ cuisines })
-    .eq('room_id', roomId).eq('user_id', uid)
-    .eq('cuisines', '[]') // 只填仍是預設的列：重複加入不得覆蓋使用者已調好的條件（task6 review r1）
-  if (!error) localStorage.setItem(appliedKey, '1')
-}
 
 export default function HomePage() {
   const nav = useNavigate()
@@ -63,6 +39,7 @@ export default function HomePage() {
   // HomePage.test.ts 依 useState 呼叫順序 mock
   const [leaveTarget, setLeaveTarget] = useState<LeaveTarget | null>(null)
   const [suggestionLoadError, setSuggestionLoadError] = useState('')
+  const [authState, setAuthState] = useState<'checking' | 'guest' | 'member' | 'error'>('checking')
   const location = useLocation()
   // 每次 mount 只做一次離席決策：消耗旗標的 replace 會讓 location 變、下面的 effect
   // 重跑，沒有這道閘就會在 doLeave() 還在飛的時候又走一次查房籍→開 dialog
@@ -115,15 +92,31 @@ export default function HomePage() {
     suggestionRequest.current++
   }, [])
 
+  const loadAuthState = useCallback(async () => {
+    setAuthState('checking')
+    try {
+      const { data, error } = await supabase.auth.getUser()
+      if (error || !data.user) throw error ?? new Error('Missing user')
+      const user = data.user
+      setAuthState(user.is_anonymous === true ||
+        localStorage.getItem(`guest-upgrade:${user.id}`) !== null ? 'guest' : 'member')
+    } catch {
+      setAuthState('error')
+    }
+  }, [])
+
   useEffect(() => {
     suggestionsMounted.current = true
     void loadSuggestions()
+    void loadAuthState()
     return cancelSuggestionLoads
-  }, [cancelSuggestionLoads, loadSuggestions])
+  }, [cancelSuggestionLoads, loadAuthState, loadSuggestions])
 
   // 退房是所有路徑的共同終點：leavePending 直到 settle 才解除，期間建房/加入維持禁用
   const doLeave = useCallback(() => {
-    void import('../lib/api').then(m => m.leaveRooms()).finally(() => setLeavePending(false))
+    void import('../lib/api').then(m => m.leaveRooms())
+      .catch(() => { /* 首頁維持 best-effort；下次進首頁再確認房籍。 */ })
+      .finally(() => setLeavePending(false))
   }, [])
 
   // mount 是所有繞過路徑的共同咽喉（瀏覽器上一頁、手機返回手勢、直接輸網址、
@@ -255,8 +248,8 @@ export default function HomePage() {
           <p className="text-sm text-fg-muted">
             選好出發點與用餐時間建立房間，把邀請碼給大家，各自設好條件就能開始搜尋。
           </p>
-          <LocationPicker value={departure} onChange={handleDepartureChange} />
-          <div className="space-y-2">
+          {authState === 'member' && <LocationPicker value={departure} onChange={handleDepartureChange} />}
+          {authState === 'member' && <div className="space-y-2">
             <span className="text-sm font-semibold text-fg-muted">用餐時間</span>
             <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
               {([['now', '馬上出發'], ['custom', '自訂時間']] as const).map(([key, label]) => (
@@ -290,11 +283,21 @@ export default function HomePage() {
                 </select>
               </div>
             )}
-          </div>
-          <button onClick={createRoom} disabled={busy || !departure || leavePending} className="btn btn-primary w-full">
+          </div>}
+          {authState === 'guest' ? (
+            <Link to="/auth?mode=register" className="btn btn-primary w-full">註冊後建立房間</Link>
+          ) : authState === 'member' ? <button onClick={createRoom} disabled={busy || !departure || leavePending} className="btn btn-primary w-full">
             {busy && <Spinner className="h-5 w-5" />}
             {busy ? '建立中…' : '建立房間'}
-          </button>
+          </button> : authState === 'error' ? (
+            <div className="space-y-2">
+              <p className="flex items-center gap-2 text-sm text-danger" role="alert">
+                <Alert className="h-5 w-5 shrink-0" />
+                無法確認帳號狀態，請重新檢查
+              </p>
+              <button type="button" className="btn btn-primary w-full" onClick={loadAuthState}>重新檢查</button>
+            </div>
+          ) : <p role="status" className="text-sm text-fg-muted">正在確認帳號狀態…</p>}
           {createError && (
             <p role="alert" className="banner bg-danger-soft text-danger">
               <Alert className="h-5 w-5 shrink-0" />

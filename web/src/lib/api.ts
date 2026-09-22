@@ -75,12 +75,28 @@ export async function drawRoom(roomId: string): Promise<string | null> {
   return postAction(`/api/rooms/${roomId}/draw`, '抽選失敗')
 }
 
+export async function confirmDraw(roomId: string, version: number): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/confirm`, '確認失敗', { version })
+}
+
+export async function redrawRoom(roomId: string, version: number): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/redraw`, '重轉失敗', { version })
+}
+
 export async function startVoting(roomId: string): Promise<string | null> {
   return postAction(`/api/rooms/${roomId}/start-voting`, '開始投票失敗')
 }
 
 export async function editConditions(roomId: string): Promise<string | null> {
   return postAction(`/api/rooms/${roomId}/edit-conditions`, '修改條件失敗')
+}
+
+export async function voteLocation(roomId: string, want: boolean, version: number): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/location-vote`, '改地點表決失敗', { want, version })
+}
+
+export async function chooseLocation(roomId: string, lat: number, lng: number, version: number): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/location`, '更新地點失敗', { lat, lng, version })
 }
 
 // 投票/否決/收回的唯一入口（D15）：Go 單一交易寫票 + 權威重算，Realtime 推回全員
@@ -91,7 +107,7 @@ export async function voteRoom(roomId: string, restaurantId: string,
 }
 
 // 回首頁＝離席（ADR-0007）：mount 時打一次，退掉自己的所有房（殘留舊房自癒）。
-// 失敗靜默——舊房留著，下次進首頁重試；不能擋首頁操作。
+// 錯誤交給呼叫端：加入新房必須先確認離席成功；首頁另採 best-effort。
 // 5 秒 timeout（eng review 1A）：建房/加入鈕等本函式 settle 才解禁，Go 惸而不斷時
 // 不能讓只需 Supabase 的建房入口被懸掛的 fetch 鎖死。
 // single-flight（eng review D12）：StrictMode dev 會雙跑 mount effect，第二發若晚於
@@ -101,9 +117,8 @@ let leaveInFlight: Promise<void> | null = null
 export function leaveRooms(): Promise<void> {
   leaveInFlight ??= (async () => {
     try {
-      await post('/api/leave', undefined, { signal: AbortSignal.timeout(5000) })
-    } catch {
-      // Go server 連不上／逾時：靜默，下次進首頁自癒
+      const response = await post('/api/leave', undefined, { signal: AbortSignal.timeout(5000) })
+      if (!response.ok) throw new Error(`離席失敗（${response.status}）`)
     } finally {
       leaveInFlight = null
     }
