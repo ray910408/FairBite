@@ -3,14 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestLoadMembersSQLSelectsReady(t *testing.T) {
@@ -20,17 +18,9 @@ func TestLoadMembersSQLSelectsReady(t *testing.T) {
 }
 
 func TestMemberConditionUpdateBlocksUntilFreezeCommitAndReadyRPCRejects(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const userID = "e5e5e5e5-e5e5-e5e5-e5e5-e5e5e5e5e5e5"
 	const roomID = "f5f5f5f5-f5f5-f5f5-f5f5-f5f5f5f5f5f5"
@@ -157,17 +147,9 @@ func TestMemberConditionUpdateBlocksUntilFreezeCommitAndReadyRPCRejects(t *testi
 }
 
 func TestJoinRoomBlocksUntilFreezeCommitThenReturnsNull(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const hostID = "a6a6a6a6-a6a6-a6a6-a6a6-a6a6a6a6a6a6"
 	const joinerID = "b6b6b6b6-b6b6-b6b6-b6b6-b6b6b6b6b6b6"

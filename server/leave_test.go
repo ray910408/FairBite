@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -15,17 +14,9 @@ import (
 
 func leaveTestPool(t *testing.T) (*pgxpool.Pool, context.Context) {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	t.Cleanup(cancel)
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 	return pool, ctx
 }
 
@@ -469,10 +460,10 @@ func TestConcurrentLeavesDeleteRoomExactlyOnce(t *testing.T) {
 // PR #16 review P1 回歸：search 的 Places 呼叫期間房主退房（繼任發生），
 // freeze 交易鎖內必須重驗 host_id 並拒絕前房主推進房間。
 type hostLeavingProvider struct {
-	pool   *pgxpool.Pool
-	roomID string
-	uid    string
-	inner  PlacesProvider
+	pool       *pgxpool.Pool
+	roomID     string
+	uid        string
+	inner      PlacesProvider
 	afterLeave func(context.Context) error
 }
 
@@ -490,87 +481,61 @@ func (p hostLeavingProvider) SearchNearby(ctx context.Context, lat, lng float64,
 	return p.inner.SearchNearby(ctx, lat, lng, radiusM, cuisines)
 }
 
-func TestSearchAfterHostLeaveMidFlightRejected(t *testing.T) {
-	pool, ctx := leaveTestPool(t)
-	const host = "77777777-abab-4bab-8bab-777777777777"
-	const memberB = "88888888-abab-4bab-8bab-888888888888"
-	const roomID = "99999999-abab-4bab-8bab-999999999999"
-	t.Cleanup(func() {
-		pool.Exec(context.Background(), `delete from rooms where id = $1`, roomID)
-		pool.Exec(context.Background(), `delete from auth.users where id in ($1,$2)`, host, memberB)
-	})
-	if _, err := pool.Exec(ctx, `insert into auth.users (id, email) values
-		($1,'midflight-host@test.dev'), ($2,'midflight-b@test.dev')`, host, memberB); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `insert into rooms (id, host_id, status, center_lat, center_lng)
-		values ($1, $2, 'lobby', 25.0478, 121.5170)`, roomID, host); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `insert into room_members (room_id, user_id, joined_at, ready) values
-		($1, $2, now() - interval '1 minute', false), ($1, $3, now(), true)`, roomID, host, memberB); err != nil {
-		t.Fatal(err)
-	}
-	h := newTestAppWithProvider(t, pool,
-		hostLeavingProvider{pool: pool, roomID: roomID, uid: host, inner: NewMockProvider()})
-	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", host))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("繼任後前房主的 in-flight search 應 403：got %d body=%s", w.Code, w.Body.String())
-	}
-	var status, hostID string
-	if err := pool.QueryRow(ctx, `select status, host_id from rooms where id = $1`, roomID).
-		Scan(&status, &hostID); err != nil {
-		t.Fatal(err)
-	}
-	if status != "lobby" {
-		t.Fatalf("房間不得被前房主推進：status = %s, want lobby", status)
-	}
-	if hostID != memberB {
-		t.Fatalf("繼任結果不得被覆寫：host_id = %s, want %s", hostID, memberB)
-	}
-}
-
-func TestSearchAfterHostLeaveMidFlightForbiddenBeforeReadiness(t *testing.T) {
-	pool, ctx := leaveTestPool(t)
-	const host = "17777777-abab-4bab-8bab-777777777777"
-	const memberB = "18888888-abab-4bab-8bab-888888888888"
-	const memberC = "19999999-abab-4bab-8bab-999999999999"
-	const roomID = "20000000-abab-4bab-8bab-000000000000"
-	t.Cleanup(func() {
-		pool.Exec(context.Background(), `delete from rooms where id = $1`, roomID)
-		pool.Exec(context.Background(), `delete from auth.users where id in ($1,$2,$3)`, host, memberB, memberC)
-	})
-	if _, err := pool.Exec(ctx, `insert into auth.users (id, email) values
-		($1,'midflight-priority-host@test.dev'), ($2,'midflight-priority-b@test.dev'),
-		($3,'midflight-priority-c@test.dev')`, host, memberB, memberC); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `insert into rooms (id, host_id, status, center_lat, center_lng)
-		values ($1, $2, 'lobby', 25.0478, 121.5170)`, roomID, host); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `insert into room_members (room_id, user_id, joined_at, ready) values
-		($1, $2, now() - interval '2 minutes', false),
-		($1, $3, now() - interval '1 minute', true),
-		($1, $4, now(), true)`, roomID, host, memberB, memberC); err != nil {
-		t.Fatal(err)
-	}
-	h := newTestAppWithProvider(t, pool, hostLeavingProvider{
-		pool: pool, roomID: roomID, uid: host, inner: NewMockProvider(),
-		afterLeave: func(ctx context.Context) error {
-			_, err := pool.Exec(ctx, `update room_members set ready = false where room_id = $1 and user_id = $2`, roomID, memberC)
-			return err
-		},
-	})
-	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", host))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("前房主失去權限應優先於 remaining guest readiness：got %d body=%s", w.Code, w.Body.String())
+func TestSearchAfterHostLeaveMidFlight(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		unreadyGuest bool
+	}{
+		{"former host rejected after succession", false},
+		{"authorization precedes remaining guest readiness", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool, ctx := leaveTestPool(t)
+			const host = "77777777-abab-4bab-8bab-777777777777"
+			const memberB = "88888888-abab-4bab-8bab-888888888888"
+			const memberC = "19999999-abab-4bab-8bab-999999999999"
+			const roomID = "99999999-abab-4bab-8bab-999999999999"
+			ids := []string{host, memberB}
+			if tc.unreadyGuest {
+				ids = append(ids, memberC)
+			}
+			t.Cleanup(func() {
+				pool.Exec(context.Background(), `delete from rooms where id=$1`, roomID)
+				pool.Exec(context.Background(), `delete from auth.users where id=any($1::uuid[])`, ids)
+			})
+			for _, uid := range ids {
+				if _, err := pool.Exec(ctx, `insert into auth.users(id,email) values($1,$2)`, uid, uid+"@test.dev"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := pool.Exec(ctx, `insert into rooms(id,host_id,status,center_lat,center_lng) values($1,$2,'lobby',25.0478,121.5170)`, roomID, host); err != nil {
+				t.Fatal(err)
+			}
+			for i, uid := range ids {
+				if _, err := pool.Exec(ctx, `insert into room_members(room_id,user_id,joined_at,ready) values($1,$2,now()-make_interval(mins => $3),$4)`, roomID, uid, len(ids)-i, uid != host); err != nil {
+					t.Fatal(err)
+				}
+			}
+			provider := hostLeavingProvider{pool: pool, roomID: roomID, uid: host, inner: NewMockProvider()}
+			if tc.unreadyGuest {
+				provider.afterLeave = func(ctx context.Context) error {
+					_, err := pool.Exec(ctx, `update room_members set ready=false where room_id=$1 and user_id=$2`, roomID, memberC)
+					return err
+				}
+			}
+			h := newTestAppWithProvider(t, pool, provider)
+			w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", host), "/api/rooms/"+roomID+"/search", "")
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("former host search must be 403: got %d %s", w.Code, w.Body.String())
+			}
+			var status, hostID string
+			if err := pool.QueryRow(ctx, `select status,host_id from rooms where id=$1`, roomID).Scan(&status, &hostID); err != nil {
+				t.Fatal(err)
+			}
+			if status != "lobby" || hostID != memberB {
+				t.Fatalf("succession overwritten: status=%s host=%s", status, hostID)
+			}
+		})
 	}
 }
 

@@ -84,49 +84,30 @@ func TestProductVocabularyIncludesFastFoodAndDessertWithoutHalal(t *testing.T) {
 	}
 }
 
-// 地板：每個 CUISINE_OPTIONS key 至少要有一個 adapter 產得出來——
-// 提供永遠選不到結果的選項，會靜默拖累該成員的滿足度 EMA（永無 pref hit）。
-func TestCuisineOptionsProducibleByAtLeastOneAdapter(t *testing.T) {
-	google, mock := googleProducibleTags(), mockProducibleTags()
-	for _, key := range webOptionKeys(t, "CUISINE_OPTIONS") {
-		if !google[key] && !mock[key] {
-			t.Errorf("CUISINE_OPTIONS 的 %q 沒有任何 adapter 產得出來", key)
-		}
-	}
-}
-
 // Google 缺口已於 2026-08-13 清空：cantonese ← cantonese_restaurant + dim_sum_restaurant、
 // hotpot ← hot_pot_restaurant（官方 Table A 查證），sichuan（無對應 type）自選單移除。
 // 缺口變大代表新增了 Google 產不出的選項，違反 weights.go 的紀律。
-func TestCuisineOptionsGoogleGapIsPinned(t *testing.T) {
-	wantGap := []string{}
-	google := googleProducibleTags()
-	gap := []string{}
-	for _, key := range webOptionKeys(t, "CUISINE_OPTIONS") {
-		if !google[key] {
-			gap = append(gap, key)
-		}
-	}
-	sort.Strings(gap)
-	if !reflect.DeepEqual(gap, wantGap) {
-		t.Errorf("CUISINE_OPTIONS 的 Google 缺口 = %v，want %v——缺口變動必須是刻意決策", gap, wantGap)
-	}
-}
-
-// Mock provider 是本機開發、demo 與 E2E 的預設路徑；每個料理選項都必須能實際命中。
-// 預期缺口刻意釘為空集合，新增選項時不可再靜默漏掉對應的 mock tag。
-func TestCuisineOptionsMockGapIsPinned(t *testing.T) {
-	wantGap := []string{}
-	mock := mockProducibleTags()
-	gap := []string{}
-	for _, key := range webOptionKeys(t, "CUISINE_OPTIONS") {
-		if !mock[key] {
-			gap = append(gap, key)
-		}
-	}
-	sort.Strings(gap)
-	if !reflect.DeepEqual(gap, wantGap) {
-		t.Errorf("CUISINE_OPTIONS 的 mock 缺口 = %v，want %v；若是刻意缺口，請更新此測試並註明理由", gap, wantGap)
+func TestCuisineOptionsAdapterGaps(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		producible func() map[string]bool
+	}{
+		{"Google", googleProducibleTags},
+		{"mock", mockProducibleTags},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			produced := tc.producible()
+			gap := []string{}
+			for _, key := range webOptionKeys(t, "CUISINE_OPTIONS") {
+				if !produced[key] {
+					gap = append(gap, key)
+				}
+			}
+			sort.Strings(gap)
+			if !reflect.DeepEqual(gap, []string{}) {
+				t.Fatalf("CUISINE_OPTIONS adapter gap = %v, want []", gap)
+			}
+		})
 	}
 }
 

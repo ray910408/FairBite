@@ -2,23 +2,12 @@ package main
 
 import (
 	"context"
-	"os"
 	"testing"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestDietaryLegacyHalalFromDatabaseIsIgnored(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
+	pool := newTestPool(t, ctx)
 	// Simulate pre-20260905000100 legacy storage only inside this rollback-only transaction.
 	tx, err := pool.Begin(ctx)
 	if err != nil {

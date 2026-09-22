@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -20,14 +19,17 @@ import (
 )
 
 func newTestApp(t *testing.T, pool *pgxpool.Pool) http.Handler {
+	t.Helper()
 	return newTestAppWithProvider(t, pool, NewMockProvider())
 }
 
 func newTestAppWithProvider(t *testing.T, pool *pgxpool.Pool, places PlacesProvider) http.Handler {
+	t.Helper()
 	return newTestAppWithWeather(t, pool, places, nil)
 }
 
 func newTestAppWithWeather(t *testing.T, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider) http.Handler {
+	t.Helper()
 	t.Setenv("SUPABASE_JWT_SECRET", "test-secret-test-secret-test-secret!")
 	t.Setenv("SUPABASE_JWKS_URL", "") // 外部環境設了就會誤走 JWKS 路徑，HS256 測試必失敗
 	v, err := NewVerifier()
@@ -267,16 +269,8 @@ func (p *blockingProvider) SearchNearby(context.Context, float64, float64, int, 
 }
 
 func TestSearchReadyInvariant(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
+	pool := newTestPool(t, ctx)
 
 	seed := func(t *testing.T, hostID, roomID, guestID string, guestReady bool) {
 		t.Helper()
@@ -324,98 +318,61 @@ func TestSearchReadyInvariant(t *testing.T) {
 		}
 	}
 
-	requestSearch := func(t *testing.T, provider PlacesProvider, weather WeatherProvider, hostID, roomID string) *httptest.ResponseRecorder {
-		t.Helper()
-		h := newTestAppWithWeather(t, pool, provider, weather)
-		r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-		r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		return w
+	for i, tc := range []struct {
+		name                               string
+		withGuest, guestReady, changeReady bool
+		wantCode                           int
+		wantCalls                          int32
+		wantStatus                         string
+	}{
+		{"unready guest blocks paid providers", true, false, false, 409, 0, "lobby"},
+		{"readiness changes during provider call rolls back freeze", true, true, true, 409, 1, "lobby"},
+		{"solo host needs no ready action", false, false, false, 200, 1, "candidates"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hostID := fmt.Sprintf("%d000000-0000-0000-0000-000000000001", 81+i)
+			roomID := fmt.Sprintf("%d000000-0000-0000-0000-000000000003", 81+i)
+			guestID := ""
+			if tc.withGuest {
+				guestID = fmt.Sprintf("%d000000-0000-0000-0000-000000000002", 81+i)
+			}
+			placeID := fmt.Sprintf("ready-table-%d", i)
+			seed(t, hostID, roomID, guestID, tc.guestReady)
+			t.Cleanup(func() { pool.Exec(context.Background(), `delete from public.restaurants where place_id=$1`, placeID) })
+			places := &countingSearchProvider{restaurants: []Restaurant{{PlaceID: placeID, Name: "Ready invariant restaurant", PrimaryType: "restaurant", PriceLevel: 1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440})}}}
+			if tc.changeReady {
+				places.beforeReturn = func(ctx context.Context) error {
+					_, err := pool.Exec(ctx, `update public.room_members set ready=false where room_id=$1 and user_id=$2`, roomID, guestID)
+					return err
+				}
+			}
+			weather := &countingWeatherProvider{}
+			h := newTestAppWithWeather(t, pool, places, weather)
+			w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", hostID), "/api/rooms/"+roomID+"/search", "")
+			if w.Code != tc.wantCode || (tc.wantCode == 409 && !strings.Contains(w.Body.String(), "仍有成員尚未準備")) {
+				t.Fatalf("want %d, got %d %s", tc.wantCode, w.Code, w.Body.String())
+			}
+			if got := places.calls.Load(); got != tc.wantCalls {
+				t.Fatalf("Places calls=%d, want %d", got, tc.wantCalls)
+			}
+			if tc.wantCalls == 0 && weather.currentCalls.Load() != 0 {
+				t.Fatal("unready preflight called weather")
+			}
+			var status string
+			if err := pool.QueryRow(ctx, `select status from public.rooms where id=$1`, roomID).Scan(&status); err != nil {
+				t.Fatal(err)
+			}
+			if status != tc.wantStatus {
+				t.Fatalf("room status=%q, want %q", status, tc.wantStatus)
+			}
+		})
 	}
-
-	openRestaurant := func(placeID string) Restaurant {
-		return Restaurant{
-			PlaceID: placeID, Name: "Ready invariant restaurant", PrimaryType: "restaurant",
-			PriceLevel: 1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
-		}
-	}
-
-	t.Run("old client cannot bypass an unready guest before paid providers", func(t *testing.T) {
-		const hostID = "81000000-0000-0000-0000-000000000001"
-		const guestID = "81000000-0000-0000-0000-000000000002"
-		const roomID = "81000000-0000-0000-0000-000000000003"
-		seed(t, hostID, roomID, guestID, false)
-		places := &countingSearchProvider{}
-		weather := &countingWeatherProvider{}
-		w := requestSearch(t, places, weather, hostID, roomID)
-		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "仍有成員尚未準備") {
-			t.Fatalf("unready search: want specific 409 got %d body %s", w.Code, w.Body.String())
-		}
-		if got := places.calls.Load(); got != 0 {
-			t.Fatalf("unready preflight called Places %d times, want 0", got)
-		}
-		if got := weather.currentCalls.Load(); got != 0 {
-			t.Fatalf("unready preflight called weather %d times, want 0", got)
-		}
-	})
-
-	t.Run("readiness change during provider call rolls the freeze transaction back", func(t *testing.T) {
-		const hostID = "82000000-0000-0000-0000-000000000001"
-		const guestID = "82000000-0000-0000-0000-000000000002"
-		const roomID = "82000000-0000-0000-0000-000000000003"
-		const placeID = "ready-race-place"
-		seed(t, hostID, roomID, guestID, true)
-		t.Cleanup(func() { pool.Exec(context.Background(), `delete from public.restaurants where place_id = $1`, placeID) })
-		places := &countingSearchProvider{
-			restaurants: []Restaurant{openRestaurant(placeID)},
-			beforeReturn: func(ctx context.Context) error {
-				_, err := pool.Exec(ctx, `update public.room_members set ready = false where room_id = $1 and user_id = $2`, roomID, guestID)
-				return err
-			},
-		}
-		w := requestSearch(t, places, nil, hostID, roomID)
-		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "仍有成員尚未準備") {
-			t.Fatalf("ready race: want specific 409 got %d body %s", w.Code, w.Body.String())
-		}
-		var status string
-		if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).Scan(&status); err != nil {
-			t.Fatal(err)
-		}
-		if status != "lobby" {
-			t.Fatalf("ready race left room in %q, want lobby", status)
-		}
-	})
-
-	t.Run("solo host searches without a ready action", func(t *testing.T) {
-		const hostID = "83000000-0000-0000-0000-000000000001"
-		const roomID = "83000000-0000-0000-0000-000000000003"
-		const placeID = "ready-solo-place"
-		seed(t, hostID, roomID, "", false)
-		t.Cleanup(func() { pool.Exec(context.Background(), `delete from public.restaurants where place_id = $1`, placeID) })
-		places := &countingSearchProvider{restaurants: []Restaurant{openRestaurant(placeID)}}
-		w := requestSearch(t, places, nil, hostID, roomID)
-		if w.Code != http.StatusOK {
-			t.Fatalf("solo host search: want 200 got %d body %s", w.Code, w.Body.String())
-		}
-		if got := places.calls.Load(); got != 1 {
-			t.Fatalf("solo host Places calls = %d, want 1", got)
-		}
-	})
 }
 
 func TestQueryMatchesSurviveRescoreRoundTrip(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const (
 		hostID          = "ae4ae4ae-ae4a-4e4a-8e4a-ae4ae4ae4ae4"
@@ -498,17 +455,9 @@ func TestQueryMatchesSurviveRescoreRoundTrip(t *testing.T) {
 }
 
 func TestSearchTaiwaneseQueryMatchPersistsWithoutCanonicalTag(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
+	pool := newTestPool(t, ctx)
 
 	const (
 		hostID  = "ce4ae4ae-ae4a-4e4a-8e4a-ae4ae4ae4ae4"
@@ -602,23 +551,17 @@ func TestAverageMemberRadius(t *testing.T) {
 		{"餘數 .33 截斷", []int{1000, 1000, 1001}, 1000},
 		{"餘數 .67 也截斷，不進位", []int{1000, 1000, 1002}, 1000},
 	} {
-		if got := averageMemberRadius(membersWithRadii(tc.radii)); got != tc.want {
-			t.Errorf("%s：averageMemberRadius(%v) = %d，want %d", tc.name, tc.radii, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := averageMemberRadius(membersWithRadii(tc.radii)); got != tc.want {
+				t.Errorf("%s：averageMemberRadius(%v) = %d，want %d", tc.name, tc.radii, got, tc.want)
+			}
+		})
 	}
 }
 
 func TestSearchReloadsMemberConditionsAfterProviderCall(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const (
 		hostID     = "51515151-5151-5151-5151-515151515151"
@@ -626,17 +569,17 @@ func TestSearchReloadsMemberConditionsAfterProviderCall(t *testing.T) {
 		placeID    = "member-condition-race"
 		farPlaceID = "member-distance-race-far"
 	)
-	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
 		values ($1, 'member-race@test.dev') on conflict do nothing`, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.rooms
+	if _, err := pool.Exec(ctx, `insert into public.rooms
 		(id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 25.0478, 121.5170)
 		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.room_members
+	if _, err := pool.Exec(ctx, `insert into public.room_members
 		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
 		values ($1, $2, 500, '[]', '[]', 2000, 'walking')
 		on conflict (room_id, user_id) do update
@@ -665,10 +608,7 @@ func TestSearchReloadsMemberConditionsAfterProviderCall(t *testing.T) {
 		},
 	}}
 	h := newTestAppWithProvider(t, pool, provider)
-	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+	w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", hostID), "/api/rooms/"+roomID+"/search", "")
 
 	var body struct {
 		Error      string         `json:"error"`
@@ -692,16 +632,8 @@ func TestSearchReloadsMemberConditionsAfterProviderCall(t *testing.T) {
 }
 
 func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const hostID = "c1414141-4141-4141-8141-414141414141"
 	const roomID = "c2424242-4242-4242-8242-424242424242"
@@ -781,10 +713,7 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 				pool: pool, roomID: roomID, userID: hostID, restaurants: providerRestaurants,
 				addVegetarian: tc.addVegetarian, removeVegetarian: tc.removeVegetarian,
 			})
-			r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-			r.Header.Set("Authorization", "Bearer "+token)
-			w := httptest.NewRecorder()
-			h.ServeHTTP(w, r)
+			w := postTestRequest(h, token, "/api/rooms/"+roomID+"/search", "")
 			if w.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d: %s", w.Code, tc.wantStatus, w.Body.String())
 			}
@@ -799,16 +728,8 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 }
 
 func TestSearchBouncesWhenRadiusGrowsDuringProviderCall(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const (
 		hostID  = "61616161-6161-6161-6161-616161616161"
@@ -816,17 +737,17 @@ func TestSearchBouncesWhenRadiusGrowsDuringProviderCall(t *testing.T) {
 		placeID = "radius-growth-race"
 		message = "成員條件已於搜尋期間變更，請再按一次開始搜尋"
 	)
-	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
 		values ($1, 'radius-growth@test.dev') on conflict do nothing`, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.rooms
+	if _, err := pool.Exec(ctx, `insert into public.rooms
 		(id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 25.0478, 121.5170)
 		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.room_members
+	if _, err := pool.Exec(ctx, `insert into public.room_members
 		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
 		values ($1, $2, 500, '[]', '[]', 300, 'walking')
 		on conflict (room_id, user_id) do update set max_distance_m = 300`, roomID, hostID); err != nil {
@@ -843,10 +764,7 @@ func TestSearchBouncesWhenRadiusGrowsDuringProviderCall(t *testing.T) {
 		Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
 	}}}
 	h := newTestAppWithProvider(t, pool, provider)
-	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+	w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", hostID), "/api/rooms/"+roomID+"/search", "")
 
 	var body struct {
 		Error string `json:"error"`
@@ -863,172 +781,88 @@ func TestSearchBouncesWhenRadiusGrowsDuringProviderCall(t *testing.T) {
 	}
 }
 
-func TestSearchBouncesWhenMemberJoinsBeforeZeroResults(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+func TestSearchBouncesWhenMemberJoins(t *testing.T) {
+	for _, tc := range []struct {
+		name, hostID, roomID, joinerID, email string
+		lat, lng                              float64
+		fail                                  bool
+	}{
+		{"zero results", "63636363-6363-6363-6363-636363636363", "64646464-6464-6464-6464-646464646464", "65656565-6565-6565-6565-656565656565", "join-422", 25.0478, 121.5170, false},
+		{"provider failure and cache miss", "66666666-6666-6666-6666-666666666666", "67676767-6767-6767-6767-676767676767", "68686868-6868-6868-6868-686868686868", "join-502", 22.6273, 120.3014, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			pool := newTestPool(t, ctx)
 
-	const (
-		hostID     = "63636363-6363-6363-6363-636363636363"
-		roomID     = "64646464-6464-6464-6464-646464646464"
-		joinerID   = "65656565-6565-6565-6565-656565656565"
-		message    = "成員條件已於搜尋期間變更，請再按一次開始搜尋"
-		joinerDist = 3000
-	)
-	for id, email := range map[string]string{hostID: "join-422-host@test.dev", joinerID: "join-422-guest@test.dev"} {
-		if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+			hostID, roomID, joinerID := tc.hostID, tc.roomID, tc.joinerID
+			for id, email := range map[string]string{hostID: tc.email + "-host@test.dev", joinerID: tc.email + "-guest@test.dev"} {
+				if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
 			values ($1, $2) on conflict do nothing`, id, email); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err = pool.Exec(ctx, `insert into public.rooms
+					t.Fatal(err)
+				}
+			}
+			if _, err := pool.Exec(ctx, `insert into public.rooms
 		(id, host_id, status, center_lat, center_lng)
-		values ($1, $2, 'lobby', 25.0478, 121.5170)
-		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = pool.Exec(ctx, `insert into public.room_members
+		values ($1, $2, 'lobby', $3, $4)
+		on conflict (id) do update set status = 'lobby', center_lat = excluded.center_lat, center_lng = excluded.center_lng`, roomID, hostID, tc.lat, tc.lng); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `insert into public.room_members
 		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
 		values ($1, $2, 500, '[]', '[]', 300, 'walking')
 		on conflict (room_id, user_id) do update set max_distance_m = 300`, roomID, hostID); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		pool.Exec(ctx, `delete from public.exposure_stats where user_id in ($1, $2)`, hostID, joinerID)
-		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
-	})
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				pool.Exec(ctx, `delete from public.exposure_stats where user_id in ($1, $2)`, hostID, joinerID)
+				pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+			})
 
-	// 300 獨自搜尋 → 新成員 3000 加入後平均 1650，舊 envelope 不再是超集。
-	provider := memberJoinProvider{pool: pool, roomID: roomID, userID: joinerID, distanceM: joinerDist}
-	h := newTestAppWithProvider(t, pool, provider)
-	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+			// 300 獨自搜尋 → 新成員 3000 加入後平均 1650，舊 envelope 不再是超集。
+			provider := memberJoinProvider{pool: pool, roomID: roomID, userID: joinerID, distanceM: 3000, fail: tc.fail}
+			h := newTestAppWithProvider(t, pool, provider)
+			w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", hostID), "/api/rooms/"+roomID+"/search", "")
 
-	var body struct {
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if w.Code != http.StatusConflict || body.Error != message {
-		t.Fatalf("新成員把平均半徑推大且零結果時應回 409 而非 422：status %d body %s", w.Code, w.Body.String())
-	}
-	var status string
-	if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).Scan(&status); err != nil {
-		t.Fatal(err)
-	}
-	if status != "lobby" {
-		t.Fatalf("這條 409 走在凍結之前，房間必須還在 lobby：got %q", status)
-	}
-}
-
-func TestSearchBouncesWhenMemberJoinsBeforeCacheMiss(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
-
-	const (
-		hostID     = "66666666-6666-6666-6666-666666666666"
-		roomID     = "67676767-6767-6767-6767-676767676767"
-		joinerID   = "68686868-6868-6868-6868-686868686868"
-		message    = "成員條件已於搜尋期間變更，請再按一次開始搜尋"
-		joinerDist = 3000
-	)
-	for id, email := range map[string]string{hostID: "join-502-host@test.dev", joinerID: "join-502-guest@test.dev"} {
-		if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
-			values ($1, $2) on conflict do nothing`, id, email); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// 快取圈外的座標（高雄）→ 30 天內快取為空，與 TestSearchNoCacheReturns502 同一組前提。
-	if _, err = pool.Exec(ctx, `insert into public.rooms
-		(id, host_id, status, center_lat, center_lng)
-		values ($1, $2, 'lobby', 22.6273, 120.3014)
-		on conflict (id) do update set status = 'lobby', center_lat = 22.6273, center_lng = 120.3014`,
-		roomID, hostID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = pool.Exec(ctx, `insert into public.room_members
-		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
-		values ($1, $2, 500, '[]', '[]', 300, 'walking')
-		on conflict (room_id, user_id) do update set max_distance_m = 300`, roomID, hostID); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		pool.Exec(ctx, `delete from public.exposure_stats where user_id in ($1, $2)`, hostID, joinerID)
-		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
-	})
-
-	// provider 失敗 + 舊半徑（300）的高雄快取為空 → 原本走 502；半徑已被推大，該回 409。
-	provider := memberJoinProvider{pool: pool, roomID: roomID, userID: joinerID, distanceM: joinerDist, fail: true}
-	h := newTestAppWithProvider(t, pool, provider)
-	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
-
-	var body struct {
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if w.Code != http.StatusConflict || body.Error != message {
-		t.Fatalf("新成員把平均半徑推大且快取為空時應回 409 而非 502：status %d body %s", w.Code, w.Body.String())
-	}
-	var status string
-	if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).Scan(&status); err != nil {
-		t.Fatal(err)
-	}
-	if status != "lobby" {
-		t.Fatalf("這條 409 走在凍結之前，房間必須還在 lobby：got %q", status)
+			var body struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if w.Code != http.StatusConflict || body.Error != "成員條件已於搜尋期間變更，請再按一次開始搜尋" {
+				t.Fatalf("新成員把平均半徑推大時應優先回 409：status %d body %s", w.Code, w.Body.String())
+			}
+			var status string
+			if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).Scan(&status); err != nil {
+				t.Fatal(err)
+			}
+			if status != "lobby" {
+				t.Fatalf("這條 409 走在凍結之前，房間必須還在 lobby：got %q", status)
+			}
+		})
 	}
 }
 
 func TestSearchSingleFlightPerRoom(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const (
 		hostID  = "53535353-5353-5353-5353-535353535353"
 		roomID  = "54545454-5454-5454-5454-545454545454"
 		placeID = "single-flight-search"
 	)
-	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
 		values ($1, 'single-flight@test.dev') on conflict do nothing`, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.rooms
+	if _, err := pool.Exec(ctx, `insert into public.rooms
 		(id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 25.0478, 121.5170)
 		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.room_members
+	if _, err := pool.Exec(ctx, `insert into public.room_members
 		(room_id, user_id, budget_max, cuisines, dietary, max_distance_m, transport)
 		values ($1, $2, 500, '[]', '[]', 2000, 'walking')
 		on conflict (room_id, user_id) do update set budget_max = 500, dietary = '[]'`, roomID, hostID); err != nil {
@@ -1060,10 +894,7 @@ func TestSearchSingleFlightPerRoom(t *testing.T) {
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
 	responses := make(chan *httptest.ResponseRecorder, 2)
 	do := func() {
-		r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-		r.Header.Set("Authorization", "Bearer "+token)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
+		w := postTestRequest(h, token, "/api/rooms/"+roomID+"/search", "")
 		responses <- w
 	}
 
@@ -1105,37 +936,27 @@ func TestSearchSingleFlightPerRoom(t *testing.T) {
 }
 
 func TestSearchAndDrawHappyPathExposureBaseline(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 先註冊 = 後執行（Cleanup 為 LIFO）：確保下方刪 room 的 cleanup 在 pool 關閉前跑完，
-	// 否則 delete 打在已關閉的 pool 上被靜默丟棄，殘留的 draws 列會讓下次執行的 draw 直接 409
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	hostID := "11111111-1111-1111-1111-111111111111"
 	roomID := "25252525-2525-2525-2525-252525252525"
-	_, err = pool.Exec(ctx, `
+	_, err := pool.Exec(ctx, `
 		insert into auth.users (id, email) values ($1, 'host@test.dev') on conflict do nothing;
 		`, hostID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID); err != nil {
+	if _, err := pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx,
+	if _, err := pool.Exec(ctx,
 		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		 values ($1, $2, 'lobby', 25.0478, 121.5170)
 		 on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx,
+	if _, err := pool.Exec(ctx,
 		`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
 		 values ($1, $2, 500, '["japanese"]', 2000, 'walking') on conflict do nothing`,
 		roomID, hostID); err != nil {
@@ -1155,10 +976,7 @@ func TestSearchAndDrawHappyPathExposureBaseline(t *testing.T) {
 	h := newTestApp(t, pool)
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
 	do := func(path string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", path, nil)
-		r.Header.Set("Authorization", "Bearer "+token)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
+		w := postTestRequest(h, token, path, "")
 		return w
 	}
 
@@ -1249,16 +1067,8 @@ func TestSearchAndDrawHappyPathExposureBaseline(t *testing.T) {
 }
 
 func TestVotePreservesExcludedAtSearchExposureBaseline(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const (
 		hostID   = "14141414-1414-4141-8141-141414141414"
@@ -1385,183 +1195,154 @@ func TestRateLimit429(t *testing.T) {
 }
 
 func TestSearchEdgeCases(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 先註冊 = 後執行（Cleanup 為 LIFO）：確保下方刪 room 的 cleanup 在 pool 關閉前跑完，
-	// 否則 delete 打在已關閉的 pool 上被靜默丟棄，殘留的 draws 列會讓下次執行的 draw 直接 409
-	t.Cleanup(func() { pool.Close() })
+	for _, tc := range []struct {
+		name, pathID             string
+		stranger, cuisine, empty bool
+		wantCode                 int
+		wantKind, wantExcluded   string
+		wantCache                bool
+	}{
+		{"non-host forbidden", "", true, false, false, 403, "", "", false},
+		{"missing room", "66666666-6666-6666-6666-666666666666", true, false, false, 404, "", "", false},
+		{"malformed room ID", "not-a-uuid", false, false, false, 404, "", "", false},
+		{"budget exclusion deduplicates provider rows", "", false, false, false, 422, "no_candidates", "budget", true},
+		{"cuisine exclusion", "", false, true, false, 422, "no_candidates", "cuisine", true},
+		{"empty results", "", false, false, true, 422, "no_restaurants_in_range", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			pool := newTestPool(t, ctx)
 
-	hostID := "33333333-3333-3333-3333-333333333333"
-	strangerID := "44444444-4444-4444-4444-444444444444"
-	roomID := "55555555-5555-5555-5555-555555555555"
-	if _, err = pool.Exec(ctx,
-		`insert into auth.users (id, email) values ($1, 'host2@test.dev') on conflict do nothing`,
-		hostID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = pool.Exec(ctx,
-		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
+			hostID := "33333333-3333-3333-3333-333333333333"
+			strangerID := "44444444-4444-4444-4444-444444444444"
+			roomID := "55555555-5555-5555-5555-555555555555"
+			if _, err := pool.Exec(ctx,
+				`insert into auth.users (id, email) values ($1, 'host2@test.dev') on conflict do nothing`,
+				hostID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx,
+				`insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		 values ($1, $2, 'lobby', 25.0478, 121.5170)
-		 on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
-		t.Fatal(err)
-	}
-	// budget_max=100（最低合法偏好＝Google level 1）對上 level 4 餐廳 → 全數排除 → 422
-	if _, err = pool.Exec(ctx,
-		`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		 on conflict (id) do update set status = 'lobby', cuisine_filter = false`, roomID, hostID); err != nil {
+				t.Fatal(err)
+			}
+			// budget_max=100（最低合法偏好＝Google level 1）對上 level 4 餐廳 → 全數排除 → 422
+			if _, err := pool.Exec(ctx,
+				`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
 		 values ($1, $2, 100, '["japanese"]', 2000, 'walking')
 		 on conflict (room_id, user_id) do update set budget_max = 100`, roomID, hostID); err != nil {
-		t.Fatal(err)
-	}
-	// Each test run owns a fresh account budget; production quotas remain durable.
-	if _, err := pool.Exec(ctx, `delete from public.account_resource_usage where user_id=$1`, hostID); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID) })
+				t.Fatal(err)
+			}
+			// Each test run owns a fresh account budget; production quotas remain durable.
+			if _, err := pool.Exec(ctx, `delete from public.account_resource_usage where user_id=$1`, hostID); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				pool.Exec(context.Background(), `delete from public.rooms where id = $1`, roomID)
+				pool.Exec(context.Background(), `delete from public.restaurants where place_id = 'mock-cache-persistence-422'`)
+			})
 
-	persistedPlaceID := "mock-cache-persistence-422"
-	strictRestaurant := Restaurant{
-		PlaceID: persistedPlaceID, Name: "零候選快取測試", PrimaryType: "restaurant", PriceLevel: 4,
-		Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
-	}
-	if _, err := pool.Exec(ctx, `delete from public.exposure_stats
+			persistedPlaceID := "mock-cache-persistence-422"
+			strictRestaurant := Restaurant{
+				PlaceID: persistedPlaceID, Name: "零候選快取測試", PrimaryType: "restaurant", PriceLevel: 4,
+				Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
+			}
+			if _, err := pool.Exec(ctx, `delete from public.exposure_stats
 		where restaurant_id in (select id from public.restaurants where place_id = $1)`, persistedPlaceID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `delete from restaurants where place_id = $1`, persistedPlaceID); err != nil {
-		t.Fatal(err)
-	}
-	// 重複 place_id 同時鎖住 provider seam 去重；否則 budget 統計會變成 2。
-	h := newTestAppWithProvider(t, pool, fixedProvider{strictRestaurant, strictRestaurant})
-	do := func(token, path string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", path, nil)
-		r.Header.Set("Authorization", "Bearer "+token)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		return w
-	}
-	hostTok := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
-	strangerTok := signHS256(t, "test-secret-test-secret-test-secret!", strangerID)
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `delete from restaurants where place_id = $1`, persistedPlaceID); err != nil {
+				t.Fatal(err)
+			}
 
-	if w := do(strangerTok, "/api/rooms/"+roomID+"/search"); w.Code != http.StatusForbidden {
-		t.Fatalf("非房主 search: want 403 got %d", w.Code)
-	}
-	if w := do(strangerTok, "/api/rooms/66666666-6666-6666-6666-666666666666/search"); w.Code != http.StatusNotFound {
-		t.Fatalf("不存在的房: want 404 got %d", w.Code)
-	}
-	if w := do(hostTok, "/api/rooms/not-a-uuid/search"); w.Code != http.StatusNotFound {
-		t.Fatalf("非法 room id: want 404 got %d body %s", w.Code, w.Body.String())
-	}
-	w := do(hostTok, "/api/rooms/"+roomID+"/search")
-	if w.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("全排除: want 422 got %d body %s", w.Code, w.Body.String())
-	}
-	var body struct {
-		ExcludedBy map[string]int `json:"excluded_by"`
-		Degraded   *bool          `json:"degraded"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.ExcludedBy["budget"] != 1 {
-		t.Fatalf("422 應含 excluded_by.budget 統計：%s", w.Body.String())
-	}
-	if body.Degraded == nil || *body.Degraded {
-		t.Fatalf("非降級 422 應明確含 degraded=false：%s", w.Body.String())
-	}
-	if _, err := pool.Exec(ctx,
-		`update public.rooms set status = 'lobby', cuisine_filter = true where id = $1`, roomID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx,
-		`update public.room_members set budget_max = 1600, cuisines = '["ramen"]' where room_id = $1 and user_id = $2`,
-		roomID, hostID); err != nil {
-		t.Fatal(err)
-	}
-	cuisineApp := newTestAppWithProvider(t, pool, fixedProvider{{
-		PlaceID: persistedPlaceID, Name: "台菜測試餐廳", PrimaryType: "restaurant",
-		CuisineTags: []string{"taiwanese"}, PriceLevel: 4,
-		Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
-	}})
-	cuisineRequest := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-	cuisineRequest.Header.Set("Authorization", "Bearer "+hostTok)
-	cuisineResponse := httptest.NewRecorder()
-	cuisineApp.ServeHTTP(cuisineResponse, cuisineRequest)
-	var cuisineBody struct {
-		ExcludedBy map[string]int `json:"excluded_by"`
-	}
-	if err := json.Unmarshal(cuisineResponse.Body.Bytes(), &cuisineBody); err != nil ||
-		cuisineResponse.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("菜系全排除: want 422 got %d body %s", cuisineResponse.Code, cuisineResponse.Body.String())
-	}
-	if cuisineBody.ExcludedBy["cuisine"] != 1 {
-		t.Fatalf("422 應含 excluded_by.cuisine 統計：%s", cuisineResponse.Body.String())
-	}
-	emptyApp := newTestAppWithProvider(t, pool, fixedProvider{})
-	emptyRequest := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-	emptyRequest.Header.Set("Authorization", "Bearer "+hostTok)
-	emptyResponse := httptest.NewRecorder()
-	emptyApp.ServeHTTP(emptyResponse, emptyRequest)
-	var emptyBody struct {
-		Error    string `json:"error"`
-		Degraded *bool  `json:"degraded"`
-	}
-	if err := json.Unmarshal(emptyResponse.Body.Bytes(), &emptyBody); err != nil ||
-		emptyResponse.Code != http.StatusUnprocessableEntity ||
-		emptyBody.Error != "no_restaurants_in_range" || emptyBody.Degraded == nil || *emptyBody.Degraded {
-		t.Fatalf("無餐廳 422 應明確含 degraded=false：status %d body %s", emptyResponse.Code, emptyResponse.Body.String())
-	}
-	var cached int
-	if err := pool.QueryRow(ctx, `select count(*) from restaurants where place_id like 'mock-%'`).Scan(&cached); err != nil || cached == 0 {
-		t.Fatalf("零候選 rollback 後 provider 結果仍應留在快取，got %d err %v", cached, err)
-	}
-	var persisted bool
-	if err := pool.QueryRow(ctx, `select exists (select 1 from restaurants where place_id = $1)`, persistedPlaceID).Scan(&persisted); err != nil || !persisted {
-		t.Fatalf("422 後專用 provider row 應留在快取，got %v err %v", persisted, err)
-	}
-	var status string
-	if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, roomID).
-		Scan(&status); err != nil || status != "lobby" {
-		t.Fatalf("零候選後房間應停留在 lobby，got %q err %v", status, err)
+			provider := fixedProvider{strictRestaurant, strictRestaurant}
+			if tc.cuisine {
+				if _, err := pool.Exec(ctx, `update public.rooms set cuisine_filter=true where id=$1`, roomID); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := pool.Exec(ctx, `update public.room_members set budget_max=1600,cuisines='["ramen"]' where room_id=$1 and user_id=$2`, roomID, hostID); err != nil {
+					t.Fatal(err)
+				}
+				strictRestaurant.Name = "台菜測試餐廳"
+				strictRestaurant.CuisineTags = []string{"taiwanese"}
+				provider = fixedProvider{strictRestaurant}
+			}
+			if tc.empty {
+				provider = fixedProvider{}
+			}
+			h := newTestAppWithProvider(t, pool, provider)
+			uid := hostID
+			if tc.stranger {
+				uid = strangerID
+			}
+			pathID := tc.pathID
+			if pathID == "" {
+				pathID = roomID
+			}
+			w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", uid), "/api/rooms/"+pathID+"/search", "")
+			if w.Code != tc.wantCode {
+				t.Fatalf("want %d got %d %s", tc.wantCode, w.Code, w.Body.String())
+			}
+			if tc.wantCode == 422 {
+				var body struct {
+					Error      string         `json:"error"`
+					ExcludedBy map[string]int `json:"excluded_by"`
+					Degraded   *bool          `json:"degraded"`
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+					t.Fatal(err)
+				}
+				if body.Error != tc.wantKind || body.Degraded == nil || *body.Degraded {
+					t.Fatalf("unexpected 422 contract: %s", w.Body.String())
+				}
+				if tc.wantExcluded != "" && body.ExcludedBy[tc.wantExcluded] != 1 {
+					t.Fatalf("expected one %s exclusion: %s", tc.wantExcluded, w.Body.String())
+				}
+			}
+			if tc.wantCache {
+				var cached int
+				if err := pool.QueryRow(ctx, `select count(*) from restaurants where place_id like 'mock-%'`).Scan(&cached); err != nil || cached == 0 {
+					t.Fatalf("cache count=%d err=%v", cached, err)
+				}
+				var persisted bool
+				if err := pool.QueryRow(ctx, `select exists(select 1 from restaurants where place_id=$1)`, persistedPlaceID).Scan(&persisted); err != nil || !persisted {
+					t.Fatalf("provider row must survive rollback: %v err=%v", persisted, err)
+				}
+			}
+			var status string
+			if err := pool.QueryRow(ctx, `select status from public.rooms where id=$1`, roomID).Scan(&status); err != nil || status != "lobby" {
+				t.Fatalf("room status=%q, want lobby: %v", status, err)
+			}
+		})
 	}
 }
 
 func TestSearchFallsBackToCache(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	hostID := "21212121-2121-2121-2121-212121212121"
 	roomID := "22222222-2222-2222-2222-222222222222"
-	if _, err = pool.Exec(ctx,
+	if _, err := pool.Exec(ctx,
 		`insert into auth.users (id, email) values ($1, 'fb@test.dev') on conflict do nothing`,
 		hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx,
+	if _, err := pool.Exec(ctx,
 		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		 values ($1, $2, 'lobby', 25.0478, 121.5170)
 		 on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx,
+	if _, err := pool.Exec(ctx,
 		`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
 		 values ($1, $2, 500, '["japanese"]', 2000, 'walking') on conflict do nothing`,
 		roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
 	// 先種一筆 30 天內的快取（mock 資料座標圈內）
-	if _, err = pool.Exec(ctx, `
+	if _, err := pool.Exec(ctx, `
 		insert into public.restaurants (place_id, name, primary_type, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
 		values ('cached-1', '快取餐廳', 'restaurant', '["japanese"]', 1, 25.0478, 121.5172,
 		        '{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}',
@@ -1582,10 +1363,7 @@ func TestSearchFallsBackToCache(t *testing.T) {
 	}
 	h := buildRoutes(v, pool, failingProvider{}, nil, newLimiterStore(1000, 1000))
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
-	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-	r.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+	w := postTestRequest(h, token, "/api/rooms/"+roomID+"/search", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("有快取時應降級成功：want 200 got %d body %s", w.Code, w.Body.String())
 	}
@@ -1598,16 +1376,8 @@ func TestSearchFallsBackToCache(t *testing.T) {
 }
 
 func TestSearchRejectedAndClosedPlacesTombstoneCache(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const (
 		hostID          = "71717171-7171-7171-7171-717171717171"
@@ -1617,17 +1387,17 @@ func TestSearchRejectedAndClosedPlacesTombstoneCache(t *testing.T) {
 		rejectedPlaceID = "round7-rejected-place"
 		openPlaceID     = "round12-open-place"
 	)
-	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
 		values ($1, 'closed-cache@test.dev') on conflict do nothing`, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
+	if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		values ($1, $3, 'lobby', 24.1988, 121.6543), ($2, $3, 'lobby', 24.1988, 121.6543)
 		on conflict (id) do update set status = 'lobby', center_lat = excluded.center_lat,
 			center_lng = excluded.center_lng`, freshRoomID, fallbackRoomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.room_members
+	if _, err := pool.Exec(ctx, `insert into public.room_members
 		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
 		values ($1, $3, 500, '[]', 2000, 'walking'), ($2, $3, 500, '[]', 2000, 'walking')
 		on conflict (room_id, user_id) do update set budget_max = excluded.budget_max,
@@ -1635,14 +1405,14 @@ func TestSearchRejectedAndClosedPlacesTombstoneCache(t *testing.T) {
 			transport = excluded.transport`, freshRoomID, fallbackRoomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.restaurants
+	if _, err := pool.Exec(ctx, `insert into public.restaurants
 		(place_id, name, primary_type, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
 		values ($1, '已歇業快取餐廳', 'restaurant', '[]', 1, 24.1988, 121.6543,
 		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'google', now())
 		on conflict (place_id) do update set primary_type = excluded.primary_type, fetched_at = now()`, closedPlaceID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.restaurants
+	if _, err := pool.Exec(ctx, `insert into public.restaurants
 		(place_id, name, primary_type, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
 		values ($1, '主類型被拒絕的快取列', 'restaurant', '[]', 1, 24.1988, 121.6543,
 		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'google', now())
@@ -1674,10 +1444,7 @@ func TestSearchRejectedAndClosedPlacesTombstoneCache(t *testing.T) {
 	}
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
 	doSearch := func(h http.Handler, roomID string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-		r.Header.Set("Authorization", "Bearer "+token)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
+		w := postTestRequest(h, token, "/api/rooms/"+roomID+"/search", "")
 		return w
 	}
 	assertStaleAbsent := func(w *httptest.ResponseRecorder, degraded bool) {
@@ -1725,16 +1492,8 @@ func TestSearchRejectedAndClosedPlacesTombstoneCache(t *testing.T) {
 }
 
 func TestSearchDiscardedClosedPlaceTombstonesCache(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
+	pool := newTestPool(t, ctx)
 
 	const (
 		hostID           = "d1414141-4141-4141-8141-414141414141"
@@ -1805,37 +1564,29 @@ func TestSearchDiscardedClosedPlaceTombstonesCache(t *testing.T) {
 }
 
 func TestSearchFallbackAllExcludedIncludesDegraded(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const (
 		hostID  = "31313131-3131-3131-3131-313131313131"
 		roomID  = "32323232-3232-3232-3232-323232323232"
 		placeID = "cached-degraded-excluded"
 	)
-	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
 		values ($1, 'degraded-422@test.dev') on conflict do nothing`, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
+	if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 23.9911, 121.6112)
 		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.room_members
+	if _, err := pool.Exec(ctx, `insert into public.room_members
 		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
 		values ($1, $2, 100, '[]', 2000, 'walking') on conflict do nothing`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.restaurants
+	if _, err := pool.Exec(ctx, `insert into public.restaurants
 		(place_id, name, primary_type, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
 		values ($1, '降級全排除快取', 'restaurant', '[]', 4, 23.9911, 121.6112,
 		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'google', now())
@@ -1848,10 +1599,7 @@ func TestSearchFallbackAllExcludedIncludesDegraded(t *testing.T) {
 	})
 
 	h := newTestAppWithProvider(t, pool, failingProvider{})
-	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+	w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", hostID), "/api/rooms/"+roomID+"/search", "")
 	var body struct {
 		Error    string `json:"error"`
 		Degraded bool   `json:"degraded"`
@@ -1866,120 +1614,89 @@ func TestSearchFallbackAllExcludedIncludesDegraded(t *testing.T) {
 // 不降級，混進來會讓前端為一個可容忍的失敗改口叫人重試。兩條 422 都要帶——檢索掛掉時
 // 「附近沒餐廳」同樣可能只是結果不完整，而不是這區真的沒有。
 func TestSearchUnfulfilledDietaryTermsInBoth422Paths(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	for _, tc := range []struct {
+		name      string
+		result    PlacesSearchResult
+		wantKind  string
+		wantTerms []string
+	}{
+		{"all excluded", PlacesSearchResult{Restaurants: []Restaurant{{
+			PlaceID: "unfulfilled-dietary-excluded", Name: "全被預算排除", PrimaryType: "restaurant",
+			CuisineTags: []string{}, PriceLevel: 4, Lat: 23.9911, Lng: 121.6112, Hours: daily([2]int{0, 1440}), Rating: 4,
+		}}, UnfulfilledTerms: []string{"dessert", "vegetarian"}}, "no_candidates", []string{"vegetarian"}},
+		{"no restaurants", PlacesSearchResult{UnfulfilledTerms: []string{"dessert", "vegetarian"}}, "no_restaurants_in_range", []string{"vegetarian"}},
+		{"no failed branches serializes empty array", PlacesSearchResult{}, "no_restaurants_in_range", []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			pool := newTestPool(t, ctx)
 
-	const (
-		hostID  = "3a3a3a3a-3a3a-3a3a-3a3a-3a3a3a3a3a3a"
-		roomID  = "3b3b3b3b-3b3b-3b3b-3b3b-3b3b3b3b3b3b"
-		placeID = "unfulfilled-dietary-excluded"
-	)
-	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+			const (
+				hostID  = "3a3a3a3a-3a3a-3a3a-3a3a-3a3a3a3a3a3a"
+				roomID  = "3b3b3b3b-3b3b-3b3b-3b3b-3b3b3b3b3b3b"
+				placeID = "unfulfilled-dietary-excluded"
+			)
+			if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
 		values ($1, 'unfulfilled@test.dev') on conflict do nothing`, hostID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 23.9911, 121.6112)
 		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
-		t.Fatal(err)
-	}
-	// budget_max=100（Google level 1）對上 level 4 的餐廳，必被 kind "budget" 排除 → 走 no_candidates 那條 422。
-	if _, err = pool.Exec(ctx, `insert into public.room_members
+				t.Fatal(err)
+			}
+			// budget_max=100（Google level 1）對上 level 4 的餐廳，必被 kind "budget" 排除 → 走 no_candidates 那條 422。
+			if _, err := pool.Exec(ctx, `insert into public.room_members
 		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
 		values ($1, $2, 100, '[]', 2000, 'walking')
 		on conflict (room_id, user_id) do update set budget_max = excluded.budget_max,
 			cuisines = excluded.cuisines, max_distance_m = excluded.max_distance_m`,
-		roomID, hostID); err != nil {
-		t.Fatal(err)
-	}
-	// Each test run owns a fresh account budget; production quotas remain durable.
-	if _, err := pool.Exec(ctx, `delete from public.account_resource_usage where user_id=$1`, hostID); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		pool.Exec(ctx, `delete from public.restaurants where place_id = $1`, placeID)
-		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
-	})
+				roomID, hostID); err != nil {
+				t.Fatal(err)
+			}
+			// Each test run owns a fresh account budget; production quotas remain durable.
+			if _, err := pool.Exec(ctx, `delete from public.account_resource_usage where user_id=$1`, hostID); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				pool.Exec(ctx, `delete from public.restaurants where place_id = $1`, placeID)
+				pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+			})
 
-	// dessert 是菜系、vegetarian 是 DietaryRequires 的嚴格禁忌：只有後者該露出。
-	unfulfilled := []string{"dessert", "vegetarian"}
-	doSearch := func(t *testing.T, result PlacesSearchResult) (int, []string, string) {
-		t.Helper()
-		h := newTestAppWithProvider(t, pool, resultProvider{result: result})
-		r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-		r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		var body struct {
-			Error       string   `json:"error"`
-			Unfulfilled []string `json:"unfulfilled_dietary_terms"`
-		}
-		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-			t.Fatalf("回應不是 JSON：status %d body %s", w.Code, w.Body.String())
-		}
-		return w.Code, body.Unfulfilled, body.Error
-	}
-
-	code, got, kind := doSearch(t, PlacesSearchResult{
-		Restaurants: []Restaurant{{
-			PlaceID: placeID, Name: "全被預算排除", PrimaryType: "restaurant",
-			CuisineTags: []string{}, PriceLevel: 4, Lat: 23.9911, Lng: 121.6112,
-			Hours: daily([2]int{0, 1440}), Rating: 4,
-		}},
-		UnfulfilledTerms: unfulfilled,
-	})
-	if code != http.StatusUnprocessableEntity || kind != "no_candidates" ||
-		!slices.Equal(got, []string{"vegetarian"}) {
-		t.Fatalf("no_candidates 應只帶嚴格禁忌詞：status %d error %q unfulfilled %v", code, kind, got)
-	}
-
-	code, got, kind = doSearch(t, PlacesSearchResult{UnfulfilledTerms: unfulfilled})
-	if code != http.StatusUnprocessableEntity || kind != "no_restaurants_in_range" ||
-		!slices.Equal(got, []string{"vegetarian"}) {
-		t.Fatalf("no_restaurants_in_range 也應帶嚴格禁忌詞：status %d error %q unfulfilled %v", code, kind, got)
-	}
-
-	// 沒有失敗支線時必須是 []（非 null）：前端以長度分流，null 會讓型別斷言變成謊言。
-	code, got, kind = doSearch(t, PlacesSearchResult{})
-	if code != http.StatusUnprocessableEntity || kind != "no_restaurants_in_range" || got == nil || len(got) != 0 {
-		t.Fatalf("全部成功時應回空陣列：status %d error %q unfulfilled %v", code, kind, got)
+			h := newTestAppWithProvider(t, pool, resultProvider{result: tc.result})
+			w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", hostID), "/api/rooms/"+roomID+"/search", "")
+			var body struct {
+				Error       string   `json:"error"`
+				Unfulfilled []string `json:"unfulfilled_dietary_terms"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatalf("response is not JSON: %d %s", w.Code, w.Body.String())
+			}
+			if w.Code != http.StatusUnprocessableEntity || body.Error != tc.wantKind || body.Unfulfilled == nil || !slices.Equal(body.Unfulfilled, tc.wantTerms) {
+				t.Fatalf("status=%d error=%q terms=%v, want 422 %q %v", w.Code, body.Error, body.Unfulfilled, tc.wantKind, tc.wantTerms)
+			}
+		})
 	}
 }
 
 func TestSearchNoCacheReturns502(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	hostID := "23232323-2323-2323-2323-232323232323"
 	roomID := "24242424-2424-2424-2424-242424242424"
-	if _, err = pool.Exec(ctx,
+	if _, err := pool.Exec(ctx,
 		`insert into auth.users (id, email) values ($1, 'nc@test.dev') on conflict do nothing`,
 		hostID); err != nil {
 		t.Fatal(err)
 	}
 	// 快取圈外的座標（高雄）→ 30 天內快取為空
-	if _, err = pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
+	if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 22.6273, 120.3014)
 		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx,
+	if _, err := pool.Exec(ctx,
 		`insert into public.room_members (room_id, user_id) values ($1, $2) on conflict do nothing`,
 		roomID, hostID); err != nil {
 		t.Fatal(err)
@@ -1993,26 +1710,15 @@ func TestSearchNoCacheReturns502(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := buildRoutes(v, pool, failingProvider{}, nil, newLimiterStore(1000, 1000))
-	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+	w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", hostID), "/api/rooms/"+roomID+"/search", "")
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("無快取時 want 502 got %d body %s", w.Code, w.Body.String())
 	}
 }
 
 func TestGoogleSearchDoesNotFallbackToMockCache(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const (
 		hostID  = "41414141-4141-4141-4141-414141414141"
@@ -2021,30 +1727,30 @@ func TestGoogleSearchDoesNotFallbackToMockCache(t *testing.T) {
 		// 交叉案例：place_id 不帶 mock- 前綴，出身只寫在 source 欄。
 		crossPlaceID = "sourced-mock-no-prefix"
 	)
-	if _, err = pool.Exec(ctx, `insert into auth.users (id, email)
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
 		values ($1, 'google-cache@test.dev') on conflict do nothing`, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
+	if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 23.5685, 119.5660)
 		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.room_members
+	if _, err := pool.Exec(ctx, `insert into public.room_members
 		(room_id, user_id, budget_max, cuisines, max_distance_m, transport)
 		values ($1, $2, 500, '[]', 2000, 'walking') on conflict do nothing`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
 	// source='mock' 需顯式指定：0013 後過濾依 source 欄而非 place_id 前綴，
 	// 本列模擬的正是 mock provider 寫入的快取。
-	if _, err = pool.Exec(ctx, `insert into public.restaurants
+	if _, err := pool.Exec(ctx, `insert into public.restaurants
 		(place_id, name, primary_type, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
 		values ($1, '不可供 Google 使用的 mock 快取', 'restaurant', '[]', 1, 23.5685, 119.5660,
 		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'mock', now())
 		on conflict (place_id) do update set primary_type = excluded.primary_type, source = excluded.source, fetched_at = now()`, placeID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `insert into public.restaurants
+	if _, err := pool.Exec(ctx, `insert into public.restaurants
 		(place_id, name, primary_type, cuisine_tags, price_level, lat, lng, opening_hours, source, fetched_at)
 		values ($1, '前綴不像 mock 的 mock 快取', 'restaurant', '[]', 1, 23.5685, 119.5660,
 		'{"sun":[[0,1440]],"mon":[[0,1440]],"tue":[[0,1440]],"wed":[[0,1440]],"thu":[[0,1440]],"fri":[[0,1440]],"sat":[[0,1440]]}', 'mock', now())
@@ -2078,10 +1784,7 @@ func TestGoogleSearchDoesNotFallbackToMockCache(t *testing.T) {
 	}))
 	t.Cleanup(deadGoogle.Close)
 	h := newTestAppWithProvider(t, pool, NewGooglePlacesProvider("k", deadGoogle.URL))
-	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", hostID))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+	w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", hostID), "/api/rooms/"+roomID+"/search", "")
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("Google fallback must refuse mock cache: want 502 got %d body %s", w.Code, w.Body.String())
 	}
@@ -2091,31 +1794,23 @@ func TestGoogleSearchDoesNotFallbackToMockCache(t *testing.T) {
 }
 
 func TestSearchDrawRecordsHistory(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	hostID := "77777777-7777-7777-7777-777777777777"
 	roomID := "88888888-8888-8888-8888-888888888888"
-	if _, err = pool.Exec(ctx,
+	if _, err := pool.Exec(ctx,
 		`insert into auth.users (id, email) values ($1, 'hist@test.dev') on conflict do nothing`,
 		hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx,
+	if _, err := pool.Exec(ctx,
 		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		 values ($1, $2, 'lobby', 25.0478, 121.5170)
 		 on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx,
+	if _, err := pool.Exec(ctx,
 		`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
 		 values ($1, $2, 500, '["japanese"]', 2000, 'walking') on conflict do nothing`,
 		roomID, hostID); err != nil {
@@ -2130,10 +1825,7 @@ func TestSearchDrawRecordsHistory(t *testing.T) {
 	h := newTestApp(t, pool)
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
 	do := func(path string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", path, nil)
-		r.Header.Set("Authorization", "Bearer "+token)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
+		w := postTestRequest(h, token, path, "")
 		return w
 	}
 
@@ -2192,16 +1884,8 @@ func TestSearchDrawRecordsHistory(t *testing.T) {
 }
 
 func TestLoadRecencyBuckets(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	u1 := "99999999-9999-9999-9999-999999999999"
 	u2 := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -2214,7 +1898,7 @@ func TestLoadRecencyBuckets(t *testing.T) {
 		"12121212-1212-1212-1212-121212121212",
 	}
 
-	if _, err = pool.Exec(ctx, `
+	if _, err := pool.Exec(ctx, `
 		insert into auth.users (id, email) values
 		  ($1, 'recency-u1@test.dev'),
 		  ($2, 'recency-u2@test.dev'),
@@ -2222,13 +1906,13 @@ func TestLoadRecencyBuckets(t *testing.T) {
 		on conflict do nothing`, u1, u2, u3); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `
+	if _, err := pool.Exec(ctx, `
 		insert into public.restaurants (id, place_id, name, lat, lng, source)
 		values ($1, 'recency-r1', 'Recency R1', 25.0478, 121.5170, 'google')
 		on conflict (id) do nothing`, r1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `
+	if _, err := pool.Exec(ctx, `
 		insert into public.rooms (id, host_id, status) values
 		  ($1, $5, 'decided'),
 		  ($2, $5, 'decided'),
@@ -2244,7 +1928,7 @@ func TestLoadRecencyBuckets(t *testing.T) {
 		pool.Exec(ctx, `delete from auth.users where id = any($1::uuid[])`, []string{u1, u2, u3})
 	})
 
-	if _, err = pool.Exec(ctx, `
+	if _, err := pool.Exec(ctx, `
 		insert into public.dining_history (user_id, restaurant_id, room_id, decided_at) values
 		  ($1, $4, $5, now() - interval '10 days'),
 		  ($2, $4, $6, now() - interval '20 days'),
@@ -2264,28 +1948,20 @@ func TestLoadRecencyBuckets(t *testing.T) {
 }
 
 func TestVotingFlow(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	hostID := "71717171-7171-7171-7171-717171717171"
 	memberID := "72727272-7272-7272-7272-727272727272"
 	strangerID := "73737373-7373-7373-7373-737373737373"
 	roomID := "74747474-7474-7474-7474-747474747474"
-	if _, err = pool.Exec(ctx, `
+	if _, err := pool.Exec(ctx, `
 		insert into auth.users (id, email) values
 		  ($1, 'vhost@test.dev'), ($2, 'vmember@test.dev'), ($3, 'vstranger@test.dev')
 		on conflict do nothing`, hostID, memberID, strangerID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx,
+	if _, err := pool.Exec(ctx,
 		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		 values ($1, $2, 'lobby', 25.0478, 121.5170)
 		 on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
@@ -2293,7 +1969,7 @@ func TestVotingFlow(t *testing.T) {
 	}
 	for _, uid := range []string{hostID, memberID} {
 		ready := uid == memberID
-		if _, err = pool.Exec(ctx,
+		if _, err := pool.Exec(ctx,
 			`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport, ready)
 			 values ($1, $2, 500, '["japanese"]', 2000, 'walking', $3)
 			 on conflict (room_id, user_id) do update set ready = excluded.ready`,
@@ -2542,159 +2218,92 @@ func seedEditConditionsFixture(t *testing.T, ctx context.Context, pool *pgxpool.
 
 func editConditionsRequest(t *testing.T, h http.Handler, uid, roomID string) *httptest.ResponseRecorder {
 	t.Helper()
-	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/edit-conditions", nil)
-	r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", uid))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+	w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", uid), "/api/rooms/"+roomID+"/edit-conditions", "")
 	return w
 }
 
 func TestEditConditions(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL is required")
-	}
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
-	h := newTestApp(t, pool)
-
-	t.Run("host success retains room membership invite and exposure while clearing candidates and ready", func(t *testing.T) {
-		f := seedEditConditionsFixture(t, ctx, pool, 1, "candidates", true)
-		w := editConditionsRequest(t, h, f.hostID, f.roomID)
-		if w.Code != http.StatusNoContent || w.Body.Len() != 0 {
-			t.Fatalf("edit conditions: want 204 empty body, got %d %q", w.Code, w.Body.String())
-		}
-		var code, hostID, status, exploration string
-		var cuisineFilter bool
-		if err := pool.QueryRow(ctx, `select code, host_id, status, exploration, cuisine_filter
-			from public.rooms where id = $1`, f.roomID).
-			Scan(&code, &hostID, &status, &exploration, &cuisineFilter); err != nil {
-			t.Fatal(err)
-		}
-		if code != f.code || hostID != f.hostID || status != "lobby" || exploration != "explore" || !cuisineFilter {
-			t.Fatalf("room fields changed unexpectedly: code=%s host=%s status=%s exploration=%s filter=%v",
-				code, hostID, status, exploration, cuisineFilter)
-		}
-		var members, ready, candidates, recommended, chosen int
-		if err := pool.QueryRow(ctx, `select count(*), count(*) filter (where ready)
-			from public.room_members where room_id = $1`, f.roomID).Scan(&members, &ready); err != nil {
-			t.Fatal(err)
-		}
-		if err := pool.QueryRow(ctx, `select count(*) from public.room_candidates where room_id = $1`, f.roomID).
-			Scan(&candidates); err != nil {
-			t.Fatal(err)
-		}
-		if err := pool.QueryRow(ctx, `select recommended_count, chosen_count from public.exposure_stats
-			where user_id = $1 and restaurant_id = $2`, f.hostID, f.restaurantID).
-			Scan(&recommended, &chosen); err != nil {
-			t.Fatal(err)
-		}
-		if members != 2 || ready != 0 || candidates != 0 || recommended != 7 || chosen != 2 {
-			t.Fatalf("reset/retention mismatch: members=%d ready=%d candidates=%d recommended=%d chosen=%d",
-				members, ready, candidates, recommended, chosen)
-		}
-	})
-
-	t.Run("non-host is forbidden without mutation", func(t *testing.T) {
-		f := seedEditConditionsFixture(t, ctx, pool, 2, "candidates", true)
-		w := editConditionsRequest(t, h, f.guestID, f.roomID)
-		if w.Code != http.StatusForbidden {
-			t.Fatalf("non-host: want 403 got %d body %s", w.Code, w.Body.String())
-		}
-		var status string
-		var candidates, ready int
-		if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, f.roomID).Scan(&status); err != nil {
-			t.Fatal(err)
-		}
-		if err := pool.QueryRow(ctx, `select count(*) from public.room_candidates where room_id = $1`, f.roomID).Scan(&candidates); err != nil {
-			t.Fatal(err)
-		}
-		if err := pool.QueryRow(ctx, `select count(*) filter (where ready) from public.room_members where room_id = $1`, f.roomID).Scan(&ready); err != nil {
-			t.Fatal(err)
-		}
-		if status != "candidates" || candidates != 1 || ready != 2 {
-			t.Fatalf("non-host mutated state: status=%s candidates=%d ready=%d", status, candidates, ready)
-		}
-	})
-
-	t.Run("wrong phase is conflict", func(t *testing.T) {
-		f := seedEditConditionsFixture(t, ctx, pool, 3, "lobby", true)
-		w := editConditionsRequest(t, h, f.hostID, f.roomID)
-		if w.Code != http.StatusConflict {
-			t.Fatalf("wrong phase: want 409 got %d body %s", w.Code, w.Body.String())
-		}
-	})
-
-	t.Run("zero candidates still resets every ready flag", func(t *testing.T) {
-		f := seedEditConditionsFixture(t, ctx, pool, 4, "candidates", false)
-		w := editConditionsRequest(t, h, f.hostID, f.roomID)
-		if w.Code != http.StatusNoContent || w.Body.Len() != 0 {
-			t.Fatalf("zero candidates: want 204 empty body got %d %q", w.Code, w.Body.String())
-		}
-		var ready int
-		if err := pool.QueryRow(ctx, `select count(*) filter (where ready) from public.room_members where room_id = $1`, f.roomID).Scan(&ready); err != nil {
-			t.Fatal(err)
-		}
-		if ready != 0 {
-			t.Fatalf("zero candidates left %d ready members", ready)
-		}
-	})
-
-	t.Run("candidate delete database failure is 500 and rolls back all mutations", func(t *testing.T) {
-		f := seedEditConditionsFixture(t, ctx, pool, 5, "candidates", true)
-		pool.Exec(ctx, `drop trigger if exists task5_fail_candidate_delete on public.room_candidates`)
-		pool.Exec(ctx, `drop function if exists public.task5_fail_candidate_delete()`)
-		ddl := fmt.Sprintf(`create function public.task5_fail_candidate_delete() returns trigger
+	for i, tc := range []struct {
+		name, status                     string
+		withCandidate, guest, failDelete bool
+		wantCode                         int
+		wantStatus                       string
+		wantReady, wantCandidates        int
+	}{
+		{"host resets candidates and readiness but retains membership invite and exposure", "candidates", true, false, false, 204, "lobby", 0, 0},
+		{"non-host forbidden without mutation", "candidates", true, true, false, 403, "candidates", 2, 1},
+		{"wrong phase conflict", "lobby", true, false, false, 409, "lobby", 2, 1},
+		{"zero candidates still resets readiness", "candidates", false, false, false, 204, "lobby", 0, 0},
+		{"database failure rolls back every mutation", "candidates", true, false, true, 500, "candidates", 2, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			pool := newTestPool(t, ctx)
+			h := newTestApp(t, pool)
+			f := seedEditConditionsFixture(t, ctx, pool, i+1, tc.status, tc.withCandidate)
+			if tc.failDelete {
+				pool.Exec(ctx, `drop trigger if exists task5_fail_candidate_delete on public.room_candidates`)
+				pool.Exec(ctx, `drop function if exists public.task5_fail_candidate_delete()`)
+				ddl := fmt.Sprintf(`create function public.task5_fail_candidate_delete() returns trigger
 			language plpgsql as $$ begin
 				if old.room_id = '%s'::uuid then raise exception 'task5 forced delete failure'; end if;
 				return old;
 			end $$;
 			create trigger task5_fail_candidate_delete before delete on public.room_candidates
 			for each row execute function public.task5_fail_candidate_delete()`, f.roomID)
-		if _, err := pool.Exec(ctx, ddl); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			pool.Exec(context.Background(), `drop trigger if exists task5_fail_candidate_delete on public.room_candidates`)
-			pool.Exec(context.Background(), `drop function if exists public.task5_fail_candidate_delete()`)
+				if _, err := pool.Exec(ctx, ddl); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					pool.Exec(context.Background(), `drop trigger if exists task5_fail_candidate_delete on public.room_candidates`)
+					pool.Exec(context.Background(), `drop function if exists public.task5_fail_candidate_delete()`)
+				})
+			}
+			uid := f.hostID
+			if tc.guest {
+				uid = f.guestID
+			}
+			w := editConditionsRequest(t, h, uid, f.roomID)
+			if w.Code != tc.wantCode || (tc.wantCode == http.StatusNoContent && w.Body.Len() != 0) {
+				t.Fatalf("want %d (204 body empty), got %d %q", tc.wantCode, w.Code, w.Body.String())
+			}
+			var code, hostID, status, exploration string
+			var cuisineFilter bool
+			if err := pool.QueryRow(ctx, `select code, host_id, status, exploration, cuisine_filter
+			from public.rooms where id = $1`, f.roomID).
+				Scan(&code, &hostID, &status, &exploration, &cuisineFilter); err != nil {
+				t.Fatal(err)
+			}
+			if code != f.code || hostID != f.hostID || status != tc.wantStatus || exploration != "explore" || !cuisineFilter {
+				t.Fatalf("room fields changed unexpectedly: code=%s host=%s status=%s exploration=%s filter=%v",
+					code, hostID, status, exploration, cuisineFilter)
+			}
+			var members, ready, candidates, recommended, chosen int
+			if err := pool.QueryRow(ctx, `select count(*), count(*) filter (where ready)
+			from public.room_members where room_id = $1`, f.roomID).Scan(&members, &ready); err != nil {
+				t.Fatal(err)
+			}
+			if err := pool.QueryRow(ctx, `select count(*) from public.room_candidates where room_id = $1`, f.roomID).
+				Scan(&candidates); err != nil {
+				t.Fatal(err)
+			}
+			if err := pool.QueryRow(ctx, `select recommended_count, chosen_count from public.exposure_stats
+			where user_id = $1 and restaurant_id = $2`, f.hostID, f.restaurantID).
+				Scan(&recommended, &chosen); err != nil {
+				t.Fatal(err)
+			}
+			if members != 2 || ready != tc.wantReady || candidates != tc.wantCandidates || recommended != 7 || chosen != 2 {
+				t.Fatalf("reset/retention mismatch: members=%d ready=%d candidates=%d recommended=%d chosen=%d",
+					members, ready, candidates, recommended, chosen)
+			}
 		})
-		w := editConditionsRequest(t, h, f.hostID, f.roomID)
-		if w.Code != http.StatusInternalServerError {
-			t.Fatalf("delete DB failure: want 500 got %d body %s", w.Code, w.Body.String())
-		}
-		var status string
-		var candidates, ready int
-		if err := pool.QueryRow(ctx, `select status from public.rooms where id = $1`, f.roomID).Scan(&status); err != nil {
-			t.Fatal(err)
-		}
-		if err := pool.QueryRow(ctx, `select count(*) from public.room_candidates where room_id = $1`, f.roomID).Scan(&candidates); err != nil {
-			t.Fatal(err)
-		}
-		if err := pool.QueryRow(ctx, `select count(*) filter (where ready) from public.room_members where room_id = $1`, f.roomID).Scan(&ready); err != nil {
-			t.Fatal(err)
-		}
-		if status != "candidates" || candidates != 1 || ready != 2 {
-			t.Fatalf("failed transaction committed mixed state: status=%s candidates=%d ready=%d", status, candidates, ready)
-		}
-	})
+	}
 }
 
 func TestEditConditionsFormerHostRejectedAfterLockedSuccession(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL is required")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 	f := seedEditConditionsFixture(t, ctx, pool, 7, "candidates", true)
 	h := newTestApp(t, pool)
 
@@ -2716,10 +2325,7 @@ func TestEditConditionsFormerHostRejectedAfterLockedSuccession(t *testing.T) {
 
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
-		r := httptest.NewRequest("POST", "/api/rooms/"+f.roomID+"/edit-conditions", nil)
-		r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", f.hostID))
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
+		w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", f.hostID), "/api/rooms/"+f.roomID+"/edit-conditions", "")
 		done <- w
 	}()
 
@@ -2774,17 +2380,9 @@ func TestEditConditionsFormerHostRejectedAfterLockedSuccession(t *testing.T) {
 }
 
 func TestEditConditionsRacesStartVoting(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL is required")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 	f := seedEditConditionsFixture(t, ctx, pool, 6, "candidates", true)
 	h := newTestApp(t, pool)
 
@@ -2804,10 +2402,7 @@ func TestEditConditionsRacesStartVoting(t *testing.T) {
 	}
 	done := make(chan result, 2)
 	request := func(name, path string) {
-		r := httptest.NewRequest("POST", path, nil)
-		r.Header.Set("Authorization", "Bearer "+signHS256(t, "test-secret-test-secret-test-secret!", f.hostID))
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
+		w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", f.hostID), path, "")
 		done <- result{name: name, code: w.Code, body: w.Body.String()}
 	}
 	go request("edit", "/api/rooms/"+f.roomID+"/edit-conditions")
@@ -2891,27 +2486,19 @@ func TestEditConditionsRacesStartVoting(t *testing.T) {
 }
 
 func TestDrawAllVetoed(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	hostID := "13131313-1313-1313-1313-131313131313"
 	memberID := "14141414-1414-1414-1414-141414141414"
 	roomID := "15151515-1515-1515-1515-151515151515"
-	if _, err = pool.Exec(ctx, `
+	if _, err := pool.Exec(ctx, `
 		insert into auth.users (id, email) values
 		  ($1, 'veto-host@test.dev'), ($2, 'veto-member@test.dev')
 		on conflict do nothing`, hostID, memberID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx,
+	if _, err := pool.Exec(ctx,
 		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		 values ($1, $2, 'lobby', 25.0478, 121.5170)
 		 on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
@@ -2919,7 +2506,7 @@ func TestDrawAllVetoed(t *testing.T) {
 	}
 	for _, uid := range []string{hostID, memberID} {
 		ready := uid == memberID
-		if _, err = pool.Exec(ctx,
+		if _, err := pool.Exec(ctx,
 			`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport, ready)
 			 values ($1, $2, 500, '["japanese"]', 2000, 'walking', $3)
 			 on conflict (room_id, user_id) do update set ready = excluded.ready`,
@@ -2936,10 +2523,7 @@ func TestDrawAllVetoed(t *testing.T) {
 	h := newTestApp(t, pool)
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
 	do := func(path string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", path, nil)
-		r.Header.Set("Authorization", "Bearer "+token)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
+		w := postTestRequest(h, token, path, "")
 		return w
 	}
 	if w := do("/api/rooms/" + roomID + "/search"); w.Code != http.StatusOK {
@@ -2989,16 +2573,8 @@ func TestDrawAllVetoed(t *testing.T) {
 }
 
 func TestSearchExposureOrderingNewStoreBonus(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	hostID := "31313131-3131-3131-3131-313131313131"
 	roomA := "32323232-3232-3232-3232-323232323232"
@@ -3034,10 +2610,7 @@ func TestSearchExposureOrderingNewStoreBonus(t *testing.T) {
 	h := newTestApp(t, pool)
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
 	exposureTrace := func(roomID string) (TraceEntry, bool) {
-		r := httptest.NewRequest("POST", fmt.Sprintf("/api/rooms/%s/search", roomID), nil)
-		r.Header.Set("Authorization", "Bearer "+token)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
+		w := postTestRequest(h, token, fmt.Sprintf("/api/rooms/%s/search", roomID), "")
 		if w.Code != http.StatusOK {
 			t.Fatalf("search %s: want 200 got %d body %s", roomID, w.Code, w.Body.String())
 		}
@@ -3069,16 +2642,8 @@ func TestSearchExposureOrderingNewStoreBonus(t *testing.T) {
 }
 
 func TestSearchSurvivesWeatherOutage(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	hostID := "35353535-3535-3535-3535-353535353535"
 	roomID := "36363636-3636-3636-3636-363636363636"
@@ -3106,10 +2671,7 @@ func TestSearchSurvivesWeatherOutage(t *testing.T) {
 
 	h := newTestAppWithWeather(t, pool, NewMockProvider(), failingWeather{})
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
-	r := httptest.NewRequest("POST", fmt.Sprintf("/api/rooms/%s/search", roomID), nil)
-	r.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+	w := postTestRequest(h, token, fmt.Sprintf("/api/rooms/%s/search", roomID), "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("天氣故障不得阻斷 search：want 200 got %d body %s", w.Code, w.Body.String())
 	}
@@ -3129,16 +2691,8 @@ func TestSearchSurvivesWeatherOutage(t *testing.T) {
 }
 
 func TestVoteUsesCachedWeatherWithoutNetwork(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const (
 		hostID       = "37373737-3737-4373-8373-373737373737"
@@ -3169,16 +2723,8 @@ func TestVoteUsesCachedWeatherWithoutNetwork(t *testing.T) {
 }
 
 func TestDrawSurvivesWeatherOutage(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const (
 		hostID       = "40404040-4040-4040-8040-404040404040"
@@ -3190,10 +2736,7 @@ func TestDrawSurvivesWeatherOutage(t *testing.T) {
 
 	h := newTestAppWithWeather(t, pool, NewMockProvider(), failingWeather{})
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
-	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/draw", nil)
-	r.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+	w := postTestRequest(h, token, "/api/rooms/"+roomID+"/draw", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("天氣故障不得阻斷 draw：want 200 got %d body %s", w.Code, w.Body.String())
 	}
@@ -3235,16 +2778,8 @@ func TestDrawSurvivesWeatherOutage(t *testing.T) {
 // 請求當下營業、用餐時刻已打烊，必須以 closed 被排除。
 // 窗用 nowInAppTZ() 動態算當天 weekday 的 [now-60min, now+120min) 而非寫死牆鐘。
 func TestSearchEvaluatesOpeningHoursAtMealTime(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `supabase start` and set it")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pool.Close() })
+	pool := newTestPool(t, ctx)
 
 	const (
 		hostID       = "4a4a4a4a-4a4a-4a4a-8a4a-4a4a4a4a4a4a"
@@ -3295,10 +2830,7 @@ func TestSearchEvaluatesOpeningHoursAtMealTime(t *testing.T) {
 
 	h := newTestAppWithProvider(t, pool, fixedProvider{closingBeforeMeal, alwaysOpen})
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
-	r := httptest.NewRequest("POST", "/api/rooms/"+roomID+"/search", nil)
-	r.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+	w := postTestRequest(h, token, "/api/rooms/"+roomID+"/search", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("search: want 200 got %d body %s", w.Code, w.Body.String())
 	}

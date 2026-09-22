@@ -14,91 +14,80 @@ func at(weekday time.Weekday, hh, mm int) time.Time {
 }
 
 func TestOpeningHours(t *testing.T) {
-	oh := OpeningHours{"mon": {{660, 1350}}} // 週一 11:00–22:30
-	if !oh.IsOpenAt(at(time.Monday, 12, 0)) {
-		t.Error("週一中午應為營業中")
-	}
-	if oh.IsOpenAt(at(time.Monday, 23, 0)) {
-		t.Error("週一 23:00 應為未營業")
-	}
-	if oh.IsOpenAt(at(time.Tuesday, 12, 0)) {
-		t.Error("週二未定義應為未營業")
-	}
-	if got := oh.MinutesUntilClose(at(time.Monday, 22, 0)); got != 30 {
-		t.Errorf("22:00 距打烊應為 30，got %d", got)
-	}
-}
-
-func TestOpeningHoursOvernight(t *testing.T) {
-	oh := OpeningHours{"fri": {{1020, 120}}} // 週五 17:00–翌日 02:00
-	if !oh.IsOpenAt(at(time.Friday, 23, 0)) {
-		t.Error("週五 23:00 應為營業中")
-	}
-	if !oh.IsOpenAt(at(time.Saturday, 1, 0)) {
-		t.Error("週六 01:00（跨夜段）應為營業中")
-	}
-	if oh.IsOpenAt(at(time.Saturday, 3, 0)) {
-		t.Error("週六 03:00 應為未營業")
-	}
-	if got := oh.MinutesUntilClose(at(time.Saturday, 1, 0)); got != 60 {
-		t.Errorf("跨夜段 01:00 距打烊應為 60，got %d", got)
-	}
-	if got := oh.MinutesUntilClose(at(time.Friday, 23, 0)); got != 180 {
-		t.Errorf("週五 23:00 距打烊應為 180（跨夜累計），got %d", got)
+	day := OpeningHours{"mon": {{660, 1350}}}
+	night := OpeningHours{"fri": {{1020, 120}}}
+	unordered := OpeningHours{"fri": {{1020, 1440}}, "sat": {{0, 1440}}, "sun": {{600, 1200}, {0, 120}}}
+	for _, tc := range []struct {
+		name  string
+		hours OpeningHours
+		now   time.Time
+		want  bool
+	}{
+		{"一般時段營業", day, at(time.Monday, 12, 0), true},
+		{"一般時段打烊", day, at(time.Monday, 23, 0), false},
+		{"未定義星期", day, at(time.Tuesday, 12, 0), false},
+		{"跨夜當天", night, at(time.Friday, 23, 0), true},
+		{"跨夜翌日", night, at(time.Saturday, 1, 0), true},
+		{"跨夜打烊", night, at(time.Saturday, 3, 0), false},
+		{"未排序午夜延續", unordered, at(time.Sunday, 1, 0), true},
+		{"未排序時段間歇", unordered, at(time.Sunday, 3, 0), false},
+		{"未排序白天時段", unordered, at(time.Sunday, 11, 0), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.hours.IsOpenAt(tc.now); got != tc.want {
+				t.Fatalf("IsOpenAt = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
-func TestMinutesUntilCloseContinuesAcrossSplitDays(t *testing.T) {
-	oh := OpeningHours{
-		"fri": {{600, 1440}}, // 週五 10:00 起
-		"sat": {{0, 720}},    // 週六 12:00 止
+func TestMinutesUntilClose(t *testing.T) {
+	split := OpeningHours{"fri": {{600, 1440}}, "sat": {{0, 720}}}
+	unordered := OpeningHours{"fri": {{1020, 1440}}, "sat": {{0, 1440}}, "sun": {{600, 1200}, {0, 120}}}
+	for _, tc := range []struct {
+		name  string
+		hours OpeningHours
+		now   time.Time
+		want  int
+	}{
+		{"一般打烊前", OpeningHours{"mon": {{660, 1350}}}, at(time.Monday, 22, 0), 30},
+		{"跨夜翌日", OpeningHours{"fri": {{1020, 120}}}, at(time.Saturday, 1, 0), 60},
+		{"跨夜當天累計", OpeningHours{"fri": {{1020, 120}}}, at(time.Friday, 23, 0), 180},
+		{"拆分日期延續", split, at(time.Friday, 23, 0), 780},
+		{"拆分日期即將打烊", split, at(time.Saturday, 11, 30), 30},
+		{"未排序午夜延續", unordered, at(time.Saturday, 23, 30), 150},
+		{"未排序白天時段", unordered, at(time.Sunday, 11, 0), 540},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.hours.MinutesUntilClose(tc.now); got != tc.want {
+				t.Fatalf("MinutesUntilClose = %d, want %d", got, tc.want)
+			}
+		})
 	}
-	if got := oh.MinutesUntilClose(at(time.Friday, 23, 0)); got != 780 {
-		t.Fatalf("週五 23:00 距週六 12:00 應為 780 分鐘，got %d", got)
-	}
-	if factor := closingFactor(Restaurant{Hours: oh}, EngineInput{Now: at(time.Friday, 23, 0)}); factor.Mult != 1.0 {
-		t.Fatalf("跨午夜但仍營業 780 分鐘不應套 closing-soon，got %+v", factor)
-	}
-	if got := oh.MinutesUntilClose(at(time.Saturday, 11, 30)); got != 30 {
-		t.Fatalf("週六 11:30 距打烊應為 30 分鐘，got %d", got)
-	}
-	if factor := closingFactor(Restaurant{Hours: oh}, EngineInput{Now: at(time.Saturday, 11, 30)}); factor.Mult != ClosingSoonMult {
-		t.Fatalf("打烊前 30 分鐘應套 closing-soon，got %+v", factor)
-	}
+	t.Run("24/7 無近期打烊", func(t *testing.T) {
+		if got := daily([2]int{0, 1440}).MinutesUntilClose(at(time.Monday, 12, 0)); got < 7*1440 {
+			t.Fatalf("24/7 remaining minutes = %d", got)
+		}
+	})
 }
 
-func TestMinutesUntilCloseFindsUnorderedMidnightContinuation(t *testing.T) {
-	oh := OpeningHours{
-		"fri": {{1020, 1440}},
-		"sat": {{0, 1440}},
-		"sun": {{600, 1200}, {0, 120}},
-	}
-
-	if got := oh.MinutesUntilClose(at(time.Saturday, 23, 30)); got != 150 {
-		t.Fatalf("週六 23:30 距週日 02:00 應為 150 分鐘，got %d", got)
-	}
-	if !oh.IsOpenAt(at(time.Sunday, 1, 0)) {
-		t.Error("週日 01:00 應為營業中")
-	}
-	if oh.IsOpenAt(at(time.Sunday, 3, 0)) {
-		t.Error("週日 03:00 應為未營業")
-	}
-	if !oh.IsOpenAt(at(time.Sunday, 11, 0)) {
-		t.Error("週日 11:00 應為營業中")
-	}
-	if got := oh.MinutesUntilClose(at(time.Sunday, 11, 0)); got != 540 {
-		t.Fatalf("週日 11:00 距週日 20:00 應為 540 分鐘，got %d", got)
-	}
-}
-
-func TestMinutesUntilCloseTwentyFourSevenIsNotClosingSoon(t *testing.T) {
-	oh := daily([2]int{0, 1440})
-	now := at(time.Monday, 12, 0)
-	if got := oh.MinutesUntilClose(now); got < 7*1440 {
-		t.Fatalf("24/7 應回傳足夠大的距打烊時間，got %d", got)
-	}
-	if factor := closingFactor(Restaurant{Hours: oh}, EngineInput{Now: now}); factor.Mult != 1.0 {
-		t.Fatalf("24/7 不應套 closing-soon，got %+v", factor)
+func TestClosingFactorAcrossDays(t *testing.T) {
+	split := OpeningHours{"fri": {{600, 1440}}, "sat": {{0, 720}}}
+	for _, tc := range []struct {
+		name  string
+		hours OpeningHours
+		now   time.Time
+		want  float64
+	}{
+		{"午夜後仍營業", split, at(time.Friday, 23, 0), 1},
+		{"隔天即將打烊", split, at(time.Saturday, 11, 30), ClosingSoonMult},
+		{"24/7", daily([2]int{0, 1440}), at(time.Monday, 12, 0), 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := closingFactor(Restaurant{Hours: tc.hours}, EngineInput{Now: tc.now}); got.Mult != tc.want {
+				t.Fatalf("closingFactor = %+v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -141,61 +130,37 @@ func TestMockProviderSynthesizesCuisineQueryMatches(t *testing.T) {
 		{"mock-009", []string{"indian"}},
 		{"mock-003", nil},
 	} {
-		got := byID[tc.placeID]
-		if len(got.QueryMatches) != len(tc.want) {
-			t.Errorf("%s QueryMatches = %v，want %v", tc.placeID, got.QueryMatches, tc.want)
-			continue
-		}
-		for i := range tc.want {
-			if got.QueryMatches[i] != tc.want[i] {
+		t.Run(tc.placeID, func(t *testing.T) {
+			got := byID[tc.placeID]
+			if len(got.QueryMatches) != len(tc.want) {
 				t.Errorf("%s QueryMatches = %v，want %v", tc.placeID, got.QueryMatches, tc.want)
-				break
+				return
 			}
-		}
+			for i := range tc.want {
+				if got.QueryMatches[i] != tc.want[i] {
+					t.Errorf("%s QueryMatches = %v，want %v", tc.placeID, got.QueryMatches, tc.want)
+					break
+				}
+			}
+		})
 	}
 }
 
-func TestCuisineUnionIsSortedAndDeduplicated(t *testing.T) {
-	got := cuisineUnion([]Member{
-		{Cuisines: []string{"ramen", "hotpot"}},
-		{Cuisines: []string{"indian", "ramen"}},
-	})
-	want := []string{"hotpot", "indian", "ramen"}
-	if len(got) != len(want) {
-		t.Fatalf("cuisineUnion = %v，want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("cuisineUnion = %v，want %v", got, want)
-		}
-	}
-}
-
-// 素食是嚴格禁忌（DietaryRequires）：沒有專屬檢索支線，素食店永遠進不了池——
-// 2026-08-16 實測台北車站 1.5km 的 nearby 20 筆熱門中素食店為 0 家，
-// 但 textSearch「素食」在同一個圈撈到 15 家、其中 13 家帶 vegetarian_restaurant type。
-func TestCuisineUnionIncludesStrictDietaryAsSearchTerm(t *testing.T) {
-	members := []Member{
-		{UserID: "u1", Cuisines: []string{"japanese"}, Dietary: []string{"vegetarian"}},
-		{UserID: "u2", Cuisines: []string{"hotpot"}},
-	}
-	got := cuisineUnion(members)
-	want := []string{"hotpot", "japanese", "vegetarian"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("cuisineUnion = %v, want %v", got, want)
-	}
-}
-
-// 相容期的舊飲食值沒有可用的 Places 證據，完全忽略；只有 DietaryRequires
-// 裡的正向嚴格禁忌才產生檢索詞。
-func TestCuisineUnionIgnoresUnsupportedLegacyDietary(t *testing.T) {
-	members := []Member{
-		{UserID: "u1", Cuisines: []string{"ramen"}, Dietary: []string{"no_beef", "no_pork"}},
-	}
-	got := cuisineUnion(members)
-	want := []string{"ramen"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("cuisineUnion = %v, want %v", got, want)
+func TestCuisineUnion(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		members []Member
+		want    []string
+	}{
+		{"排序去重", []Member{{Cuisines: []string{"ramen", "hotpot"}}, {Cuisines: []string{"indian", "ramen"}}}, []string{"hotpot", "indian", "ramen"}},
+		{"嚴格禁忌加入檢索詞", []Member{{UserID: "u1", Cuisines: []string{"japanese"}, Dietary: []string{"vegetarian"}}, {UserID: "u2", Cuisines: []string{"hotpot"}}}, []string{"hotpot", "japanese", "vegetarian"}},
+		{"忽略不支援的舊禁忌", []Member{{UserID: "u1", Cuisines: []string{"ramen"}, Dietary: []string{"no_beef", "no_pork"}}}, []string{"ramen"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cuisineUnion(tc.members); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("cuisineUnion = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

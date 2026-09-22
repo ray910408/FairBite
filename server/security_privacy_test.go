@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // History scoring applies below and at the former four-member boundary.
@@ -80,27 +78,33 @@ func TestHistoryScoringAllRoomSizes(t *testing.T) {
 }
 
 func TestExcludedReasonHasByteBound(t *testing.T) {
-	for _, veto := range []bool{false, true} {
-		in := EngineInput{Restaurants: []Restaurant{rest(nil)}, Now: lunchMonday}
-		for i := 0; i < 20; i++ {
-			in.Members = append(in.Members, member(func(m *Member) {
-				m.DisplayName = strings.Repeat("名", 80)
-				if !veto {
-					m.Dietary = []string{"vegetarian"}
-				}
-			}))
-		}
-		if veto {
-			in.Votes = map[string]VoteInfo{"p1": {Vetoers: []string{strings.Repeat("名", 10000)}}}
-		}
-		result := Evaluate(in)
-		if len(result.Excluded) != 1 {
-			t.Fatal("expected exclusion")
-		}
-		reason := result.Excluded[0].Reason
-		if len(reason) > 2048 || !utf8.ValidString(reason) || !strings.HasSuffix(reason, "…") {
-			t.Fatalf("veto=%v: invalid bounded UTF8 reason (%d bytes)", veto, len(reason))
-		}
+	for _, tc := range []struct {
+		name string
+		veto bool
+	}{{"dietary", false}, {"veto", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			veto := tc.veto
+			in := EngineInput{Restaurants: []Restaurant{rest(nil)}, Now: lunchMonday}
+			for i := 0; i < 20; i++ {
+				in.Members = append(in.Members, member(func(m *Member) {
+					m.DisplayName = strings.Repeat("名", 80)
+					if !veto {
+						m.Dietary = []string{"vegetarian"}
+					}
+				}))
+			}
+			if veto {
+				in.Votes = map[string]VoteInfo{"p1": {Vetoers: []string{strings.Repeat("名", 10000)}}}
+			}
+			result := Evaluate(in)
+			if len(result.Excluded) != 1 {
+				t.Fatal("expected exclusion")
+			}
+			reason := result.Excluded[0].Reason
+			if len(reason) > 2048 || !utf8.ValidString(reason) || !strings.HasSuffix(reason, "…") {
+				t.Fatalf("veto=%v: invalid bounded UTF8 reason (%d bytes)", veto, len(reason))
+			}
+		})
 	}
 }
 
@@ -131,17 +135,9 @@ func TestGroupHistoryUsesCoarseBuckets(t *testing.T) {
 // Execute the actual migration against seeded old snapshots in a rollback-only
 // transaction. Rename only its archive schema to coexist with the applied schema.
 func TestLegacyScoringMigrationPreservesPrivateAudit(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
+	pool := newTestPool(t, ctx)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
