@@ -94,8 +94,9 @@ test('連續抽選含相同結果均旋轉，盤面指針對準結果，轉動�
     await expect(wheel.getByRole('button', { name: '刪除 火鍋', exact: true })).toBeDisabled()
     await expect(disc).toHaveCSS('transition-duration', '3.2s')
     await expect.poll(() => disc.evaluate(el =>
-      el.getAnimations().some(animation => animation.playState === 'running'))).toBe(true)
-    const rotation = await disc.evaluate(el => Number((el as HTMLElement).style.transform.match(/[\d.]+/)?.[0]))
+      el.getAnimations().some((animation: { playState: string }) => animation.playState === 'running'))).toBe(true)
+    const rotation = await disc.evaluate(el => Number(
+      (el as unknown as { style: { transform: string } }).style.transform.match(/[\d.]+/)?.[0]))
     expect(rotation - previous).toBeGreaterThanOrEqual(1800)
     previous = rotation
     await expect(wheel.getByRole('status')).toHaveText(`抽中：${expected}`)
