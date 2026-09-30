@@ -147,6 +147,9 @@ export default function HomePage() {
     doLeave()
   }
 
+  // 選好就預告今天/明天：比現在早的時刻會滾到明天，建房前先讓房主看見
+  const mealPreview = mealHH && mealMM ? buildMealTimeISO(`${mealHH}:${mealMM}`) : null
+
   async function persistRoom(pos: DeparturePoint) {
     const creatorUid = await getUid()
     if (!creatorUid) return
@@ -159,6 +162,11 @@ export default function HomePage() {
       const r = buildMealTimeISO(`${mealHH}:${mealMM}`)
       if ('error' in r) {
         setCreateError(r.error)
+        return
+      }
+      // 預告是 render 時算的：停在畫面上跨過所選時刻，送出時會滾到明天，先擋下讓房主看見再按
+      if (mealPreview && 'iso' in mealPreview && mealPreview.iso !== r.iso) {
+        setCreateError(`已過所選時刻，改為${formatMealTime(r.iso)}，確認請再按一次建立房間`)
         return
       }
       mealISO = r.iso
@@ -208,9 +216,6 @@ export default function HomePage() {
       setBusy(false)
     }
   }
-
-  // 選好就預告今天/明天：比現在早的時刻會滾到明天，建房前先讓房主看見
-  const mealPreview = mealHH && mealMM ? buildMealTimeISO(`${mealHH}:${mealMM}`) : null
 
   return (
     <>
