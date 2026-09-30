@@ -86,6 +86,7 @@ type Restaurant struct {
 	Lat, Lng    float64
 	Address     string
 	Hours       OpeningHours
+	TimeZone    string // IANA（Places timeZone.id）；"" = 未知，營業判定沿用 APP_TZ
 	Rating      float64
 	// Closed 是 transient provider 訊號；UpsertRestaurants 不會持久化。
 	Closed bool
@@ -135,7 +136,8 @@ func (mockProvider) SearchNearby(_ context.Context, lat, lng float64, radiusM in
 		if Haversine(lat, lng, r.Lat, r.Lng) > float64(radiusM) {
 			continue
 		}
-		// r 是值複本，設定 QueryMatches 不會污染共享的 mockRestaurants
+		// r 是值複本，設定 QueryMatches/TimeZone 不會污染共享的 mockRestaurants
+		r.TimeZone = "Asia/Taipei" // mock 店全在台北，不隨 APP_TZ 漂移
 		for _, c := range cuisines {
 			if hasTag(r.CuisineTags, c) {
 				r.QueryMatches = append(r.QueryMatches, c)

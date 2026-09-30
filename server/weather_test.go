@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -197,6 +198,39 @@ func TestFutureHourUsesHourlyForecast(t *testing.T) {
 	}
 	if gotQuery.Get("hourly") != "precipitation" || gotQuery.Get("timezone") != appLocation.String() {
 		t.Fatalf("未來小時應帶 hourly+timezone 參數：%v", gotQuery)
+	}
+}
+
+// 出發點在海外也要取到同一絕對時刻：Open-Meteo 以請求的 timezone 標 hourly，
+// 伺服器以同一時區組 key，兩邊抵銷，所以 timezone 不必改成出發點當地。
+func TestFutureHourForecastMatchesInstantOutsideAppTZ(t *testing.T) {
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setTestClock(t, func() time.Time { return time.Date(2026, 8, 13, 14, 0, 0, 0, tokyo) })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		loc, err := time.LoadLocation(r.URL.Query().Get("timezone"))
+		if err != nil {
+			t.Errorf("timezone 參數無效：%v", err)
+			return
+		}
+		// 模擬 Open-Meteo：UTC 整點各一筆、標籤用請求時區；降雨量 = 距 00:00Z 的小時數，方便辨識
+		start := time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
+		var times []string
+		var rain []float64
+		for h := 0; h < 48; h++ {
+			times = append(times, start.Add(time.Duration(h)*time.Hour).In(loc).Format("2006-01-02T15:04"))
+			rain = append(rain, float64(h))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"hourly": map[string]any{"time": times, "precipitation": rain}})
+	}))
+	defer srv.Close()
+
+	w, err := NewOpenMeteoProvider(srv.URL).Current(context.Background(), 35.6812, 139.7671,
+		time.Date(2026, 8, 13, 19, 0, 0, 0, tokyo))
+	if err != nil || w.RainMM != 10 {
+		t.Fatalf("東京 19:00 = 10:00Z，應取第 10 小時的降雨：w=%v err=%v", w, err)
 	}
 }
 

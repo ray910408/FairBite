@@ -181,6 +181,9 @@ type gPlace struct {
 			Close *gPoint `json:"close"`
 		} `json:"periods"`
 	} `json:"regularOpeningHours"`
+	TimeZone struct {
+		ID string `json:"id"`
+	} `json:"timeZone"`
 }
 
 func (*googleProvider) Source() string { return "google" }
@@ -229,7 +232,7 @@ func (g *googleProvider) fetchPlaces(ctx context.Context, endpoint string, body 
 	req.Header.Set("X-Goog-Api-Key", g.apiKey)
 	fieldMask :=
 		"places.id,places.displayName,places.types,places.primaryType,places.priceLevel,places.location," +
-			"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours"
+			"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours,places.timeZone"
 	if endpoint == "/v1/places:searchText" {
 		fieldMask += ",nextPageToken"
 	}
@@ -307,7 +310,7 @@ func gRestaurant(p gPlace) Restaurant {
 		PlaceID: p.ID, Closed: closed, Name: p.DisplayName.Text, PrimaryType: p.PrimaryType,
 		CuisineTags: gTags(p), PriceLevel: gPrice(p.PriceLevel),
 		Lat: p.Location.Latitude, Lng: p.Location.Longitude,
-		Address: p.FormattedAddress, Hours: gHours(p), Rating: p.Rating,
+		Address: p.FormattedAddress, Hours: gHours(p), TimeZone: p.TimeZone.ID, Rating: p.Rating,
 	}
 }
 

@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -40,10 +42,34 @@ func loadAppLocationAfterDotenv(dotenvFiles ...string) (*time.Location, error) {
 	return location, nil
 }
 
-// Opening-hours periods are restaurant-local wall-clock values. Taiwan is the
-// only market for now; a future per-place utcOffsetMinutes should replace APP_TZ.
+// Opening-hours periods are restaurant-local wall-clock values; the engine
+// converts to each restaurant's zone (restaurantLocalTime). APP_TZ remains the
+// fallback for restaurants whose zone is unknown.
 func nowInAppTZ() time.Time {
 	return clockNow().In(appLocation)
+}
+
+var zoneCache sync.Map // IANA id → *time.Location；無效 id 存 nil，免得每次重解析
+
+// restaurantLocalTime：營業、快打烊、時段都以餐廳當地時鐘判定。時區未知（舊快取列、
+// provider 未提供）或無效 → 原樣回傳：上游 roomEvalTime 已是 APP_TZ 時刻。
+func restaurantLocalTime(r Restaurant, t time.Time) time.Time {
+	if r.TimeZone == "" {
+		return t
+	}
+	v, ok := zoneCache.Load(r.TimeZone)
+	if !ok {
+		loc, err := time.LoadLocation(r.TimeZone)
+		if err != nil {
+			log.Printf("餐廳 %s 時區 %q 無效，沿用 APP_TZ：%v", r.PlaceID, r.TimeZone, err)
+			loc = nil
+		}
+		v, _ = zoneCache.LoadOrStore(r.TimeZone, loc)
+	}
+	if loc := v.(*time.Location); loc != nil {
+		return t.In(loc)
+	}
+	return t
 }
 
 // roomEvalTime：所有時間敏感判定（營業/快打烊/天氣/時段）的單一評估時刻。

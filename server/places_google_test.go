@@ -61,6 +61,7 @@ const gSample = `{"places":[
    "priceLevel":"PRICE_LEVEL_MODERATE",
    "location":{"latitude":25.0478,"longitude":121.5170},
    "formattedAddress":"台北市中正區某路1號","rating":4.3,
+   "timeZone":{"id":"Asia/Taipei"},
    "servesVegetarianFood":false,
    "regularOpeningHours":{"periods":[
      {"open":{"day":1,"hour":11,"minute":0},"close":{"day":1,"hour":22,"minute":30}}]}},
@@ -210,6 +211,9 @@ func gServer(t *testing.T, fail1st bool) *httptest.Server {
 		if !strings.Contains(r.Header.Get("X-Goog-FieldMask"), "places.primaryType") {
 			t.Errorf("FieldMask missing places.primaryType: %q", r.Header.Get("X-Goog-FieldMask"))
 		}
+		if !strings.Contains(r.Header.Get("X-Goog-FieldMask"), "places.timeZone") {
+			t.Errorf("FieldMask missing places.timeZone: %q", r.Header.Get("X-Goog-FieldMask"))
+		}
 		var requestBody struct {
 			IncludedTypes        []string `json:"includedTypes"`
 			ExcludedPrimaryTypes []string `json:"excludedPrimaryTypes"`
@@ -298,6 +302,9 @@ func TestGoogleProviderMapping(t *testing.T) {
 	}
 	if sushi.PrimaryType != "sushi_restaurant" {
 		t.Errorf("primaryType 必須帶入快取判斷欄位，got %q", sushi.PrimaryType)
+	}
+	if sushi.TimeZone != "Asia/Taipei" {
+		t.Errorf("timeZone.id 必須帶入營業時段判定用的時區，got %q", sushi.TimeZone)
 	}
 	if !hasTag(sushi.CuisineTags, "japanese") {
 		t.Errorf("types 應映到 japanese：%v", sushi.CuisineTags)
@@ -1103,9 +1110,10 @@ func TestChineseOnlyRestaurantHasNoTaiwaneseSignalWithoutQueryMatch(t *testing.T
 // 刻意比對整串字面值而不是維護一份 Atmosphere 欄位黑名單：黑名單要手抄、會過期，
 // 而且 Google 新增貴欄位時不會自己長出來（那正是本輪在拆的反模式）。
 // SKU 對照：https://developers.google.com/maps/billing-and-pricing/sku-details
+// 2026-09-30 加 timeZone：Nearby/Text Search 屬 Pro，低於既有的 Enterprise，不移動計費階。
 func TestFieldMaskIsPinned(t *testing.T) {
 	const want = "places.id,places.displayName,places.types,places.primaryType,places.priceLevel,places.location," +
-		"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours"
+		"places.formattedAddress,places.rating,places.businessStatus,places.regularOpeningHours,places.timeZone"
 	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = r.Header.Get("X-Goog-FieldMask")
