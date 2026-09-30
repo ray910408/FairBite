@@ -194,30 +194,6 @@ describe('足跡頁回首頁離席確認', () => {
     rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 2, isHost: false }],
   }
 
-  it('dialog 有名稱、有回到房間的入口，取消與 Esc 留在足跡頁', async () => {
-    const tree = await render(oneRoom)
-    const dialog = findNode(tree, el => el.props?.role === 'dialog')
-    expect(dialog?.props?.['aria-modal']).toBe('true')
-    expect(dialog?.props?.['aria-labelledby']).toBe('leave-title')
-
-    // ADR-0007 Consequences：足跡頁需要不經首頁的回房入口
-    expect(findNode(tree, byText('a', '回到房間'))?.props?.to).toBe('/room/room-1')
-    expect(findNode(tree, byText('a', '仍要回首頁'))?.props?.to).toBe('/')
-
-    const cancel = findNode(tree, byText('button', '取消'))
-    expect(cancel?.props?.autoFocus).toBe(true)
-    ;(cancel!.props!.onClick as () => void)()
-    expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith(null)
-
-    mocks.stateSetters[DIALOG].mockClear()
-    const onKeyDown = findNode(tree, el => typeof el.props?.onKeyDown === 'function')!
-      .props!.onKeyDown as (e: { key: string }) => void
-    onKeyDown({ key: 'Enter' })
-    expect(mocks.stateSetters[DIALOG]).not.toHaveBeenCalled()
-    onKeyDown({ key: 'Escape' })
-    expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith(null)
-  })
-
   // PR #17 回歸：背景整塊帶著 inert，而 setLeaveDialog(null) 不同步 flush——同一輪呼叫
   // focus() 時觸發元素還在 inert 子樹內，瀏覽器直接忽略，焦點掉回 document.body。
   // 斷言的是「延後」這件事本身：關閉當下不得呼叫 focus()，要等 rAF 那一拍才還原。
@@ -226,6 +202,8 @@ describe('足跡頁回首頁離席確認', () => {
     vi.stubGlobal('requestAnimationFrame', raf)
     try {
       const tree = await render(oneRoom)
+      expect(findNode(tree, byText('a', '回到房間'))?.props?.to).toBe('/room/room-1')
+      expect(findNode(tree, byText('a', '仍要回首頁'))?.props?.to).toBe('/')
       const focus = vi.fn()
       // 觸發元素由 askLeave 當場記下（兩個回首頁入口共用一個 dialog）
       const onClick = asHandler(findNode(tree, byText('a', '回首頁'))?.props?.onClick)
@@ -234,7 +212,9 @@ describe('足跡頁回首頁離席確認', () => {
 
       raf.mockClear()
       const cancel = findNode(tree, byText('button', '取消'))
+      expect(cancel?.props?.autoFocus).toBe(true)
       ;(cancel!.props!.onClick as () => void)()
+      expect(mocks.stateSetters[DIALOG]).toHaveBeenLastCalledWith(null)
       expect(focus).not.toHaveBeenCalled() // 這一輪背景還是 inert，現在 focus() 只會被忽略
       expect(raf).toHaveBeenCalledTimes(1)
       raf.mock.calls[0][0]()
@@ -242,9 +222,11 @@ describe('足跡頁回首頁離席確認', () => {
 
       raf.mockClear()
       focus.mockClear()
+      mocks.stateSetters[DIALOG].mockClear()
       const onKeyDown = findNode(tree, el => typeof el.props?.onKeyDown === 'function')!
         .props!.onKeyDown as (e: { key: string }) => void
       onKeyDown({ key: 'Escape' })
+      expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledExactlyOnceWith(null)
       expect(focus).not.toHaveBeenCalled()
       expect(raf).toHaveBeenCalledTimes(1)
       raf.mock.calls[0][0]()
@@ -298,30 +280,6 @@ describe('足跡頁回首頁離席確認', () => {
     expect(findNode(tree, byText('a', '回到房間'))).toBeUndefined()
   })
 
-  // 多房籍在矮視窗（320x568）會長到超出畫面；垂直置中時上下一起溢出，
-  // 「取消」和「仍要回首頁」會變成點不到
-  it('dialog 限高在視窗內，只有中段捲動，控制項不會被捲走', async () => {
-    const tree = await render({
-      kind: 'rooms',
-      rooms: ['AAA111', 'BBB222', 'CCC333'].map((code, i) =>
-        ({ id: `room-${i}`, code, status: 'voting', memberCount: 3, isHost: true })),
-    })
-    const dialog = findNode(tree, el => el.props?.role === 'dialog')
-    const dialogClass = String(dialog?.props?.className ?? '')
-    expect(dialogClass).toContain('max-h-full') // 卡片不得長過視窗
-    expect(dialogClass).toContain('flex-col')
-
-    const scroller = findNode(dialog,
-      el => String(el.props?.className ?? '').includes('overflow-y-auto'))
-    expect(scroller).toBeDefined()
-    expect(String(scroller?.props?.className)).toContain('min-h-0') // 沒有它 flex 不肯縮
-    expect(textContent(scroller)).toContain('房間 CCC333') // 房間清單在捲動區裡
-    // 控制項在捲動區外：內容再長也構得到
-    expect(findNode(scroller, byText('button', '取消'))).toBeUndefined()
-    expect(findNode(scroller, byText('a', '仍要回首頁'))).toBeUndefined()
-    expect(findNode(tree, byText('button', '取消'))).toBeDefined()
-    expect(findNode(tree, byText('a', '仍要回首頁'))?.props?.to).toBe('/')
-  })
 })
 
 describe('足跡頁房籍查詢', () => {

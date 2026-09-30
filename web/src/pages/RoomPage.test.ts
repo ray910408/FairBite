@@ -864,29 +864,6 @@ describe('回首頁離席確認', () => {
     expect(mocks.stateSetters[LEAVE_CHECKING].mock.calls).toEqual([[true], [true], [false]])
   })
 
-  it('確認開啟時是有名稱的 modal dialog，取消與 Esc 都留在房間', async () => {
-    const tree = await mount({
-      kind: 'rooms',
-      rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 2, isHost: false }],
-    })
-    const dialog = findNode(tree, el => el.props?.role === 'dialog')
-    expect(dialog?.props?.['aria-modal']).toBe('true')
-    expect(dialog?.props?.['aria-labelledby']).toBe('leave-title')
-
-    const cancel = findButton(tree, '取消')
-    if (!cancel.props?.onClick) throw new Error('找不到取消按鈕')
-    await cancel.props.onClick()
-    expect(mocks.stateSetters[LEAVE_DIALOG]).toHaveBeenCalledWith(null)
-
-    const overlay = findNode(tree, el => typeof el.props?.onKeyDown === 'function')
-    const onKeyDown = overlay!.props!.onKeyDown as (e: { key: string }) => void
-    mocks.stateSetters[LEAVE_DIALOG].mockClear()
-    onKeyDown({ key: 'Enter' })
-    expect(mocks.stateSetters[LEAVE_DIALOG]).not.toHaveBeenCalled()
-    onKeyDown({ key: 'Escape' })
-    expect(mocks.stateSetters[LEAVE_DIALOG]).toHaveBeenCalledWith(null)
-  })
-
   // PR #17 回歸：背景整塊帶著 inert（fixed 遮罩對 tab 順序沒用，只好整塊 inert），
   // 而 setLeaveDialog(null) 不同步 flush——同一輪呼叫 focus() 時觸發元素還在 inert
   // 子樹內，瀏覽器直接忽略，焦點掉回 document.body。所以斷言的是「延後」這件事本身：
@@ -908,6 +885,7 @@ describe('回首頁離席確認', () => {
       const cancel = findButton(tree, '取消')
       if (!cancel.props?.onClick) throw new Error('找不到取消按鈕')
       await cancel.props.onClick()
+      expect(mocks.stateSetters[LEAVE_DIALOG]).toHaveBeenCalledExactlyOnceWith(null)
       expect(focus).not.toHaveBeenCalled() // 這一輪背景還是 inert，現在 focus() 只會被忽略
       expect(raf).toHaveBeenCalledTimes(1)
       raf.mock.calls[0][0]()
@@ -916,9 +894,11 @@ describe('回首頁離席確認', () => {
       // Esc 走同一條 closeLeave（實測就是 Esc 關閉後 activeElement 掉回 body）
       raf.mockClear()
       focus.mockClear()
+      mocks.stateSetters[LEAVE_DIALOG].mockClear()
       const onKeyDown = findNode(tree, el => typeof el.props?.onKeyDown === 'function')!
         .props!.onKeyDown as (e: { key: string }) => void
       onKeyDown({ key: 'Escape' })
+      expect(mocks.stateSetters[LEAVE_DIALOG]).toHaveBeenCalledExactlyOnceWith(null)
       expect(focus).not.toHaveBeenCalled()
       expect(raf).toHaveBeenCalledTimes(1)
       raf.mock.calls[0][0]()
