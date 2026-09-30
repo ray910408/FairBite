@@ -283,16 +283,16 @@ func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant, source s
 		tags, _ := json.Marshal(rs[i].CuisineTags)
 		hours, _ := json.Marshal(rs[i].Hours)
 		err := tx.QueryRow(ctx, `
-			insert into restaurants (place_id, name, primary_type, cuisine_tags, price_level, lat, lng, address, opening_hours, rating, source, fetched_at)
-			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
+			insert into restaurants (place_id, name, primary_type, cuisine_tags, price_level, lat, lng, address, opening_hours, rating, source, time_zone, fetched_at)
+			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, nullif($12, ''), now())
 			on conflict (place_id) do update set
 			  name = excluded.name, primary_type = excluded.primary_type, cuisine_tags = excluded.cuisine_tags,
 			  price_level = excluded.price_level, lat = excluded.lat, lng = excluded.lng,
 			  address = excluded.address, opening_hours = excluded.opening_hours,
-			  rating = excluded.rating, source = excluded.source, fetched_at = now()
+			  rating = excluded.rating, source = excluded.source, time_zone = coalesce(excluded.time_zone, restaurants.time_zone), fetched_at = now()
 			returning id`,
 			rs[i].PlaceID, rs[i].Name, rs[i].PrimaryType, tags, rs[i].PriceLevel, rs[i].Lat, rs[i].Lng,
-			rs[i].Address, hours, rs[i].Rating, source).Scan(&rs[i].ID)
+			rs[i].Address, hours, rs[i].Rating, source, rs[i].TimeZone).Scan(&rs[i].ID)
 		if err != nil {
 			return fmt.Errorf("upsert %s: %w", rs[i].PlaceID, err)
 		}
@@ -315,7 +315,8 @@ func StaleOutRestaurants(ctx context.Context, q querier, placeIDs []string) erro
 // ponytail: 全量掃 + Go 端 haversine 過濾；快取量級小，夠用，量大再改 SQL bounding box
 func LoadCachedRestaurants(ctx context.Context, q querier, lat, lng float64, radiusM int, excludeMock bool) ([]Restaurant, error) {
 	query := `
-		select id, place_id, name, primary_type, cuisine_tags, price_level, lat, lng, address, opening_hours, coalesce(rating, 0)
+		select id, place_id, name, primary_type, cuisine_tags, price_level, lat, lng, address, opening_hours, coalesce(rating, 0),
+		       coalesce(time_zone, '')
 		from restaurants where fetched_at > now() - interval '30 days'`
 	if excludeMock {
 		query += ` and source = 'google'`
@@ -333,7 +334,7 @@ func LoadCachedRestaurants(ctx context.Context, q querier, lat, lng float64, rad
 		var tags, hours []byte
 		var primaryType pgtype.Text
 		if err := rows.Scan(&r.ID, &r.PlaceID, &r.Name, &primaryType, &tags, &r.PriceLevel,
-			&r.Lat, &r.Lng, &r.Address, &hours, &r.Rating); err != nil {
+			&r.Lat, &r.Lng, &r.Address, &hours, &r.Rating, &r.TimeZone); err != nil {
 			return nil, err
 		}
 		// 升級前資料沒有 primary_type；未知資格一律 fail-closed。正常舊餐廳會在下次成功搜尋時重新入庫。
@@ -417,7 +418,8 @@ func TransitionRoom(ctx context.Context, tx pgx.Tx, roomID, from, to string) err
 func LoadRoomRestaurants(ctx context.Context, q querier, roomID string) ([]Restaurant, map[string]bool, error) {
 	rows, err := q.Query(ctx, `
 		select r.id, r.place_id, r.name, r.cuisine_tags, r.price_level,
-		       r.lat, r.lng, r.address, r.opening_hours, coalesce(r.rating, 0), rc.exposure_counted, rc.query_matches
+		       r.lat, r.lng, r.address, r.opening_hours, coalesce(r.rating, 0), rc.exposure_counted, rc.query_matches,
+		       coalesce(r.time_zone, '')
 		from room_candidates rc join restaurants r on r.id = rc.restaurant_id
 		where rc.room_id = $1 order by rc.restaurant_id`, roomID)
 	if err != nil {
@@ -431,7 +433,7 @@ func LoadRoomRestaurants(ctx context.Context, q querier, roomID string) ([]Resta
 		var tags, hours []byte
 		var counted bool
 		if err := rows.Scan(&r.ID, &r.PlaceID, &r.Name, &tags, &r.PriceLevel,
-			&r.Lat, &r.Lng, &r.Address, &hours, &r.Rating, &counted, &r.QueryMatches); err != nil {
+			&r.Lat, &r.Lng, &r.Address, &hours, &r.Rating, &counted, &r.QueryMatches, &r.TimeZone); err != nil {
 			return nil, nil, err
 		}
 		if err := json.Unmarshal(tags, &r.CuisineTags); err != nil {

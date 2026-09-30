@@ -16,7 +16,7 @@ func TestCachedRestaurantsPersistAndFilterPrimaryType(t *testing.T) {
 
 	valid := []Restaurant{{
 		PlaceID: "cache-primary-valid", Name: "可前往麵店", PrimaryType: "noodle_shop",
-		Lat: 0.12345, Lng: 0.12345, Hours: OpeningHours{},
+		Lat: 0.12345, Lng: 0.12345, Hours: OpeningHours{}, TimeZone: "Asia/Tokyo",
 	}}
 	if err := UpsertRestaurants(ctx, tx, valid, "google"); err != nil {
 		t.Fatal(err)
@@ -30,6 +30,7 @@ func TestCachedRestaurantsPersistAndFilterPrimaryType(t *testing.T) {
 		t.Fatalf("stored primary_type = %q, want %q", storedPrimaryType, valid[0].PrimaryType)
 	}
 	valid[0].PrimaryType = "restaurant"
+	valid[0].TimeZone = "" // provider 這次沒給時區：不得抹掉已知值
 	if err := UpsertRestaurants(ctx, tx, valid, "google"); err != nil {
 		t.Fatal(err)
 	}
@@ -58,5 +59,8 @@ func TestCachedRestaurantsPersistAndFilterPrimaryType(t *testing.T) {
 	}
 	if cached[0].PrimaryType != valid[0].PrimaryType {
 		t.Fatalf("loaded primary_type = %q, want %q", cached[0].PrimaryType, valid[0].PrimaryType)
+	}
+	if cached[0].TimeZone != "Asia/Tokyo" {
+		t.Fatalf("loaded time_zone = %q, want Asia/Tokyo", cached[0].TimeZone)
 	}
 }
