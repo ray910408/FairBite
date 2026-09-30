@@ -33,7 +33,7 @@ function waitForRoomRealtime(page: Page) {
   })
 }
 
-// 今日限定的自訂用餐時間：晚間執行時退回「馬上出發」，避免 mock 營業池縮水與跨日 flaky
+// e2e 只挑今天的自訂用餐時間（不測滾到明天）：晚間執行時退回「馬上出發」，避免 mock 營業池縮水與跨日 flaky
 function mealTimeForE2E(now = new Date()): string | null {
   const t = new Date(Math.min(now.getTime() + 2 * 60 * 60 * 1000,
     new Date(now).setHours(20, 0, 0, 0)))
