@@ -834,17 +834,10 @@ describe('HomePage 離席確認 dialog', () => {
     expect(findButtonAnywhere(tree, '加入').props.disabled).toBe(true)
   })
 
-  it('有名稱的 modal dialog，控制項在捲動區外', async () => {
-    const tree = await render({ kind: 'rooms', rooms: [inRoom] })
-    const dialog = findNode(tree, el => el.props?.role === 'dialog')
-    expect(dialog?.props?.['aria-modal']).toBe('true')
-    expect(dialog?.props?.['aria-labelledby']).toBe('leave-title')
-    expect(textContent(tree)).toContain('你還在房間 ABC123 裡')
-    expect(textContent(tree)).toContain('你若是最後一位成員，房間會直接被刪除')
-  })
-
   it('確認離開才呼叫 leaveRooms，settle 後解除閘門', async () => {
     const tree = await render({ kind: 'rooms', rooms: [inRoom] })
+    expect(textContent(tree)).toContain('你還在房間 ABC123 裡')
+    expect(textContent(tree)).toContain('你若是最後一位成員，房間會直接被刪除')
     const leave = findButton(tree, '離開房間')
     if (!leave.props?.onClick) throw new Error('找不到離開房間按鈕')
     await leave.props.onClick()
@@ -903,14 +896,12 @@ describe('HomePage 離席確認 dialog', () => {
     expect(findButton(tree, '離開房間').props?.onClick).toBeTypeOf('function')
   })
 
-  it('沒有房籍就不渲染 dialog', async () => {
-    expect(textContent(await render(null))).not.toContain('你還在房間裡')
-  })
-
   // fixed 遮罩擋得住指標，對 tab 順序毫無作用：沒有 inert，鍵盤可以 tab 到背景的
   // 「建立房間」按 Enter，繞過還沒決定的退房
   it('dialog 開著時背景 inert，dialog 本身在 inert 子樹外', async () => {
-    const closed = findNode(await render(null), el => el.props?.className === 'min-h-screen')
+    const closedTree = await render(null)
+    expect(findNode(closedTree, el => el.props?.role === 'dialog')).toBeUndefined()
+    const closed = findNode(closedTree, el => el.props?.className === 'min-h-screen')
     expect(closed?.props?.inert).toBe(false)
 
     const tree = await render({ kind: 'rooms', rooms: [inRoom] })

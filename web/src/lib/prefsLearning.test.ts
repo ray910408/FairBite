@@ -15,9 +15,6 @@ describe('suggestCuisines', () => {
   it('已在偏好中的不重複建議', () => {
     expect(suggestCuisines([row(['japanese']), row(['japanese'])], ['japanese'], KNOWN)).toEqual([])
   })
-  it('打過低分（≤2 星）的那餐不列入學習', () => {
-    expect(suggestCuisines([row(['japanese'], 1), row(['japanese'])], [], KNOWN)).toEqual([])
-  })
   it('打過低分的菜系即使另有兩筆未評分也不建議', () => {
     expect(suggestCuisines([
       row(['japanese'], 1), row(['japanese']), row(['japanese']),

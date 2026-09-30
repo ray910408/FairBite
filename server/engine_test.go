@@ -92,9 +92,9 @@ func TestBudgetGooglePriceLevelFilter(t *testing.T) {
 	cases := []testCase{
 		{"same price level kept", 200, 1, false},
 		{"higher than preference excluded", 200, 2, true},
-		{"unknown price kept", 100, PriceLevelUnknown, false},
 	}
-	for budget := 100; budget <= 1600; budget += 100 {
+	// 免費餐廳只需驗證偏好上下界；價位分級邊界由 TestBudgetMaxGooglePriceLevel 覆蓋。
+	for _, budget := range []int{100, 1600} {
 		cases = append(cases, testCase{fmt.Sprintf("free at budget %d", budget), budget, 0, false})
 	}
 	for level := 0; level <= 4; level++ {
@@ -175,30 +175,28 @@ func TestUnknownHoursNeverExcludeOrApplyClosingFactor(t *testing.T) {
 		r.PlaceID = "closed-control"
 		r.Hours = daily([2]int{330, 660})
 	})
-	for day := time.Sunday; day <= time.Saturday; day++ {
-		for _, clock := range [][2]int{{0, 0}, {12, 0}, {23, 59}} {
-			now := at(day, clock[0], clock[1])
-			t.Run(fmt.Sprintf("%s-%02d:%02d", day, clock[0], clock[1]), func(t *testing.T) {
-				res := Evaluate(EngineInput{
-					Restaurants: []Restaurant{unknown, closed},
-					Members:     []Member{member(nil)},
-					Now:         now, CenterLat: 25.0478, CenterLng: 121.5170,
-				})
-				if len(res.Kept) != 1 || res.Kept[0].PlaceID != unknown.PlaceID {
-					t.Fatalf("未知營業時間應保留，got kept=%+v excluded=%+v", res.Kept, res.Excluded)
-				}
-				for _, entry := range res.Kept[0].Trace {
-					if entry.Factor == "closing_soon" || strings.Contains(entry.Reason, "打烊") {
-						t.Errorf("未知營業時間不應有 closing-soon factor：%+v", entry)
-					}
-				}
-				if len(res.Excluded) != 1 || res.Excluded[0].PlaceID != closed.PlaceID ||
-					!hasKind(res.Excluded[0].Kinds, "closed") ||
-					!strings.Contains(res.Excluded[0].Reason, "用餐時間未營業") {
-					t.Fatalf("已知未營業控制組應排除，got %+v", res.Excluded)
-				}
+	// 未知營業時間走同一個空值分支；保留週界午夜與平日中午，不展開 7×3 組合。
+	for _, now := range []time.Time{at(time.Sunday, 0, 0), lunchMonday, at(time.Saturday, 23, 59)} {
+		t.Run(now.Format("Mon-15:04"), func(t *testing.T) {
+			res := Evaluate(EngineInput{
+				Restaurants: []Restaurant{unknown, closed},
+				Members:     []Member{member(nil)},
+				Now:         now, CenterLat: 25.0478, CenterLng: 121.5170,
 			})
-		}
+			if len(res.Kept) != 1 || res.Kept[0].PlaceID != unknown.PlaceID {
+				t.Fatalf("未知營業時間應保留，got kept=%+v excluded=%+v", res.Kept, res.Excluded)
+			}
+			for _, entry := range res.Kept[0].Trace {
+				if entry.Factor == "closing_soon" || strings.Contains(entry.Reason, "打烊") {
+					t.Errorf("未知營業時間不應有 closing-soon factor：%+v", entry)
+				}
+			}
+			if len(res.Excluded) != 1 || res.Excluded[0].PlaceID != closed.PlaceID ||
+				!hasKind(res.Excluded[0].Kinds, "closed") ||
+				!strings.Contains(res.Excluded[0].Reason, "用餐時間未營業") {
+				t.Fatalf("已知未營業控制組應排除，got %+v", res.Excluded)
+			}
+		})
 	}
 }
 

@@ -3,11 +3,6 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import TrendChart, { trendPoints } from './TrendChart'
 
 describe('trendPoints', () => {
-  it('少於 2 筆回空（整塊隱藏，spec §5.2）', () => {
-    expect(trendPoints([])).toEqual([])
-    expect(trendPoints([5])).toEqual([])
-  })
-
   it('★5 貼上緣、★1 貼下緣、x 平均分布（pad=16）', () => {
     const pts = trendPoints([5, 1, 3], 320, 120, 16)
     expect(pts[0]).toEqual({ x: 16, y: 16 })    // ★5 → 頂
@@ -18,6 +13,7 @@ describe('trendPoints', () => {
 
 describe('TrendChart markup（renderToStaticMarkup，免 jsdom）', () => {
   it('少於 2 筆輸出空字串（整塊隱藏）', () => {
+    expect(renderToStaticMarkup(<TrendChart ratings={[]} />)).toBe('')
     expect(renderToStaticMarkup(<TrendChart ratings={[5]} />)).toBe('')
   })
 
