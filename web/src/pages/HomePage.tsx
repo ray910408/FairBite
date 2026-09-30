@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
 import { leaveNotice } from '../lib/leaveNotice'
-import { buildMealTimeISO } from '../lib/mealTime'
+import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
 import { suggestCuisines, type HistoryRow } from '../lib/prefsLearning'
 import { loadLastDeparture, saveLastDeparture, type DeparturePoint } from '../lib/departure'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
@@ -209,6 +209,9 @@ export default function HomePage() {
     }
   }
 
+  // 選好就預告今天/明天：比現在早的時刻會滾到明天，建房前先讓房主看見
+  const mealPreview = mealHH && mealMM ? buildMealTimeISO(`${mealHH}:${mealMM}`) : null
+
   return (
     <>
       {/* dialog 開著時整塊背景 inert：fixed 遮罩擋得住指標，對 tab 順序毫無作用——
@@ -282,6 +285,9 @@ export default function HomePage() {
                   ))}
                 </select>
               </div>
+            )}
+            {mealMode === 'custom' && mealPreview && 'iso' in mealPreview && (
+              <p role="status" className="text-xs text-fg-muted">{formatMealTime(mealPreview.iso)} 用餐</p>
             )}
           </div>}
           {authState === 'guest' ? (

@@ -209,7 +209,21 @@ describe('HomePage 錯誤就地顯示（QA ISSUE-003）', () => {
     mocks.saveLastDeparture.mockReset()
     vi.stubGlobal('localStorage', { getItem: vi.fn(() => '1'), setItem: vi.fn() })
   })
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('自訂時間選好就預告日期：22:35 選 19:30 顯示明天', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 7, 13, 22, 35))
+    mocks.stateValues = [
+      '', '', '', '', { lat: 25.0478, lng: 121.517, label: '台北車站' },
+      'custom', '19', '30', false, '', {}, [],
+    ]
+    const { default: HomePage } = await import('./HomePage')
+    expect(textContent(findSections(HomePage())[0])).toContain('明天 19:30 用餐')
+  })
 
   it('自訂時間未選完整就按建立房間：不打 API', async () => {
     mocks.stateValues = [
