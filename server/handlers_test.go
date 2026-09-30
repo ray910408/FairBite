@@ -406,7 +406,7 @@ func TestQueryMatchesSurviveRescoreRoundTrip(t *testing.T) {
 		{
 			PlaceID: placeID, Name: "查詢命中拉麵", PrimaryType: "restaurant",
 			CuisineTags: []string{}, QueryMatches: []string{"ramen"}, PriceLevel: 1,
-			Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}),
+			Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440}), TimeZone: "Asia/Tokyo",
 		},
 		{
 			PlaceID: excludedPlaceID, Name: "被排除的查詢命中火鍋", PrimaryType: "restaurant",
@@ -437,6 +437,13 @@ func TestQueryMatchesSurviveRescoreRoundTrip(t *testing.T) {
 	}
 	if got := loadedByPlaceID[excludedPlaceID].QueryMatches; len(got) != 1 || got[0] != "hotpot" {
 		t.Fatalf("載回 excluded query_matches = %v, want [hotpot]", got)
+	}
+	// 重算走這條路徑：時區要載回；未知（NULL）載回空字串，引擎沿用 APP_TZ。
+	if got := loadedByPlaceID[placeID].TimeZone; got != "Asia/Tokyo" {
+		t.Fatalf("載回 time_zone = %q, want Asia/Tokyo", got)
+	}
+	if got := loadedByPlaceID[excludedPlaceID].TimeZone; got != "" {
+		t.Fatalf("未知時區應載回空字串，got %q", got)
 	}
 
 	if err := ReplaceCandidates(ctx, tx, roomID,
