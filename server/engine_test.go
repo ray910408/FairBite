@@ -442,6 +442,71 @@ func TestClosingSoonDemoted(t *testing.T) {
 	}
 }
 
+// 營業時段是餐廳當地時鐘：roomEvalTime 給的是 APP_TZ 時刻，引擎須換到餐廳時區再判定。
+func TestTimeJudgmentsUseRestaurantLocalTime(t *testing.T) {
+	load := func(name string) *time.Location {
+		loc, err := time.LoadLocation(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return loc
+	}
+	tokyo, newYork := load("Asia/Tokyo"), load("America/New_York")
+	monday := func(loc *time.Location, hh, mm int) time.Time { // 2026-08-03 是週一
+		return time.Date(2026, 8, 3, hh, mm, 0, 0, loc)
+	}
+	for _, tc := range []struct {
+		name       string
+		tz         string
+		hours      OpeningHours
+		tags       []string
+		local      time.Time
+		factor     string // 應出現的 trace 因素；"" = 只驗證保留
+		wantReason string
+	}{
+		{"東京 22:30 快打烊", "Asia/Tokyo", daily([2]int{660, 1380}), nil,
+			monday(tokyo, 22, 30), "closing_soon", "23:00 打烊"},
+		{"東京 17:30 已開門", "Asia/Tokyo", daily([2]int{1020, 1380}), nil,
+			monday(tokyo, 17, 30), "", ""},
+		{"紐約 08:00 早餐時段", "America/New_York", daily([2]int{0, 1440}), []string{"breakfast"},
+			monday(newYork, 8, 0), "timeslot", "早餐時段加成"},
+		// 紐約週日 20:00 = 台北週一 08:00：星期也要跟著換，不能只換時鐘
+		{"紐約週日晚上跨日", "America/New_York", OpeningHours{"sun": {{1080, 1380}}}, nil,
+			time.Date(2026, 8, 2, 20, 0, 0, 0, newYork), "", ""},
+		{"時區未知沿用 APP_TZ", "", daily([2]int{0, 750}), nil,
+			monday(appLocation, 12, 0), "closing_soon", "12:30 打烊"},
+		{"時區無效沿用 APP_TZ", "Mars/Base", daily([2]int{0, 750}), nil,
+			monday(appLocation, 12, 0), "closing_soon", "12:30 打烊"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := rest(func(r *Restaurant) {
+				r.TimeZone, r.Hours = tc.tz, tc.hours
+				if tc.tags != nil {
+					r.CuisineTags = tc.tags
+				}
+			})
+			// 比照正式路徑：roomEvalTime 一律回 APP_TZ 時刻
+			res := Evaluate(EngineInput{Restaurants: []Restaurant{r}, Members: []Member{member(nil)},
+				Now: tc.local.In(appLocation), CenterLat: r.Lat, CenterLng: r.Lng})
+			if len(res.Kept) != 1 {
+				t.Fatalf("當地營業中應保留，got excluded %+v", res.Excluded)
+			}
+			if tc.factor == "" {
+				return
+			}
+			for _, e := range res.Kept[0].Trace {
+				if e.Factor == tc.factor {
+					if e.Mult == 1.0 || e.Reason != tc.wantReason {
+						t.Fatalf("%s = ×%v %q, want 非中性 %q", tc.factor, e.Mult, e.Reason, tc.wantReason)
+					}
+					return
+				}
+			}
+			t.Fatalf("缺 %s trace：%+v", tc.factor, res.Kept[0].Trace)
+		})
+	}
+}
+
 func TestEvaluateVotes(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

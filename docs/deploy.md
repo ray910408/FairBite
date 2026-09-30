@@ -154,6 +154,10 @@ push 到 `main` 時 `deploy-pages.yml` 的 `migrate` job 會自動 `supabase db 
 > 教訓（2026-08-14 QA）：Round 1 的 0017 沒推上線，前端照常自動部署，
 > 線上建房/進房整整壞了一天——`column rooms.meal_time does not exist`。
 
+> 2026-09-30 餐廳時區（`20260930000100_restaurant_time_zone.sql`）：新 Go 讀寫
+> `restaurants.time_zone`，欄位不存在時搜尋（快取寫入）與重算都會失敗。這是「新程式對舊
+> schema」的不相容，上面的 additive 規則保護不到：migration 必須先上線，Render 才能部署新 Go。
+
 ## 2026-09 安全修復部署閘門
 
 這次 migrations `20260905000100`–`20260905000300` **不是新舊版本完全相容的更新**。

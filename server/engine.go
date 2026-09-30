@@ -541,7 +541,7 @@ func Evaluate(in EngineInput) EngineResult {
 				Kinds: []string{"batch"}, Reason: "本批已排除"})
 			continue
 		}
-		if kinds, reasons := hardExclude(r, in.Members, in.Now, in.CuisineFilter); len(kinds) > 0 {
+		if kinds, reasons := hardExclude(r, in.Members, restaurantLocalTime(r, in.Now), in.CuisineFilter); len(kinds) > 0 {
 			res.Excluded = append(res.Excluded, Excluded{r, kinds, strings.Join(reasons, "；")})
 			continue
 		}
@@ -555,8 +555,10 @@ func Evaluate(in EngineInput) EngineResult {
 	in.Restaurants = survivors
 	for _, r := range survivors {
 		c := Candidate{Restaurant: r, Score: 1.0}
+		rin := in // 時間因素一律看餐廳當地時鐘；只換 Now，其餘共用
+		rin.Now = restaurantLocalTime(r, in.Now)
 		for _, f := range factors {
-			e := f(r, in)
+			e := f(r, rin)
 			if e.Factor == "" { // 未知資料可保持 neutral，且不產生虛構 trace。
 				continue
 			}
