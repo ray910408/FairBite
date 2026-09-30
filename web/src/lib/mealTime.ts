@@ -6,7 +6,15 @@ export function buildMealTimeISO(hhmm: string, now: Date = new Date()): { iso: s
   if (!m) return { error: '請輸入用餐時間' }
   const t = new Date(now)
   t.setHours(Number(m[1]), Number(m[2]), 0, 0)
-  if (t.getTime() <= now.getTime()) t.setDate(t.getDate() + 1)
+  if (t.getTime() <= now.getTime()) {
+    // 秋季回撥的重複時段 setHours 取較早那次；較晚那次還沒到就用它，不必滾到明天
+    const shift = new Date(t.getTime() + 3 * 3600_000).getTimezoneOffset() - t.getTimezoneOffset()
+    const later = new Date(t.getTime() + shift * 60_000)
+    if (later.getTime() > now.getTime() && later.getHours() === t.getHours() && later.getMinutes() === t.getMinutes()) {
+      return { iso: later.toISOString() }
+    }
+    t.setDate(t.getDate() + 1)
+  }
   return { iso: t.toISOString() }
 }
 

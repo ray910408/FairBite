@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useMidnightRerender } from '../hooks/useMidnightRerender'
 import { useRoom } from '../hooks/useRoom'
 import { chooseLocation, confirmDraw, editConditions, redrawRoom, startVoting, voteLocation } from '../lib/api'
 import type { DeparturePoint } from '../lib/departure'
@@ -137,6 +138,7 @@ export default function RoomPage() {
     const getUser = supabase.auth?.getUser?.bind(supabase.auth)
     if (getUser) void getUser().then(({ data }) => setIsGuest(data.user?.is_anonymous === true)).catch(() => {})
   }, [])
+  useMidnightRerender() // 新 hook 一律接在最後：RoomPage.test.ts 依呼叫順序 mock
   if (!room) {
     if (loadError) return (
       <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">

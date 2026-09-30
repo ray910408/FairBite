@@ -28,6 +28,20 @@ describe('buildMealTimeISO', () => {
     const r = buildMealTimeISO('00:30', new Date(2026, 7, 31, 23, 50, 0))
     expect('iso' in r && new Date(r.iso)).toEqual(new Date(2026, 8, 1, 0, 30, 0))
   })
+
+  it('秋季回撥的重複時段：較晚那次還沒到就用它，不滾到明天', () => {
+    // Windows 的 Node 刪掉 TZ 不會還原時區，所以還原時改設回原本解析出的時區
+    const tz = process.env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+    process.env.TZ = 'America/New_York'
+    try {
+      // 回撥後第二輪的 01:15 EST；setHours(1, 30) 會取已過的 01:30 EDT
+      const r = buildMealTimeISO('01:30', new Date(Date.UTC(2026, 10, 1, 6, 15)))
+      expect('iso' in r && r.iso).toBe(new Date(Date.UTC(2026, 10, 1, 6, 30)).toISOString())
+    } finally {
+      process.env.TZ = tz
+    }
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(tz)
+  })
 })
 
 describe('formatMealTime', () => {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useMidnightRerender } from '../hooks/useMidnightRerender'
 import { supabase } from '../lib/supabase'
 import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
 import { leaveNotice } from '../lib/leaveNotice'
@@ -147,6 +148,7 @@ export default function HomePage() {
     doLeave()
   }
 
+  useMidnightRerender() // 新 hook 一律接在最後：HomePage.test.ts 依呼叫順序 mock
   // 選好就預告今天/明天：比現在早的時刻會滾到明天，建房前先讓房主看見
   const mealPreview = mealHH && mealMM ? buildMealTimeISO(`${mealHH}:${mealMM}`) : null
 
