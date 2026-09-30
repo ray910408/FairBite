@@ -31,16 +31,31 @@ describe('buildMealTimeISO', () => {
 
   it('秋季回撥的重複時段：較晚那次還沒到就用它，不滾到明天', () => {
     // Windows 的 Node 刪掉 TZ 不會還原時區，所以還原時改設回原本解析出的時區
-    const tz = process.env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+    const env = process.env.TZ
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone // 正規化名稱：Etc/UTC → UTC
     process.env.TZ = 'America/New_York'
     try {
       // 回撥後第二輪的 01:15 EST；setHours(1, 30) 會取已過的 01:30 EDT
       const r = buildMealTimeISO('01:30', new Date(Date.UTC(2026, 10, 1, 6, 15)))
       expect('iso' in r && r.iso).toBe(new Date(Date.UTC(2026, 10, 1, 6, 30)).toISOString())
     } finally {
-      process.env.TZ = tz
+      process.env.TZ = env ?? zone
     }
-    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(tz)
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(zone)
+  })
+
+  it('春季跳時當天選被跳過的時刻：滾到明天仍是所選的 02:30', () => {
+    const env = process.env.TZ
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone // 正規化名稱：Etc/UTC → UTC
+    process.env.TZ = 'America/New_York'
+    try {
+      // 3/8 中午 EDT；今天的 02:30 不存在，setHours 會先正規化成 03:30
+      const r = buildMealTimeISO('02:30', new Date(Date.UTC(2026, 2, 8, 16, 0)))
+      expect('iso' in r && r.iso).toBe(new Date(Date.UTC(2026, 2, 9, 6, 30)).toISOString())
+    } finally {
+      process.env.TZ = env ?? zone
+    }
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(zone)
   })
 })
 

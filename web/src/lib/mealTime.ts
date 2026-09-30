@@ -14,6 +14,8 @@ export function buildMealTimeISO(hhmm: string, now: Date = new Date()): { iso: s
       return { iso: later.toISOString() }
     }
     t.setDate(t.getDate() + 1)
+    // 今天的時刻若落在春季跳時的空檔，setHours 已把它正規化成晚一小時；換日後重套所選時刻
+    t.setHours(Number(m[1]), Number(m[2]), 0, 0)
   }
   return { iso: t.toISOString() }
 }
