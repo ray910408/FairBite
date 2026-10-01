@@ -782,7 +782,7 @@ describe('回首頁離席確認', () => {
     expect(mocks.navigate).not.toHaveBeenCalled()
     expect(mocks.stateSetters[LEAVE_DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
-      rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 1, isHost: false }],
+      rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 1, isHost: false, stale: false }],
     })
     expect(mocks.stateSetters[LEAVE_CHECKING]).toHaveBeenCalledWith(true)
     expect(mocks.stateSetters[LEAVE_CHECKING]).toHaveBeenCalledWith(false)

@@ -108,8 +108,10 @@ export async function voteRoom(roomId: string, restaurantId: string,
 
 // 回首頁＝離席（ADR-0007）：mount 時打一次，退掉自己的所有房（殘留舊房自癒）。
 // 錯誤交給呼叫端：加入新房必須先確認離席成功；首頁另採 best-effort。
-// 5 秒 timeout（eng review 1A）：建房/加入鈕等本函式 settle 才解禁，Go 惸而不斷時
-// 不能讓只需 Supabase 的建房入口被懸掛的 fetch 鎖死。
+// 60 秒 timeout（eng review 1A）：建房/加入鈕等本函式 settle 才解禁，Go 懸而不斷時
+// 不能讓只需 Supabase 的建房入口被懸掛的 fetch 鎖死。原本 5 秒，但 Render free 閒置 15 分鐘
+// 就休眠、冷啟動約 50 秒（docs/deploy.md）——吃完飯回來按退房必定逾時、請求被 abort，
+// 首頁又吞掉錯誤，房籍就留著（2026-10-01 回報：末位退房幾天後還問要不要回房）。
 // single-flight（eng review D12）：StrictMode dev 會雙跑 mount effect，第二發若晚於
 // 新建房落地會誤刪新房——飛行中共用同一 promise，第二發不出網路。
 let leaveInFlight: Promise<void> | null = null
@@ -117,7 +119,7 @@ let leaveInFlight: Promise<void> | null = null
 export function leaveRooms(): Promise<void> {
   leaveInFlight ??= (async () => {
     try {
-      const response = await post('/api/leave', undefined, { signal: AbortSignal.timeout(5000) })
+      const response = await post('/api/leave', undefined, { signal: AbortSignal.timeout(60_000) })
       if (!response.ok) throw new Error(`離席失敗（${response.status}）`)
     } finally {
       leaveInFlight = null

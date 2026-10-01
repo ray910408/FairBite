@@ -7,9 +7,9 @@ const mocks = vi.hoisted(() => ({ from: vi.fn(), getUid: vi.fn() }))
 vi.mock('./supabase', () => ({ supabase: { from: mocks.from } }))
 vi.mock('./uid', () => ({ getUid: mocks.getUid }))
 
-import { fetchLeaveRooms } from './roomMembership'
+import { fetchLeaveRooms, isStaleRoom } from './roomMembership'
 
-const QUERY_TIMEOUT = 5000 // 與 roomMembership.ts 同值；量級比照 api.ts 的 leaveRooms
+const QUERY_TIMEOUT = 5000 // 與 roomMembership.ts 同值
 
 describe('fetchLeaveRooms 逾時出口', () => {
   beforeEach(() => {
@@ -49,4 +49,43 @@ describe('fetchLeaveRooms 逾時出口', () => {
     await expect(fetchLeaveRooms()).resolves.toBeNull()
     expect(vi.getTimerCount()).toBe(0)
   })
+})
+
+// 殘留房（ADR-0007 2026-10-01 修訂）：判斷錯向「不是殘留」只會多問一次，錯向「是」會靜默退掉
+// 進行中的房——所以邊界與解析失敗都必須落在 false
+describe('isStaleRoom', () => {
+  const now = Date.parse('2026-10-01T12:00:00Z')
+  const HOUR = 60 * 60 * 1000
+
+  it('沒設用餐時間就以建房時間起算，超過 12 小時才算殘留', () => {
+    expect(isStaleRoom(new Date(now - 12 * HOUR).toISOString(), null, now)).toBe(false)
+    expect(isStaleRoom(new Date(now - 12 * HOUR - 1).toISOString(), null, now)).toBe(true)
+  })
+
+  it('有用餐時間以它為準：昨晚建的明天的飯不算殘留', () => {
+    const created = new Date(now - 30 * HOUR).toISOString()
+    expect(isStaleRoom(created, new Date(now + HOUR).toISOString(), now)).toBe(false)
+    expect(isStaleRoom(created, new Date(now - 13 * HOUR).toISOString(), now)).toBe(true)
+  })
+
+  it('時間解析失敗不算殘留（照舊問）', () => {
+    expect(isStaleRoom('not-a-date', null, now)).toBe(false)
+  })
+})
+
+it('fetchLeaveRooms 帶回每間房的殘留判定', async () => {
+  mocks.getUid.mockReset().mockResolvedValue('me')
+  const old = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+  mocks.from.mockReset().mockReturnValue({
+    select: (cols: string) => {
+      expect(cols).toContain('created_at')
+      expect(cols).toContain('meal_time')
+      return Promise.resolve({ data: [
+        { room_id: 'r1', rooms: { code: 'A', status: 'candidates', host_id: 'me', created_at: old, meal_time: null } },
+        { room_id: 'r2', rooms: { code: 'B', status: 'lobby', host_id: 'x', created_at: new Date().toISOString(), meal_time: null } },
+      ], error: null })
+    },
+  })
+  const rooms = await fetchLeaveRooms()
+  expect(rooms?.map(r => [r.id, r.stale])).toEqual([['r1', true], ['r2', false]])
 })

@@ -247,7 +247,7 @@ describe('leaveRooms', () => {
     await expect(leaveRooms()).rejects.toMatchObject({ name: 'TimeoutError' })
   })
 
-  it('正常路徑打 POST /api/leave 且帶 5 秒 AbortSignal', async () => {
+  it('正常路徑打 POST /api/leave 且帶 60 秒 AbortSignal（蓋過 Render 冷啟動）', async () => {
     fetchStub.mockResolvedValue(new Response('{}'))
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout')
     const { leaveRooms } = await import('./api')
@@ -255,7 +255,7 @@ describe('leaveRooms', () => {
     const [url, init] = fetchStub.mock.calls.at(-1)!
     expect(String(url)).toContain('/api/leave')
     expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal)
-    expect(timeoutSpy).toHaveBeenCalledWith(5000)
+    expect(timeoutSpy).toHaveBeenCalledWith(60_000)
   })
 
   it('single-flight：飛行中連呼兩次只發一次 fetch（StrictMode 雙 effect）', async () => {

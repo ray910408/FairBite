@@ -193,6 +193,27 @@ describe('join after confirmed departure', () => {
     mocks.setters.forEach(setter => expect(setter).not.toHaveBeenCalled())
   })
 
+  // 殘留房（ADR-0007 2026-10-01 修訂）：比照首頁，全是過期房就不問，退了直接加入
+  it('leaves only-stale rooms without asking, then joins', async () => {
+    mocks.fetchLeaveRooms.mockResolvedValueOnce([{ id: 'old-room', stale: true }]).mockResolvedValue([])
+    JoinPage()
+    mocks.effects[0]()
+    await vi.waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/room/new-room', { replace: true }))
+    expect(mocks.leaveRooms).toHaveBeenCalledTimes(1)
+    expect(mocks.rpc).toHaveBeenCalledWith('join_room', { p_code: 'ABC123' })
+    expect(mocks.setters[2]).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'rooms' }))
+  })
+
+  it('still asks when any room is not stale', async () => {
+    const rooms = [{ id: 'old-room', stale: true }, { id: 'live-room', stale: false }]
+    mocks.fetchLeaveRooms.mockResolvedValue(rooms)
+    JoinPage()
+    mocks.effects[0]()
+    await vi.waitFor(() => expect(mocks.setters[2]).toHaveBeenCalledWith({ kind: 'rooms', rooms }))
+    expect(mocks.leaveRooms).not.toHaveBeenCalled()
+    expect(mocks.rpc).not.toHaveBeenCalledWith('join_room', expect.anything())
+  })
+
   it('only joins the latest invite when the route code changes', async () => {
     let finishOld!: (value: unknown) => void
     const oldResolution = new Promise(resolve => { finishOld = resolve })

@@ -277,7 +277,7 @@ describe('HomePage 錯誤就地顯示（QA ISSUE-003）', () => {
 // state 索引：12 leavePending / 13 leaveTarget（新 state 只能接在它們後面）
 const PENDING = 12
 const TARGET = 13
-const inRoom = { id: 'room-1', code: 'ABC123', status: 'lobby', memberCount: 2, isHost: false }
+const inRoom = { id: 'room-1', code: 'ABC123', status: 'lobby', memberCount: 2, isHost: false, stale: false }
 
 function stubSuggestionQueries() {
   mocks.rpc.mockImplementation((name: string) => name === 'get_my_default_prefs'
@@ -781,6 +781,23 @@ describe('HomePage mount 離席確認', () => {
     await vi.waitFor(() => expect(mocks.stateSetters[PENDING]).toHaveBeenCalledWith(false))
     expect(mocks.leaveRooms).not.toHaveBeenCalled()
     expect(mocks.stateSetters[TARGET]).not.toHaveBeenCalled()
+  })
+
+  // 殘留房（ADR-0007 2026-10-01 修訂）：滑掉 App 或退房請求失敗留下的過期房，隔幾天不再問要不要回房
+  it('全是殘留房就直接退房，不開 dialog', async () => {
+    mocks.fetchLeaveRooms.mockResolvedValue([{ ...inRoom, stale: true }])
+    await runMount()
+    await vi.waitFor(() => expect(mocks.stateSetters[PENDING]).toHaveBeenCalledWith(false))
+    expect(mocks.leaveRooms).toHaveBeenCalledTimes(1)
+    expect(mocks.stateSetters[TARGET]).not.toHaveBeenCalled()
+  })
+
+  it('殘留房混著進行中的房仍整份問：/api/leave 全退不挑房', async () => {
+    const rooms = [{ ...inRoom, stale: true }, { ...inRoom, id: 'room-2', code: 'DEF456' }]
+    mocks.fetchLeaveRooms.mockResolvedValue(rooms)
+    await runMount()
+    await vi.waitFor(() => expect(mocks.stateSetters[TARGET]).toHaveBeenCalledWith({ kind: 'rooms', rooms }))
+    expect(mocks.leaveRooms).not.toHaveBeenCalled()
   })
 
   // 退房不可逆：查不到現況就不准替使用者按下去
