@@ -41,3 +41,11 @@ Taiwanese retrieval 固定查 `台式料理` 與 `台灣小吃`，每詞最多�
 one。空白、重複 token 或取消即停止，只有兩詞都沒有成功解碼頁面才回報 `taiwanese`
 unfulfilled。`nextPageToken` 只列入 Text Search field mask；Nearby 保持原 mask。麵店／水餃
 等召回仍只寫 `room_candidates.query_matches=["taiwanese"]`，絕不改寫 canonical tags。
+
+## 2026-10-01 國別衝突閘門
+
+線上實測「台式料理」召回泰式店、「印度料理」召回印尼店（Google 模糊比對近音），開菜系過濾仍進池。
+新增第三道閘門：查詢菜系屬國別（`NationalCuisines`），而店的 primaryType 屬另一國（東南亞 unmapped
+type，或 `googleTypeTags` 對映到別的國別）即拒收該筆 match。只看 primaryType；品類菜系不受影響。
+已接受的副作用：日式咖哩不再得 indian match；台式牛排（steak_house）、包子店（dim_sum）不再得 taiwanese match。
+既有房間已落盤的 query_matches 不回溯，下一次搜尋才套用。

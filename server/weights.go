@@ -48,6 +48,13 @@ var HotMealCuisines = map[string]bool{
 	"taiwanese": true, "japanese": true, "korean": true, "cantonese": true, "western": true,
 	"indian": true, "hotpot": true, "seafood": true, "ramen": true, "fast_food": true,
 }
+
+// 國別菜系：與速食／火鍋／海鮮等「品類」不同，一家店的 primaryType 只會屬於一國。
+// 查詢命中的國別與 primaryType 的國別不同即衝突（2026-10-01 實測：「台式料理」召回泰式店、
+// 「印度料理」召回印尼店，Google 模糊比對把近音當命中）。
+var NationalCuisines = map[string]bool{
+	"taiwanese": true, "japanese": true, "korean": true, "cantonese": true, "western": true, "indian": true,
+}
 var DessertOnlyPrimaryTypes = map[string]bool{
 	"dessert_shop": true, "ice_cream_shop": true, "dessert_restaurant": true,
 }
