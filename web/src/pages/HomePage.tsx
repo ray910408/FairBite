@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useMidnightRerender } from '../hooks/useMidnightRerender'
 import { supabase } from '../lib/supabase'
 import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
 import { leaveNotice } from '../lib/leaveNotice'
-import { buildMealTimeISO } from '../lib/mealTime'
+import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
 import { suggestCuisines, type HistoryRow } from '../lib/prefsLearning'
 import { loadLastDeparture, saveLastDeparture, type DeparturePoint } from '../lib/departure'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
@@ -147,6 +148,10 @@ export default function HomePage() {
     doLeave()
   }
 
+  useMidnightRerender() // 新 hook 一律接在最後：HomePage.test.ts 依呼叫順序 mock
+  // 選好就預告今天/明天：比現在早的時刻會滾到明天，建房前先讓房主看見
+  const mealPreview = mealHH && mealMM ? buildMealTimeISO(`${mealHH}:${mealMM}`) : null
+
   async function persistRoom(pos: DeparturePoint) {
     const creatorUid = await getUid()
     if (!creatorUid) return
@@ -159,6 +164,11 @@ export default function HomePage() {
       const r = buildMealTimeISO(`${mealHH}:${mealMM}`)
       if ('error' in r) {
         setCreateError(r.error)
+        return
+      }
+      // 預告是 render 時算的：停在畫面上跨過所選時刻，送出時會滾到明天，先擋下讓房主看見再按
+      if (mealPreview && 'iso' in mealPreview && mealPreview.iso !== r.iso) {
+        setCreateError(`已過所選時刻，改為${formatMealTime(r.iso)}，確認請再按一次建立房間`)
         return
       }
       mealISO = r.iso
@@ -282,6 +292,9 @@ export default function HomePage() {
                   ))}
                 </select>
               </div>
+            )}
+            {mealMode === 'custom' && mealPreview && 'iso' in mealPreview && (
+              <p role="status" className="text-xs text-fg-muted">{formatMealTime(mealPreview.iso)} 用餐</p>
             )}
           </div>}
           {authState === 'guest' ? (

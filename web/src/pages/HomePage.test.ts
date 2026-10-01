@@ -209,7 +209,49 @@ describe('HomePage 錯誤就地顯示（QA ISSUE-003）', () => {
     mocks.saveLastDeparture.mockReset()
     vi.stubGlobal('localStorage', { getItem: vi.fn(() => '1'), setItem: vi.fn() })
   })
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('自訂時間選好就預告日期：22:35 選 19:30 顯示明天', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 7, 13, 22, 35))
+    mocks.stateValues = [
+      '', '', '', '', { lat: 25.0478, lng: 121.517, label: '台北車站' },
+      'custom', '19', '30', false, '', {}, [],
+    ]
+    const { default: HomePage } = await import('./HomePage')
+    expect(textContent(findSections(HomePage())[0])).toContain('明天 19:30 用餐')
+  })
+
+  it('預告今天、按下前已過所選時刻：不建房，請房主確認改成明天', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 7, 13, 19, 29))
+    mocks.stateValues = [
+      '', '', '', '', { lat: 25.0478, lng: 121.517, label: '台北車站' },
+      'custom', '19', '30', false, '', {}, [],
+    ]
+    const { default: HomePage } = await import('./HomePage')
+    const button = findButton(HomePage(), '建立房間')
+    vi.setSystemTime(new Date(2026, 7, 13, 19, 31))
+    await button.props?.onClick?.()
+    expect(mocks.rpc).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[1]).toHaveBeenLastCalledWith('已過所選時刻，改為明天 19:30，確認請再按一次建立房間')
+  })
+
+  it('預告與送出時刻一致就照常建房', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 7, 13, 19, 29))
+    mocks.rpc.mockResolvedValue({ data: 'room-1', error: null })
+    mocks.from.mockReturnValue({ update: () => ({ eq: vi.fn().mockResolvedValue({ error: null }) }) })
+    mocks.stateValues = [
+      '', '', '', '', { lat: 25.0478, lng: 121.517, label: '台北車站' },
+      'custom', '19', '30', false, '', {}, [],
+    ]
+    await clickCreateRoom()
+    expect(mocks.rpc).toHaveBeenCalledWith('create_room', { p_lat: 25.0478, p_lng: 121.517 })
+  })
 
   it('自訂時間未選完整就按建立房間：不打 API', async () => {
     mocks.stateValues = [

@@ -10,17 +10,52 @@ describe('buildMealTimeISO', () => {
     expect('iso' in r && new Date(r.iso).getDate()).toBe(13)
   })
 
-  it.each([['13:00'], ['14:00']])('拒絕不晚於現在的時間 %s', hhmm => {
-    expect(buildMealTimeISO(hhmm, now)).toEqual({ error: '用餐時間必須晚於現在' })
+  it.each([['13:00'], ['14:00']])('不晚於現在的時間 %s 視為明天', hhmm => {
+    const r = buildMealTimeISO(hhmm, now)
+    expect('iso' in r && new Date(r.iso).getDate()).toBe(14)
+  })
+
+  it('22:35 設 19:30 = 明天 19:30', () => {
+    const r = buildMealTimeISO('19:30', new Date(2026, 7, 13, 22, 35, 0))
+    expect('iso' in r && new Date(r.iso)).toEqual(new Date(2026, 7, 14, 19, 30, 0))
   })
 
   it('拒絕格式不對的輸入', () => {
     expect(buildMealTimeISO('', now)).toEqual({ error: '請輸入用餐時間' })
   })
 
-  it('近午夜：更早的時刻不會滾到明天（今日限定）', () => {
-    const late = new Date(2026, 7, 13, 23, 50, 0)
-    expect(buildMealTimeISO('00:30', late)).toEqual({ error: '用餐時間必須晚於現在' })
+  it('月底近午夜滾到下個月 1 號', () => {
+    const r = buildMealTimeISO('00:30', new Date(2026, 7, 31, 23, 50, 0))
+    expect('iso' in r && new Date(r.iso)).toEqual(new Date(2026, 8, 1, 0, 30, 0))
+  })
+
+  it('秋季回撥的重複時段：較晚那次還沒到就用它，不滾到明天', () => {
+    // Windows 的 Node 刪掉 TZ 不會還原時區，所以還原時改設回原本解析出的時區
+    const env = process.env.TZ
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone // 正規化名稱：Etc/UTC → UTC
+    process.env.TZ = 'America/New_York'
+    try {
+      // 回撥後第二輪的 01:15 EST；setHours(1, 30) 會取已過的 01:30 EDT
+      const r = buildMealTimeISO('01:30', new Date(Date.UTC(2026, 10, 1, 6, 15)))
+      expect('iso' in r && r.iso).toBe(new Date(Date.UTC(2026, 10, 1, 6, 30)).toISOString())
+    } finally {
+      process.env.TZ = env ?? zone
+    }
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(zone)
+  })
+
+  it('春季跳時當天選被跳過的時刻：滾到明天仍是所選的 02:30', () => {
+    const env = process.env.TZ
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone // 正規化名稱：Etc/UTC → UTC
+    process.env.TZ = 'America/New_York'
+    try {
+      // 3/8 中午 EDT；今天的 02:30 不存在，setHours 會先正規化成 03:30
+      const r = buildMealTimeISO('02:30', new Date(Date.UTC(2026, 2, 8, 16, 0)))
+      expect('iso' in r && r.iso).toBe(new Date(Date.UTC(2026, 2, 9, 6, 30)).toISOString())
+    } finally {
+      process.env.TZ = env ?? zone
+    }
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(zone)
   })
 })
 
@@ -34,6 +69,10 @@ describe('formatMealTime', () => {
   it('ISO 顯示今天 HH:MM', () => {
     const iso = new Date(2026, 7, 13, 19, 5, 0).toISOString()
     expect(formatMealTime(iso, now)).toBe('今天 19:05')
+  })
+  it('明天的 ISO 顯示明天 HH:MM', () => {
+    const iso = new Date(2026, 7, 14, 19, 30, 0).toISOString()
+    expect(formatMealTime(iso, now)).toBe('明天 19:30')
   })
   it('跨日 ISO 顯示 M/D HH:MM', () => {
     const iso = new Date(2026, 7, 12, 19, 30, 0).toISOString()

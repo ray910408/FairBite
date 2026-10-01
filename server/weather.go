@@ -17,7 +17,7 @@ type Weather struct {
 type WeatherProvider interface {
 	// Current：blocking fetch（快取 miss 時打 API）。低頻路徑（search/draw）用。
 	// at = 評估時刻（roomEvalTime）：與現在同一小時走 current=precipitation，
-	// 未來小時走 hourly forecast 取該小時降雨（今日限定；forecast_days=2 含跨日保險）。
+	// 未來小時走 hourly forecast 取該小時降雨（最遠到明天；forecast_days=2 涵蓋今明兩天）。
 	Current(ctx context.Context, lat, lng float64, at time.Time) (Weather, error)
 	// CurrentCached：純快取查詢，永不發網路。vote 熱路徑用（eng review D6）。
 	CurrentCached(lat, lng float64, at time.Time) (Weather, bool)
