@@ -166,6 +166,8 @@ var observedGoogleTypes = []string{
 	"chicken_wings_restaurant", "kebab_shop", "bar", "thai_restaurant",
 	"malaysian_restaurant", "australian_restaurant", "hawaiian_restaurant",
 	"pakistani_restaurant",
+	// 2026-10-01 線上實測補登（菜系過濾混入他國店）
+	"vietnamese_restaurant", "indonesian_restaurant",
 	"restaurant", "food", "point_of_interest", "establishment",
 }
 

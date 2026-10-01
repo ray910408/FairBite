@@ -667,6 +667,46 @@ func TestGoogleSearchNearbyDessertEvidenceUsesCanonicalConflictGate(t *testing.T
 	}
 }
 
+// 2026-10-01 線上實測：「台式料理」召回泰式店、「印度料理」召回印尼店，開菜系過濾仍進池。
+func TestQueryMatchRejectsForeignNationalPrimaryType(t *testing.T) {
+	for _, tc := range []struct {
+		cuisine, primaryType string
+		reject               bool
+	}{
+		{"taiwanese", "thai_restaurant", true},       // 頌丹樂 泰式伊善料理
+		{"taiwanese", "vietnamese_restaurant", true}, // 使用者回報的越南料理
+		{"indian", "indonesian_restaurant", true},    // RUMAH MAKAN NITA INDO
+		{"taiwanese", "japanese_restaurant", true},
+		{"indian", "japanese_curry_restaurant", true}, // 已接受的副作用：日式咖哩不算印度
+		{"japanese", "ramen_restaurant", false},
+		{"taiwanese", "seafood_restaurant", false}, // 台灣添虱目魚：品類不是國別
+		{"taiwanese", "chinese_restaurant", false}, // 跨國別通用型交給 query match
+		{"fast_food", "korean_restaurant", false},  // Bonchon：速食是品類
+		{"ramen", "chinese_noodle_restaurant", false},
+	} {
+		p := gPlace{PrimaryType: tc.primaryType, Types: []string{"restaurant", tc.primaryType}}
+		if got := gRejectQueryMatch(tc.cuisine, p); got != tc.reject {
+			t.Errorf("gRejectQueryMatch(%s, %s) = %v, want %v", tc.cuisine, tc.primaryType, got, tc.reject)
+		}
+	}
+	// 連鎖合併後的繼承 match 也要重跑同一道閘門
+	got := filterInheritedMatches(Restaurant{PrimaryType: "thai_restaurant"}, []string{"fast_food", "taiwanese"})
+	if !slices.Equal(got, []string{"fast_food"}) {
+		t.Errorf("inherited matches = %v, want [fast_food]", got)
+	}
+	for gt := range foreignCuisinePrimaryTypes {
+		if _, waived := googleTypesDeliberatelyUnmapped[gt]; !waived {
+			t.Errorf("%s 在 foreignCuisinePrimaryTypes 卻不在 googleTypesDeliberatelyUnmapped", gt)
+		}
+	}
+	// gRejectQueryMatch 對非熱食提早 return，filterInheritedMatches 沒有——國別必須是熱食，兩條路徑才一致
+	for c := range NationalCuisines {
+		if !HotMealCuisines[c] {
+			t.Errorf("NationalCuisines 的 %s 不在 HotMealCuisines", c)
+		}
+	}
+}
+
 func TestGoogleSearchNearbyTaiwanesePagingDedupesAndCapsCalls(t *testing.T) {
 	type textRequest struct {
 		TextQuery string `json:"textQuery"`

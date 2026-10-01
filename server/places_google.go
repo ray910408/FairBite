@@ -103,11 +103,39 @@ var googleTypesDeliberatelyUnmapped = map[string]string{
 	"malaysian_restaurant":      "同 thai_restaurant",
 	"australian_restaurant":     "同 thai_restaurant",
 	"hawaiian_restaurant":       "同 thai_restaurant",
+	"vietnamese_restaurant":     "同 thai_restaurant",
+	"indonesian_restaurant":     "同 thai_restaurant",
 	"pakistani_restaurant":      "與 indian 菜系相鄰但不同源，不擅自併入",
 	"restaurant":                "Google 的通用餐飲分類，不帶菜系訊號",
 	"food":                      "同 restaurant：通用分類",
 	"point_of_interest":         "Google 的地點通用分類，與餐飲無關",
 	"establishment":             "同 point_of_interest：通用分類",
+}
+
+// foreignCuisinePrimaryTypes：國別明確、但 CUISINE_OPTIONS 沒有對應選項的 primaryType。
+// 必須同時列在 googleTypesDeliberatelyUnmapped（測試對帳）。
+// ponytail: 只收東南亞國別（台／泰、印度／印尼近音會被 Google 模糊比對混入）；其他國別混入時再補。
+var foreignCuisinePrimaryTypes = map[string]bool{
+	"thai_restaurant": true, "vietnamese_restaurant": true, "indonesian_restaurant": true, "malaysian_restaurant": true,
+}
+
+// cuisineTypeConflict：查詢的國別菜系與店的 primaryType 所屬國別不同（ADR-0006 的「明顯衝突」）。
+// 只看 primaryType：chinese_restaurant 這類跨國別的通用型不算衝突，交給 query match 判斷。
+func cuisineTypeConflict(cuisine, primaryType string) bool {
+	if !NationalCuisines[cuisine] {
+		return false
+	}
+	if foreignCuisinePrimaryTypes[primaryType] {
+		return true
+	}
+	national := false
+	for _, tag := range googleTypeTags[primaryType] {
+		if tag == cuisine {
+			return false
+		}
+		national = national || NationalCuisines[tag]
+	}
+	return national
 }
 
 // Google 的 includedTypes 會比對所有 types；只有 primaryType 能表示場所的主要用途。
@@ -340,6 +368,9 @@ func gRejectQueryMatch(cuisine string, p gPlace) bool {
 	if DessertOnlyPrimaryTypes[p.PrimaryType] {
 		return true // tier1：甜品專門店標熱食＝明顯荒謬
 	}
+	if cuisineTypeConflict(cuisine, p.PrimaryType) {
+		return true // 國別衝突：「台式料理」召回的泰式店
+	}
 	if LightDrinkPrimaryTypes[p.PrimaryType] && !gHasMealEvidence(p.Types) {
 		return true // tier2：純輕飲、無任何供餐證據
 	}
@@ -449,7 +480,7 @@ func (g *googleProvider) taiwaneseTextSearch(ctx context.Context, lat, lng float
 //   ├─ ∥ textSearch("素食")（僅當有成員勾嚴格禁忌）──►（QueryMatches 標 "vegetarian"，
 //   │                                                   memberLikes 與 DietaryRequires 都不讀它）
 //   │    ├─ meal gate：gIsMealPrimaryType fail-closed（拒者入 RejectedPlaceIDs）
-//   │    ├─ 衝突防護：熱食遇甜品專門／純輕飲拒 match；dessert 只拒 canonical 熱食 tag（店保留、match 不標）
+//   │    ├─ 衝突防護：熱食遇甜品專門／純輕飲／他國 primaryType 拒 match；dessert 只拒 canonical 熱食 tag（店保留、match 不標）
 //   │    └─ 失敗（重試×2 後）→ log 容忍並記入 UnfulfilledTerms，其餘支照常（部分成功不降級）
 //   ▼
 // merge by place_id：QueryMatches 聯集；RejectedPlaceIDs 聯集去重
@@ -659,7 +690,8 @@ func filterInheritedMatches(restaurant Restaurant, matches []string) []string {
 	out := matches[:0]
 	for _, c := range matches {
 		if (c == "dessert" && hasHotMealCuisine(restaurant.CuisineTags)) ||
-			(HotMealCuisines[c] && DessertOnlyPrimaryTypes[restaurant.PrimaryType]) {
+			(HotMealCuisines[c] && DessertOnlyPrimaryTypes[restaurant.PrimaryType]) ||
+			cuisineTypeConflict(c, restaurant.PrimaryType) {
 			continue
 		}
 		out = append(out, c)
