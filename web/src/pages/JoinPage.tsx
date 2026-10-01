@@ -40,6 +40,8 @@ export default function JoinPage() {
       return
     }
     if (memberships.length > 0) {
+      // 全是殘留房（ADR-0007 2026-10-01 修訂）不問，比照首頁直接退了再加入
+      if (memberships.every(r => r.stale)) return confirmLeaveAndJoin()
       setLeaveTarget({ kind: 'rooms', rooms: memberships })
       return
     }

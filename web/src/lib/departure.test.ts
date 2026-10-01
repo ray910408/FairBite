@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { _resetSearchThrottleForTests, loadLastDeparture, saveLastDeparture, searchPlaces } from './departure'
+import {
+  _resetSearchThrottleForTests, loadLastDeparture, loadRoomDeparture, saveLastDeparture, saveRoomDeparture, searchPlaces,
+} from './departure'
 
 describe('searchPlaces', () => {
   afterEach(() => {
@@ -99,5 +101,17 @@ describe('last departure localStorage', () => {
     expect(loadLastDeparture('')).toBeNull()
     saveLastDeparture('', { lat: 24, lng: 120, label: '不應寫入' })
     expect(setItem).toHaveBeenCalledTimes(1)
+  })
+
+  it('房間出發點依房間隔離，與上次選點互不覆寫', () => {
+    const items = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => items.get(key) ?? null,
+      setItem: (key: string, value: string) => items.set(key, value),
+    })
+    saveRoomDeparture('r1', { lat: 25, lng: 121.5, label: '台北車站' })
+    saveLastDeparture('u1', { lat: 24, lng: 120, label: '公司' })
+    expect(loadRoomDeparture('r1')).toEqual({ lat: 25, lng: 121.5, label: '台北車站' })
+    expect(loadRoomDeparture('r2')).toBeNull()
   })
 })

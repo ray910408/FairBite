@@ -138,7 +138,7 @@ describe('足跡頁回首頁離席確認', () => {
     expect(mocks.navigate).not.toHaveBeenCalled()
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
-      rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 1, isHost: false }],
+      rooms: [{ id: 'room-1', code: 'ABC123', status: 'voting', memberCount: 1, isHost: false, stale: false }],
     })
   })
 
@@ -152,7 +152,7 @@ describe('足跡頁回首頁離席確認', () => {
     await clickHome(tree)
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
-      rooms: [{ id: 'room-1', code: 'ABC123', status: 'candidates', memberCount: 2, isHost: false }],
+      rooms: [{ id: 'room-1', code: 'ABC123', status: 'candidates', memberCount: 2, isHost: false, stale: false }],
     })
     expect(mocks.stateSetters[CHECKING]).toHaveBeenCalledWith(true)
     expect(mocks.stateSetters[CHECKING]).toHaveBeenCalledWith(false)
@@ -293,7 +293,7 @@ describe('足跡頁房籍查詢', () => {
     expect(mocks.navigate).not.toHaveBeenCalled()
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
-      rooms: [{ id: 'room-9', code: 'NEW999', status: 'lobby', memberCount: 1, isHost: false }],
+      rooms: [{ id: 'room-9', code: 'NEW999', status: 'lobby', memberCount: 1, isHost: false, stale: false }],
     })
   })
 
@@ -318,8 +318,8 @@ describe('足跡頁房籍查詢', () => {
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
       rooms: [
-        { id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1, isHost: false },
-        { id: 'room-2', code: 'BBB222', status: 'decided', memberCount: 2, isHost: false },
+        { id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1, isHost: false, stale: false },
+        { id: 'room-2', code: 'BBB222', status: 'decided', memberCount: 2, isHost: false, stale: false },
       ],
     })
   })
@@ -335,8 +335,8 @@ describe('足跡頁房籍查詢', () => {
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
       rooms: [
-        { id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1, isHost: true },
-        { id: 'room-2', code: 'BBB222', status: 'lobby', memberCount: 1, isHost: false },
+        { id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1, isHost: true, stale: false },
+        { id: 'room-2', code: 'BBB222', status: 'lobby', memberCount: 1, isHost: false, stale: false },
       ],
     })
   })
@@ -349,7 +349,7 @@ describe('足跡頁房籍查詢', () => {
     await clickHome(tree)
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
-      rooms: [{ id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1, isHost: null }],
+      rooms: [{ id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1, isHost: null, stale: false }],
     })
   })
 
@@ -360,7 +360,7 @@ describe('足跡頁房籍查詢', () => {
     await clickHome(tree)
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
-      rooms: [{ id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1, isHost: null }],
+      rooms: [{ id: 'room-1', code: 'AAA111', status: 'lobby', memberCount: 1, isHost: null, stale: false }],
     })
   })
 })
@@ -388,7 +388,7 @@ describe('足跡頁離席查詢的世代守衛', () => {
     await secondClick
     expect(mocks.stateSetters[DIALOG]).toHaveBeenCalledWith({
       kind: 'rooms',
-      rooms: [{ id: 'room-9', code: 'NEW999', status: 'lobby', memberCount: 1, isHost: false }],
+      rooms: [{ id: 'room-9', code: 'NEW999', status: 'lobby', memberCount: 1, isHost: false, stale: false }],
     })
 
     releaseFirst() // 舊回應姍姍來遲

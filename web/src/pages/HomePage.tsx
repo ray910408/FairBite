@@ -6,7 +6,7 @@ import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
 import { leaveNotice } from '../lib/leaveNotice'
 import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
 import { suggestCuisines, type HistoryRow } from '../lib/prefsLearning'
-import { loadLastDeparture, saveLastDeparture, type DeparturePoint } from '../lib/departure'
+import { loadLastDeparture, saveLastDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import { getUid } from '../lib/uid'
 import { applyDefaultPrefs } from '../lib/defaultPrefs'
@@ -139,6 +139,9 @@ export default function HomePage() {
     }
     void fetchLeaveRooms().then(rooms => {
       if (rooms && rooms.length === 0) setLeavePending(false) // room_members 就是權威
+      // 全是殘留房（ADR-0007 2026-10-01 修訂）才直接退：/api/leave 全退不挑房，
+      // 混著一間還在進行的就得照舊整份問
+      else if (rooms?.every(r => r.stale)) doLeave()
       else setLeaveTarget(rooms ? { kind: 'rooms', rooms } : { kind: 'unknown' })
     })
   }, [location, nav, doLeave])
@@ -186,6 +189,7 @@ export default function HomePage() {
     }
     await applyDefaultPrefs(data)
     saveLastDeparture(creatorUid, pos)
+    saveRoomDeparture(data, pos)
     nav(`/room/${data}`)
   }
 

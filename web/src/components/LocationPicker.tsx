@@ -10,9 +10,11 @@ const DEFAULT_CENTER = { lat: 25.0478, lng: 121.517 } // 台北車站：純地�
 type Props = {
   value: DeparturePoint | null
   onChange: (p: DeparturePoint) => void
+  // 已有出發點但地名不明時顯示的字（房內 lobby）；不給就是真的還沒選
+  fallbackLabel?: string
 }
 
-export default function LocationPicker({ value, onChange }: Props) {
+export default function LocationPicker({ value, onChange, fallbackLabel }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<DeparturePoint[]>([])
@@ -118,15 +120,17 @@ export default function LocationPicker({ value, onChange }: Props) {
     }
   }
 
+  const shownLabel = value?.label ?? fallbackLabel
+
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <span className="flex-1 truncate text-sm">
-          {value ? <>出發點：<span className="font-semibold">{value.label}</span></> : '尚未選擇出發點'}
+          {shownLabel ? <>出發點：<span className="font-semibold">{shownLabel}</span></> : '尚未選擇出發點'}
         </span>
         <button type="button" className="btn btn-quiet px-3 text-sm"
           onClick={() => setExpanded(x => !x)}>
-          {expanded ? '完成' : value ? '變更' : '選擇出發點'}
+          {expanded ? '完成' : shownLabel ? '變更' : '選擇出發點'}
         </button>
       </div>
       {expanded && (

@@ -39,17 +39,34 @@ export async function searchPlaces(query: string): Promise<DeparturePoint[]> {
   })
 }
 
-export function loadLastDeparture(uid: string): DeparturePoint | null {
-  if (!uid) return null
+function readPoint(key: string): DeparturePoint | null {
   try {
-    const v = JSON.parse(localStorage.getItem(`last-departure:${uid}`) ?? 'null')
+    const v = JSON.parse(localStorage.getItem(key) ?? 'null')
     return typeof v?.lat === 'number' && typeof v?.lng === 'number' && typeof v?.label === 'string' ? v : null
   } catch {
     return null
   }
 }
 
+function writePoint(key: string, p: DeparturePoint) {
+  try { localStorage.setItem(key, JSON.stringify(p)) } catch { /* 私密模式等寫入失敗可忽略 */ }
+}
+
+export function loadLastDeparture(uid: string): DeparturePoint | null {
+  return uid ? readPoint(`last-departure:${uid}`) : null
+}
+
 export function saveLastDeparture(uid: string, p: DeparturePoint) {
-  if (!uid) return
-  try { localStorage.setItem(`last-departure:${uid}`, JSON.stringify(p)) } catch { /* 私密模式等寫入失敗可忽略 */ }
+  if (uid) writePoint(`last-departure:${uid}`, p)
+}
+
+// 房內讀不到圓心（types.ts：center_lat/lng 欄級 grant 只給 service role），地名也沒落庫——
+// 只有選點的那台裝置記得。繼任房主或換裝置查不到就回 null，由 UI 改講「已設定」。
+// ponytail: 每房一個 key 不清理，量級是個人建房次數；真的堆太多再按 created_at 掃
+export function loadRoomDeparture(roomId: string): DeparturePoint | null {
+  return readPoint(`room-departure:${roomId}`)
+}
+
+export function saveRoomDeparture(roomId: string, p: DeparturePoint) {
+  writePoint(`room-departure:${roomId}`, p)
 }

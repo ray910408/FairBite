@@ -11,12 +11,17 @@ type Props = {
   busy: boolean
   onVote: (want: boolean) => void
   onChoose: (point: DeparturePoint) => void
+  // 本機記得的現任出發點（departure.ts loadRoomDeparture）；只在 lobby 顯示
+  current?: DeparturePoint | null
 }
 
 export default function RelocationPanel({
-  isHost, status, wantChange, yesCount, memberCount, busy, onVote, onChoose,
+  isHost, status, wantChange, yesCount, memberCount, busy, onVote, onChoose, current = null,
 }: Props) {
   const [point, setPoint] = useState<DeparturePoint | null>(null)
+  // mount 時讀一次：current 每次 render 都是新 parse 的物件，直接往下傳會讓
+  // LocationPicker 的 [value] effect 在每次 Realtime refetch 把展開中的地圖拉回原點
+  const [initial] = useState(current)
   const majority = Math.floor(memberCount / 2) + 1
 
   if (status === 'voting') {
@@ -47,7 +52,10 @@ export default function RelocationPanel({
       <h2 id="relocation-picker-title" className="text-base font-semibold">
         {status === 'relocating' ? '選擇新地點' : '調整用餐地點'}
       </h2>
-      <LocationPicker value={point} onChange={setPoint} />
+      {/* lobby 一定已有出發點（create_room 必帶座標），不能講「尚未選擇」；
+          relocating 則必須選新點，舊點不算數 */}
+      <LocationPicker value={point ?? (status === 'lobby' ? initial : null)} onChange={setPoint}
+        fallbackLabel={status === 'lobby' ? '已設定' : undefined} />
       <button type="button" className="btn btn-primary min-h-11 w-full"
         disabled={busy || !point} onClick={() => point && onChoose(point)}>
         {status === 'relocating' ? '確認新地點' : '確認用餐地點'}

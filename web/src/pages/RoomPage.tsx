@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMidnightRerender } from '../hooks/useMidnightRerender'
 import { useRoom } from '../hooks/useRoom'
 import { chooseLocation, confirmDraw, editConditions, redrawRoom, startVoting, voteLocation } from '../lib/api'
-import type { DeparturePoint } from '../lib/departure'
+import { loadRoomDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
 import { isVetoDeadEnd } from '../lib/deadEnd'
 import { EXPLORATION_OPTIONS } from '../lib/labels'
 import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
@@ -334,7 +334,10 @@ export default function RoomPage() {
       if (!conditionsOK || !roomSettingsOK) return
       const msg = await chooseLocation(room!.id, point.lat, point.lng, room!.search_version)
       if (msg) setActionError(msg)
-      else await refetch()
+      else {
+        saveRoomDeparture(room!.id, point)
+        await refetch()
+      }
     } catch { setActionError('更新地點失敗：無法連線到伺服器') }
     finally { setRelocationBusy(false) }
   }
@@ -460,10 +463,10 @@ export default function RoomPage() {
         </section>
 
         {(room.status === 'voting' || room.status === 'relocating' || (room.status === 'lobby' && isHost)) && (
-          <RelocationPanel isHost={isHost} status={room.status}
+          <RelocationPanel key={room.id} isHost={isHost} status={room.status}
             wantChange={locationVotes.some(v => v.user_id === myUserId)}
             yesCount={locationVotes.length} memberCount={members.length} busy={relocationBusy}
-            onVote={onLocationVote} onChoose={onChooseLocation} />
+            onVote={onLocationVote} onChoose={onChooseLocation} current={loadRoomDeparture(room.id)} />
         )}
         {room.status === 'lobby' && (
           <section className="card space-y-3">
