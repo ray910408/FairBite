@@ -5,7 +5,7 @@ import { searchPlaces, type DeparturePoint } from '../lib/departure'
 import { Spinner } from './icons'
 import { mapSelectionLabel } from './locationPickerLabel'
 
-const DEFAULT_CENTER = { lat: 25.0478, lng: 121.517 } // 台北車站：純地圖顯示預設，不寫入資料
+const DEFAULT_CENTER = { lat: 25.0478, lng: 121.517 } // 台北車站：地圖顯示與搜尋偏向的預設，不寫入資料
 
 type Props = {
   value: DeparturePoint | null
@@ -94,7 +94,7 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
     setSearching(true)
     setError('')
     try {
-      const hits = await searchPlaces(query.trim())
+      const hits = await searchPlaces(query.trim(), value ?? DEFAULT_CENTER)
       setResults(hits)
       if (hits.length === 0) setError('找不到這個地點，換個關鍵字或直接點地圖')
     } catch (err) {
