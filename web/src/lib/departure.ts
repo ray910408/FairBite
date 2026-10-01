@@ -46,9 +46,9 @@ export async function searchPlaces(query: string, near: { lat: number; lng: numb
   return rows.map(r => {
     const label = r.name?.trim() || (r.display_name.split(',')[0] ?? '').trim()
     const a = r.address ?? {}
-    const abroad = a.country_code !== 'tw'
-    const context = [a.road, a.city_district ?? a.suburb ?? a.town ?? a.village, a.city ?? a.county,
-      abroad ? a.state ?? a.province : undefined, abroad ? a.country : undefined]
+    const local = [a.road, a.city_district ?? a.suburb ?? a.town ?? a.village, a.city ?? a.county]
+    // 國外列由大到小：脈絡欄會截斷尾端，國名與州/省得排最前面才不會被截掉
+    const context = (a.country_code === 'tw' ? local : [a.country, a.state ?? a.province, ...local.reverse()])
       .filter((s, i, all): s is string => !!s && s !== label && all.indexOf(s) === i).join('・')
     return { lat: Number(r.lat), lng: Number(r.lon), label, context: context || undefined }
   })

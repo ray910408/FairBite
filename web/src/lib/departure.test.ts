@@ -65,7 +65,7 @@ describe('searchPlaces', () => {
     expect(url.searchParams.has('bounded')).toBe(false)
   })
 
-  it('國外結果照樣回傳並補國名；偏向跟著出國的出發點走', async () => {
+  it('國外結果照樣回傳、由國名起頭；偏向跟著出國的出發點走', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([
       {
         lat: '35.658', lon: '139.7016', name: '渋谷',
@@ -82,11 +82,11 @@ describe('searchPlaces', () => {
       },
     ]))))
     await expect(searchPlaces('Shibuya Station', { lat: 35.6812, lng: 139.7671 })).resolves.toEqual([
-      { lat: 35.658, lng: 139.7016, label: '渋谷', context: '明治通り・澀谷區・日本' },
+      { lat: 35.658, lng: 139.7016, label: '渋谷', context: '日本・澀谷區・明治通り' },
       // 城市國家的 city 與國名同名，只出現一次
       { lat: 1.2834, lng: 103.8607, label: '濱海灣金沙', context: '新加坡' },
       // 同名城市靠州/省區分
-      { lat: 39.7817, lng: -89.6501, label: 'Springfield', context: 'Illinois・美國' },
+      { lat: 39.7817, lng: -89.6501, label: 'Springfield', context: '美國・Illinois' },
     ])
     const url = new URL(String(vi.mocked(fetch).mock.calls[0][0]))
     expect(url.searchParams.get('viewbox')).toBe('139.55,35.95,140.05,35.45')
