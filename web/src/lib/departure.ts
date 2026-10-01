@@ -21,10 +21,13 @@ export async function searchPlaces(query: string, near: { lat: number; lng: numb
   const clamp = (v: number, max: number) => Math.max(-max, Math.min(max, v))
   // Leaflet 在 world copy 上點出的經度不折回（如 237.6），夾值後會變零寬框被 Nominatim 400
   const lng = Math.abs(near.lng) <= 180 ? near.lng : (((near.lng + 180) % 360) + 360) % 360 - 180
+  // 圓心可能是房主精確位置（ADR-0005），送第三方前量化到 0.1°（約 11km）；±0.25° 的框仍罩得住原點
+  const q = (v: number) => Math.round(v * 10) / 10
+  const x = q(lng), y = q(near.lat)
   const d = 0.25 // 約 ±25km，涵蓋一個都會區
   const url = 'https://nominatim.openstreetmap.org/search?' + new URLSearchParams({
     q: query, format: 'jsonv2', limit: '5', 'accept-language': 'zh-TW', addressdetails: '1',
-    viewbox: [clamp(lng - d, 180), clamp(near.lat + d, 90), clamp(lng + d, 180), clamp(near.lat - d, 90)].join(','),
+    viewbox: [clamp(x - d, 180), clamp(y + d, 90), clamp(x + d, 180), clamp(y - d, 90)].map(v => v.toFixed(2)).join(','),
   })
   const resp = await fetch(url, { signal: AbortSignal.timeout(5000), headers: { Accept: 'application/json' } })
   if (!resp.ok) throw new Error('地點搜尋暫時無法使用，請稍後再試或改用地圖選點')
@@ -33,18 +36,19 @@ export async function searchPlaces(query: string, near: { lat: number; lng: numb
     address?: {
       road?: string; suburb?: string; city_district?: string
       town?: string; village?: string; city?: string; county?: string
-      country?: string; country_code?: string
+      state?: string; province?: string; country?: string; country_code?: string
     }
   }
   const rows = (await resp.json()) as Row[]
   // display_name 前段常是門牌/編號（QA ISSUE-005 的「台北車站，49」）：
   // 主標籤用 name，脈絡改由結構化 address 組裝，缺欄位就少一段。
-  // 台灣以外補國名：同一串結果可能混著台灣與國外的同名地點
+  // 台灣以外補州/省與國名：同一串結果可能混著台灣與國外的同名地點（如美國多個 Springfield）
   return rows.map(r => {
     const label = r.name?.trim() || (r.display_name.split(',')[0] ?? '').trim()
     const a = r.address ?? {}
+    const abroad = a.country_code !== 'tw'
     const context = [a.road, a.city_district ?? a.suburb ?? a.town ?? a.village, a.city ?? a.county,
-      a.country_code === 'tw' ? undefined : a.country]
+      abroad ? a.state ?? a.province : undefined, abroad ? a.country : undefined]
       .filter((s, i, all): s is string => !!s && s !== label && all.indexOf(s) === i).join('・')
     return { lat: Number(r.lat), lng: Number(r.lon), label, context: context || undefined }
   })

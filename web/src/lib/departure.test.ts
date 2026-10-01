@@ -58,8 +58,9 @@ describe('searchPlaces', () => {
     expect(url.href).toContain('nominatim.openstreetmap.org/search')
     expect(url.searchParams.get('addressdetails')).toBe('1')
     expect(url.searchParams.get('limit')).toBe('5')
-    // 台灣地名靠 viewbox 加權（出發點周邊 ±0.25°）而非 countrycodes 硬過濾；bounded 不送＝不排除框外
-    expect(url.searchParams.get('viewbox')).toBe('121.267,25.2978,121.767,24.7978')
+    // 台灣地名靠 viewbox 加權（出發點周邊 ±0.25°）而非 countrycodes 硬過濾；bounded 不送＝不排除框外。
+    // 圓心先量化到 0.1°（25.0478,121.517 → 25.0,121.5），精確座標不外送
+    expect(url.searchParams.get('viewbox')).toBe('121.25,25.25,121.75,24.75')
     expect(url.searchParams.has('countrycodes')).toBe(false)
     expect(url.searchParams.has('bounded')).toBe(false)
   })
@@ -75,14 +76,20 @@ describe('searchPlaces', () => {
         lat: '1.2834', lon: '103.8607', name: '濱海灣金沙', display_name: '濱海灣金沙, 新加坡',
         address: { city: '新加坡', country: '新加坡', country_code: 'sg' },
       },
+      {
+        lat: '39.7817', lon: '-89.6501', name: 'Springfield', display_name: 'Springfield, Sangamon County, Illinois, 美國',
+        address: { city: 'Springfield', county: 'Sangamon County', state: 'Illinois', country: '美國', country_code: 'us' },
+      },
     ]))))
     await expect(searchPlaces('Shibuya Station', { lat: 35.6812, lng: 139.7671 })).resolves.toEqual([
       { lat: 35.658, lng: 139.7016, label: '渋谷', context: '明治通り・澀谷區・日本' },
       // 城市國家的 city 與國名同名，只出現一次
       { lat: 1.2834, lng: 103.8607, label: '濱海灣金沙', context: '新加坡' },
+      // 同名城市靠州/省區分
+      { lat: 39.7817, lng: -89.6501, label: 'Springfield', context: 'Illinois・美國' },
     ])
     const url = new URL(String(vi.mocked(fetch).mock.calls[0][0]))
-    expect(url.searchParams.get('viewbox')).toBe('139.5171,35.9312,140.0171,35.4312')
+    expect(url.searchParams.get('viewbox')).toBe('139.55,35.95,140.05,35.45')
     expect(url.searchParams.has('countrycodes')).toBe(false)
   })
 
