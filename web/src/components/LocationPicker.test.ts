@@ -19,4 +19,12 @@ describe('mapSelectionLabel', () => {
     expect(mapSelectionLabel('台北車站', anchor, second)).toBe('地圖上的位置')
     expect(mapSelectionLabel('台北車站', anchor, third)).toBe('地圖上的位置')
   })
+
+  it('跨換日線的短距微調仍保留標籤', () => {
+    const east = { lat: -16.5, lng: 179.999 }
+    const west = { lat: -16.5, lng: -179.999 }
+
+    expect(mapSelectionLabel('塔韋烏尼', east, west)).toBe('塔韋烏尼')
+    expect(mapSelectionLabel('塔韋烏尼', west, east)).toBe('塔韋烏尼')
+  })
 })
