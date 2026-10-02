@@ -46,16 +46,18 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
         iconSize: [18, 18], iconAnchor: [9, 9],
       })
       const marker = L.marker([start.lat, start.lng], { draggable: true, icon }).addTo(map)
+      // 縮小後點到重複的世界副本時 Leaflet 給的 lng 會超出 ±180（伺服器拒收），一律先 wrap
       marker.on('dragend', () => {
-        const p = marker.getLatLng()
+        const p = marker.getLatLng().wrap()
         selectionGen.current++
         const next = { lat: p.lat, lng: p.lng }
         onChange({ ...next, label: mapSelectionLabel(valueRef.current?.label, anchorRef.current, next) })
       })
       map.on('click', e => {
-        marker.setLatLng(e.latlng)
+        const p = e.latlng.wrap()
+        marker.setLatLng(p)
         selectionGen.current++
-        const next = { lat: e.latlng.lat, lng: e.latlng.lng }
+        const next = { lat: p.lat, lng: p.lng }
         onChange({ ...next, label: mapSelectionLabel(valueRef.current?.label, anchorRef.current, next) })
       })
       mapRef.current = map
