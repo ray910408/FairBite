@@ -86,6 +86,7 @@ type EngineInput struct {
 	Exploration          string                   // familiar/balanced/explore；"" 視為 balanced
 	CuisineFilter        bool                     // 房主菜系過濾開關（Round 3 spec §6）：開啟時菜系成為房間層硬性條件
 	BatchExcluded        map[string]bool          // 本批重轉排除；重算與退房不得讓它復活
+	ShortlistExcluded    map[string]bool          // 初選落選（ADR-0010）；同上，開始投票時定案
 }
 
 type EngineResult struct {
@@ -539,6 +540,13 @@ func Evaluate(in EngineInput) EngineResult {
 		if in.BatchExcluded[rkey(r)] {
 			res.Excluded = append(res.Excluded, Excluded{Restaurant: r,
 				Kinds: []string{"batch"}, Reason: "本批已排除"})
+			continue
+		}
+		if in.ShortlistExcluded[rkey(r)] {
+			// 同時命中的硬性條件照列在後，UI 才不會吃掉原本理由；shortlist 固定排第一（落選旗標靠它持久化）
+			kinds, reasons := hardExclude(r, in.Members, restaurantLocalTime(r, in.Now), in.CuisineFilter)
+			res.Excluded = append(res.Excluded, Excluded{r, append([]string{"shortlist"}, kinds...),
+				strings.Join(append([]string{"初選無人圈選"}, reasons...), "；")})
 			continue
 		}
 		if kinds, reasons := hardExclude(r, in.Members, restaurantLocalTime(r, in.Now), in.CuisineFilter); len(kinds) > 0 {

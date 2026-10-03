@@ -28,6 +28,30 @@ func rest(over func(*Restaurant)) Restaurant {
 	return r
 }
 
+// ADR-0010：落選是持久排除，跟本批排除一樣優先於硬性條件（shortlist 排第一），且不參與機率正規化；
+// 同時命中的硬性條件照列在後，UI 才不會吃掉原本的排除理由
+func TestShortlistExcludedStaysOffTheWheel(t *testing.T) {
+	picked := rest(nil)
+	dropped := rest(func(r *Restaurant) { r.PlaceID = "p2"; r.PriceLevel = 4 })
+	clean := rest(func(r *Restaurant) { r.PlaceID = "p3" })
+	res := Evaluate(EngineInput{Restaurants: []Restaurant{picked, dropped, clean}, Members: []Member{member(nil)},
+		Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+		ShortlistExcluded: map[string]bool{"p2": true, "p3": true}})
+	if len(res.Kept) != 1 || res.Kept[0].PlaceID != "p1" || res.Kept[0].Probability != 1 {
+		t.Fatalf("kept = %+v", res.Kept)
+	}
+	if len(res.Excluded) != 2 {
+		t.Fatalf("excluded = %+v", res.Excluded)
+	}
+	if e := res.Excluded[0]; strings.Join(e.Kinds, ",") != "shortlist,budget" ||
+		!strings.HasPrefix(e.Reason, "初選無人圈選；") || !strings.Contains(e.Reason, "高於 小明") {
+		t.Errorf("落選＋超預算 = %v %q", e.Kinds, e.Reason)
+	}
+	if e := res.Excluded[1]; strings.Join(e.Kinds, ",") != "shortlist" || e.Reason != "初選無人圈選" {
+		t.Errorf("單純落選 = %v %q", e.Kinds, e.Reason)
+	}
+}
+
 func TestHardFilters(t *testing.T) {
 	cases := []struct {
 		name       string

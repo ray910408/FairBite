@@ -71,6 +71,16 @@ export function leaveNotice(
         deletePoint,
         '目前無法用邀請碼重新加入；若之後候選耗盡回到等待階段，同一邀請碼才會重新開放'])
   }
+  // 初選階段只有圈選、沒有票；開始投票前退房者的圈選即刻作廢（ADR-0010）
+  if (status === 'shortlisting') {
+    return withHost(solo
+      ? [deletePoint,
+        '已經跑出來的候選名單與你的圈選會跟著刪除，不會留下任何紀錄',
+        '你設定的條件與偏好也會一起消失，離開後無法用邀請碼重新加入']
+      : ['你的圈選會作廢，條件與偏好退出重算',
+        deletePoint,
+        '目前無法用邀請碼重新加入；若之後候選耗盡回到等待階段，同一邀請碼才會重新開放'])
+  }
   return withHost(solo
     ? [deletePoint,
       '你的票和整份候選名單會跟著刪除，不會留下任何紀錄',

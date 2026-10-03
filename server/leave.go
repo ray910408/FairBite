@@ -63,8 +63,11 @@ func handleLeave(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, wea
 //	     ├─ 無人 ──▶ delete rooms（cascade；dining_history.room_id set null）──▶ commit
 //	     ├─ 有人且我是 host ──▶ update host_id = 最早加入者（繼任）
 //	     ▼
-//	status ∈ {candidates, voting} ──▶ rescoreRoom（以現任成員重新分割 kept/excluded：
-//	     ▼                            否決隱性收回、離席者硬排除一併解除——ADR-0007 修訂語意）
+//	status ∈ {candidates, shortlisting, voting, pending} ──▶ rescoreRoom（以現任成員重新分割 kept/excluded：
+//	     │                            否決隱性收回、離席者硬排除一併解除——ADR-0007 修訂語意；
+//	     │                            圈選隨 room_members cascade 作廢，已定案的初選落選不復活——ADR-0010）
+//	     ├─ status = candidates ──▶ passShortlistMajority（重算後才數 kept：退房可湊成初選表決嚴格過半）
+//	     ▼
 //	commit
 //
 // 檢索集不回擴：搜尋未抓回的店永遠不會出現（重擴檢索等同重搜，違反一房一搜）。
@@ -124,9 +127,15 @@ func leaveOneRoom(ctx context.Context, pool *pgxpool.Pool, weather WeatherProvid
 			return err
 		}
 	}
-	if room.Status == "candidates" || room.Status == "voting" || room.Status == "pending" {
+	if room.Status == "candidates" || room.Status == "shortlisting" || room.Status == "voting" || room.Status == "pending" {
 		wx := loadWeatherCached(weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
 		if _, _, err := rescoreRoom(ctx, tx, room, wx); err != nil {
+			return err
+		}
+	}
+	// 重算之後才判：kept 數要用新分割，退房可讓剩下的初選表決湊成嚴格過半（比照改地點）
+	if room.Status == "candidates" {
+		if _, err := passShortlistMajority(ctx, tx, room.ID); err != nil {
 			return err
 		}
 	}

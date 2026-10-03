@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { voteRoom } from '../lib/api'
+import { pickShortlist, voteRoom } from '../lib/api'
 import { classifyRoomLoad } from '../lib/roomLoad'
+import { applyPickMirror, hasMyPick } from '../lib/shortlist'
 import { supabase } from '../lib/supabase'
-import type { CandidateRow, DrawRow, LocationVoteRow, MemberRow, Room, VoteRow } from '../lib/types'
+import type {
+  CandidateRow, DrawRow, LocationVoteRow, MemberRow, Room, ShortlistPickRow, ShortlistVoteRow, VoteRow,
+} from '../lib/types'
 import { getUid } from '../lib/uid'
 import { VETO_QUOTA, applyVoteMirror, hasMyVote, myVetoCount, upCounts } from '../lib/votes'
 
@@ -13,6 +16,8 @@ export function useRoom(roomId: string) {
   const [draw, setDraw] = useState<DrawRow | null>(null)
   const [votes, setVotes] = useState<VoteRow[]>([])
   const [locationVotes, setLocationVotes] = useState<LocationVoteRow[]>([])
+  const [shortlistVotes, setShortlistVotes] = useState<ShortlistVoteRow[]>([])
+  const [shortlistPicks, setShortlistPicks] = useState<ShortlistPickRow[]>([])
   const [myUserId, setMyUserId] = useState('')
   const [connected, setConnected] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -21,7 +26,7 @@ export function useRoom(roomId: string) {
 
   const refetch = useCallback(async () => {
     const gen = ++refetchGen.current
-    const [r, m, c, d, v, lv] = await Promise.all([
+    const [r, m, c, d, v, lv, sv, sp] = await Promise.all([
       // 欄位得寫明：select('*') 會展開成全欄位，撞上 0015 的欄級 grant（center_* 只給
       // service role）會整包 permission denied
       supabase.from('rooms')
@@ -34,12 +39,14 @@ export function useRoom(roomId: string) {
         .order('version', { ascending: false }).limit(1).maybeSingle(),
       supabase.from('votes').select('*').eq('room_id', roomId),
       supabase.from('location_change_votes').select('*').eq('room_id', roomId),
+      supabase.from('shortlist_votes').select('*').eq('room_id', roomId),
+      supabase.from('shortlist_picks').select('*').eq('room_id', roomId),
     ])
     if (gen !== refetchGen.current) return // 有更新一輪在跑，這輪結果作廢
     // 讀不到房間要讓 UI 停止無限「載入中」；DB/網路錯誤與查無列分開呈現（QA ISSUE-002）
     // 任一查詢失敗都算 loadError；失敗的資料集不覆寫既有 state。
     const state = classifyRoomLoad(r.data, r.error)
-    const siblingError = [m, c, d, v, lv].some(x => x.error)
+    const siblingError = [m, c, d, v, lv, sv, sp].some(x => x.error)
     setNotFound(state === 'not-found')
     setLoadError(state === 'error' || siblingError)
     if (r.data) setRoom(r.data as Room)
@@ -48,6 +55,8 @@ export function useRoom(roomId: string) {
     if (!d.error) setDraw((d.data ?? null) as DrawRow | null)
     if (!v.error) setVotes((v.data ?? []) as VoteRow[])
     if (!lv.error) setLocationVotes((lv.data ?? []) as LocationVoteRow[])
+    if (!sv.error) setShortlistVotes((sv.data ?? []) as ShortlistVoteRow[])
+    if (!sp.error) setShortlistPicks((sp.data ?? []) as ShortlistPickRow[])
   }, [roomId])
 
   useEffect(() => {
@@ -61,6 +70,8 @@ export function useRoom(roomId: string) {
       { table: 'draws', filter: `room_id=eq.${roomId}` },
       { table: 'votes', filter: `room_id=eq.${roomId}` },
       { table: 'location_change_votes', filter: `room_id=eq.${roomId}` },
+      { table: 'shortlist_votes', filter: `room_id=eq.${roomId}` },
+      { table: 'shortlist_picks', filter: `room_id=eq.${roomId}` },
     ]
     // roomId/refetch 變動會重跑本 effect：舊 channel 的 CLOSED 會晚於新 channel 的
     // SUBSCRIBED 抵達，沒有 live 旗標就會把已連線的狀態蓋回「斷線」
@@ -124,11 +135,25 @@ export function useRoom(roomId: string) {
     return null
   }
 
+  const pickInFlight = useRef(false)
+  // 圈選唯一入口：同 toggleVote 的連點鎖＋成功才本地鏡射；額度上限由伺服器把關（每人最多 5 家）
+  async function togglePick(restaurantId: string): Promise<string | null> {
+    if (pickInFlight.current) return null
+    pickInFlight.current = true
+    const op = hasMyPick(shortlistPicks, myUserId, restaurantId) ? 'retract' : 'cast'
+    const msg = await pickShortlist(roomId, restaurantId, op, room!.search_version)
+      .catch(() => '圈選失敗：無法連線到伺服器')
+    pickInFlight.current = false
+    if (msg) return msg
+    setShortlistPicks(ps => applyPickMirror(ps, myUserId, roomId, restaurantId, op))
+    return null
+  }
+
   const hasMyVoteForRestaurant = (rid: string, kind: VoteRow['kind']) =>
     hasMyVote(votes, myUserId, rid, kind)
   const ups = upCounts(votes)
   const vetoesRemaining = VETO_QUOTA - myVetoCount(votes, myUserId)
 
-  return { room, members, candidates, draw, locationVotes, myUserId, connected, notFound, loadError,
-    refetch, toggleVote, hasMyVote: hasMyVoteForRestaurant, ups, vetoesRemaining }
+  return { room, members, candidates, draw, locationVotes, shortlistVotes, shortlistPicks, myUserId, connected,
+    notFound, loadError, refetch, toggleVote, togglePick, hasMyVote: hasMyVoteForRestaurant, ups, vetoesRemaining }
 }

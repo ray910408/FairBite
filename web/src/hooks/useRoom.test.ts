@@ -34,7 +34,7 @@ vi.mock('../lib/supabase', () => ({
 vi.mock('../lib/uid', () => ({ getUid: vi.fn() }))
 
 function query(table: string) {
-  const batch = Math.floor((mocks.from.mock.calls.length - 1) / 6)
+  const batch = Math.floor((mocks.from.mock.calls.length - 1) / 8)
   const gate = mocks.gates[batch] ?? Promise.resolve()
   const result = gate.then(() => ({ data: table === 'rooms' ? mocks.room : [], error: null }))
   if (table === 'rooms') return { select: () => ({ eq: () => ({ single: () => result }) }) }
@@ -91,24 +91,26 @@ describe('useRoom lobby Realtime fallback', () => {
     await vi.advanceTimersByTimeAsync(5_000)
     expect(mocks.from).toHaveBeenCalledWith('rooms')
     expect(mocks.from).toHaveBeenCalledWith('room_members')
-    expect(mocks.from).toHaveBeenCalledTimes(6)
+    expect(mocks.from).toHaveBeenCalledWith('shortlist_votes')
+    expect(mocks.from).toHaveBeenCalledWith('shortlist_picks')
+    expect(mocks.from).toHaveBeenCalledTimes(8)
 
     await vi.advanceTimersByTimeAsync(10_000)
-    expect(mocks.from).toHaveBeenCalledTimes(6)
+    expect(mocks.from).toHaveBeenCalledTimes(8)
 
     first.resolve()
     await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(4_999)
-    expect(mocks.from).toHaveBeenCalledTimes(6)
+    expect(mocks.from).toHaveBeenCalledTimes(8)
     await vi.advanceTimersByTimeAsync(1)
-    expect(mocks.from).toHaveBeenCalledTimes(12)
+    expect(mocks.from).toHaveBeenCalledTimes(16)
 
     expect(cleanup).toBeTypeOf('function')
     ;(cleanup as () => void)()
     expect(clearTimeoutSpy).toHaveBeenCalled()
     second.resolve()
     await vi.advanceTimersByTimeAsync(10_000)
-    expect(mocks.from).toHaveBeenCalledTimes(12)
+    expect(mocks.from).toHaveBeenCalledTimes(16)
   })
 
   it('非 lobby 不建立 fallback timer', async () => {

@@ -27,6 +27,15 @@ describe('leaveNotice', () => {
     expect(points.join('\n')).toContain('無法用邀請碼重新加入')
   })
 
+  // 初選階段只有圈選、沒有票（ADR-0010）
+  it('shortlisting 多人：圈選作廢、條件退出重算，不提投票', () => {
+    const points = leaveNotice('shortlisting', 3, 'ABC123', false)
+    expect(points[0]).toBe('你的圈選會作廢，條件與偏好退出重算')
+    expect(points.join('\n')).not.toContain('投票')
+    expect(points.join('\n')).toContain('無法用邀請碼重新加入')
+    expect(points.join('\n')).not.toContain(`之後${REJOIN}`)
+  })
+
   it('voting 多人：票即刻作廢並重算，且沒有重加入的路', () => {
     const points = leaveNotice('voting', 3, 'ABC123', false)
     expect(points[0]).toBe('你的投票會即刻作廢，候選盤面會重新計算')
@@ -77,6 +86,15 @@ describe('leaveNotice 單人房不承諾重算', () => {
     for (const promise of RESCORE) expect(text).not.toContain(promise)
     expect(points[0]).toBe('你是房間裡唯一的人，離開後這個房間會直接刪除')
     expect(text).toContain('候選名單會跟著刪除')
+    expect(text).toContain('無法用邀請碼重新加入')
+  })
+
+  it('shortlisting 單人：候選與圈選一起刪除，不提任何重算', () => {
+    const points = leaveNotice('shortlisting', 1, 'ABC123', false)
+    const text = points.join('\n')
+    for (const promise of RESCORE) expect(text).not.toContain(promise)
+    expect(points[0]).toBe('你是房間裡唯一的人，離開後這個房間會直接刪除')
+    expect(text).toContain('候選名單與你的圈選會跟著刪除')
     expect(text).toContain('無法用邀請碼重新加入')
   })
 

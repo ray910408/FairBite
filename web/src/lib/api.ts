@@ -99,6 +99,20 @@ export async function chooseLocation(roomId: string, lat: number, lng: number, v
   return postAction(`/api/rooms/${roomId}/location`, '更新地點失敗', { lat, lng, version })
 }
 
+// 初選（ADR-0010）：過半由伺服器在同一交易內直接把房間轉進 shortlisting
+export async function voteShortlist(roomId: string, want: boolean, version: number): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/shortlist-vote`, '初選表決失敗', { want, version })
+}
+
+export async function pickShortlist(roomId: string, restaurantId: string,
+  op: 'cast' | 'retract', version: number): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/pick`, '圈選失敗', { restaurant_id: restaurantId, op, version })
+}
+
+export async function cancelShortlist(roomId: string): Promise<string | null> {
+  return postAction(`/api/rooms/${roomId}/cancel-shortlist`, '取消初選失敗')
+}
+
 // 投票/否決/收回的唯一入口（D15）：Go 單一交易寫票 + 權威重算，Realtime 推回全員
 export async function voteRoom(roomId: string, restaurantId: string,
   kind: 'up' | 'veto', op: 'cast' | 'retract'): Promise<string | null> {

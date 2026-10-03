@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMidnightRerender } from '../hooks/useMidnightRerender'
 import { useRoom } from '../hooks/useRoom'
-import { chooseLocation, confirmDraw, editConditions, redrawRoom, startVoting, voteLocation } from '../lib/api'
+import {
+  cancelShortlist, chooseLocation, confirmDraw, editConditions, redrawRoom, startVoting, voteLocation, voteShortlist,
+} from '../lib/api'
 import { loadRoomDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
 import { isVetoDeadEnd } from '../lib/deadEnd'
 import { EXPLORATION_OPTIONS } from '../lib/labels'
@@ -10,6 +12,9 @@ import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
 import { isGoogleSourced } from '../lib/placesSource'
 import { snapshotCandidates } from '../lib/probability'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
+import {
+  SHORTLIST_PICK_MIN, hasMyPick, keptPickCounts, membersBelowMin, pickCounts, shortlistOpen,
+} from '../lib/shortlist'
 import { supabase } from '../lib/supabase'
 import type { Room } from '../lib/types'
 import ConditionsForm from '../components/ConditionsForm'
@@ -19,6 +24,7 @@ import Wheel from '../components/Wheel'
 import ResultCard from '../components/ResultCard'
 import RatingPrompt from '../components/RatingPrompt'
 import RelocationPanel from '../components/RelocationPanel'
+import ShortlistVotePanel from '../components/ShortlistVotePanel'
 import { GuestRegistrationPrompt } from '../components/GuestRegistrationPrompt'
 import { InviteQRCode } from '../components/InviteQRCode'
 import { Alert, Check, Copy, Logo, Spinner, Users } from '../components/icons'
@@ -34,7 +40,9 @@ const STEPS = [
 const SEARCH_SLOW_STATUS_MS = 3000
 
 function Stepper({ status }: { status: Room['status'] }) {
-  const current = STEPS.findIndex(s => s.key === (status === 'relocating' ? 'voting' : status))
+  // relocating／shortlisting 不是獨立步驟：借用投票／候選出爐那格並改標籤
+  const current = STEPS.findIndex(s => s.key === (
+    status === 'relocating' ? 'voting' : status === 'shortlisting' ? 'candidates' : status))
   return (
     <ol className="flex items-center gap-1 text-xs">
       {STEPS.map((s, i) => (
@@ -47,7 +55,8 @@ function Stepper({ status }: { status: Room['status'] }) {
             {i < current ? <Check className="h-3.5 w-3.5" /> : i + 1}
           </span>
           <span className={i === current ? 'font-semibold text-fg' : 'text-fg-muted'}>
-            {s.key === 'voting' && status === 'relocating' ? '換地點' : s.label}
+            {s.key === 'voting' && status === 'relocating' ? '換地點'
+              : s.key === 'candidates' && status === 'shortlisting' ? '初選' : s.label}
           </span>
           {i < STEPS.length - 1 && <span className="h-px flex-1 bg-border" />}
         </li>
@@ -56,11 +65,24 @@ function Stepper({ status }: { status: Room['status'] }) {
   )
 }
 
+// 初選中每位成員（含房主）的圈選進度；圈滿下限用 ok 樣式，比照「已準備」
+function pickBadge(count: number) {
+  const done = count >= SHORTLIST_PICK_MIN
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
+      done ? 'bg-ok-soft text-ok' : 'bg-brand-soft/60 text-fg-muted'
+    }`}>
+      {done && <Check className="h-3.5 w-3.5" />}
+      {done ? `已圈 ${count} 家` : `圈選中 ${count}/${SHORTLIST_PICK_MIN}`}
+    </span>
+  )
+}
+
 export default function RoomPage() {
   const { id = '' } = useParams()
   const nav = useNavigate()
-  const { room, members, candidates, draw, locationVotes = [], myUserId, connected, notFound, loadError,
-    refetch, toggleVote, hasMyVote, ups, vetoesRemaining } = useRoom(id)
+  const { room, members, candidates, draw, locationVotes = [], shortlistVotes = [], shortlistPicks = [], myUserId,
+    connected, notFound, loadError, refetch, toggleVote, togglePick, hasMyVote, ups, vetoesRemaining } = useRoom(id)
   const [spun, setSpun] = useState(false)
   const [actionError, setActionError] = useState('')
   const [actionWarning, setActionWarning] = useState('')
@@ -80,6 +102,8 @@ export default function RoomPage() {
   const [pendingAction, setPendingAction] = useState<'confirm' | 'redraw' | null>(null)
   const [relocationBusy, setRelocationBusy] = useState(false)
   const [isGuest, setIsGuest] = useState(false)
+  // 初選表決／取消初選共用（兩者不會同時出現：表決只在 candidates、取消只在 shortlisting）
+  const [shortlistBusy, setShortlistBusy] = useState(false)
   const leaveTriggerRef = useRef<HTMLAnchorElement>(null)
   // 房籍查詢自己的世代（比照 HistoryPage）：aria-busy 擋不住點擊，兩次點擊之間房籍
   // 還可能在別的分頁被改，只有最後一次點擊的回應能生效
@@ -165,6 +189,9 @@ export default function RoomPage() {
   const isHost = room.host_id === myUserId
   const guestsReady = !members.some(m => m.user_id !== room.host_id && !m.ready)
   guestsReadyRef.current = guestsReady
+  // 初選：圈選只算仍是 kept 的候選（同 server keptPicksSQL）
+  const picksByMember = keptPickCounts(shortlistPicks, candidates)
+  const shortlistUnfinished = membersBelowMin(members, picksByMember)
 
   function updateRoomSettingsGate() {
     setRoomSettingsBlocked(roomWriteQueued.current > 0 || pendingMealTime.current !== null || !roomWritesValid.current)
@@ -290,6 +317,48 @@ export default function RoomPage() {
     if (msg) setActionError(msg) // D4：伺服器訊息直達（額度用盡/不在投票階段都有明確下一步）
   }
 
+  // 圈選規則（op 判定/連點鎖/本地鏡射）同投票都在 useRoom
+  async function onTogglePick(restaurantId: string) {
+    setActionError('')
+    const msg = await togglePick(restaurantId)
+    if (msg) setActionError(msg)
+  }
+
+  // candidates 與 shortlisting 共用：初選未圈滿時伺服器回 409 原文
+  async function onStartVoting() {
+    if (startVotingInFlight.current) return
+    startVotingInFlight.current = true
+    setStartingVoting(true)
+    setActionError('')
+    const msg = await startVoting(room!.id)
+      .catch(() => '開始投票失敗：無法連線到伺服器')
+      .finally(() => { startVotingInFlight.current = false; setStartingVoting(false) })
+    if (msg) setActionError(msg)
+  }
+
+  async function onShortlistVote(want: boolean) {
+    if (shortlistBusy) return
+    setShortlistBusy(true); setActionError('')
+    try {
+      const msg = await voteShortlist(room!.id, want, room!.search_version)
+      if (msg) setActionError(msg)
+      else await refetch()
+    } catch { setActionError('初選表決失敗：無法連線到伺服器') }
+    finally { setShortlistBusy(false) }
+  }
+
+  async function onCancelShortlist() {
+    if (shortlistBusy) return
+    if (!globalThis.confirm('取消初選會清除所有人的圈選，回到候選出爐。確定繼續？')) return
+    setShortlistBusy(true); setActionError('')
+    try {
+      const msg = await cancelShortlist(room!.id)
+      if (msg) setActionError(msg)
+      else await refetch()
+    } catch { setActionError('取消初選失敗：無法連線到伺服器') }
+    finally { setShortlistBusy(false) }
+  }
+
   async function onEditConditions() {
     if (editConditionsInFlight.current) return
     if (!globalThis.confirm('修改條件會清除目前候選，並請所有成員重新準備。確定繼續？')) return
@@ -393,7 +462,7 @@ export default function RoomPage() {
           <span className="sr-only" aria-live="polite">{copied ? '邀請碼已複製' : ''}</span>
           <Link to="/history" className="btn btn-quiet min-h-11 px-1.5 text-xs sm:px-2 sm:text-sm">足跡</Link>
           <span className="ml-auto whitespace-nowrap rounded-full bg-brand-soft px-2 sm:px-3 py-1 text-xs font-semibold text-brand-strong">
-            {{ lobby: '等待中', candidates: '候選已出爐', voting: '投票中', relocating: '等待選新地點', pending: '抽中待確認', decided: '已定案' }[room.status]}
+            {{ lobby: '等待中', candidates: '候選已出爐', shortlisting: '初選中', voting: '投票中', relocating: '等待選新地點', pending: '抽中待確認', decided: '已定案' }[room.status]}
           </span>
         </div>
         <div className="mx-auto w-full max-w-lg px-3 pb-3">
@@ -449,7 +518,9 @@ export default function RoomPage() {
                     <span className="ml-1 text-xs text-fg-muted">（房主）</span>
                   )}
                 </span>
-                {m.user_id !== room.host_id && (
+                {room.status === 'shortlisting' ? (
+                  pickBadge(picksByMember[m.user_id] ?? 0)
+                ) : m.user_id !== room.host_id && (
                   <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
                     m.ready ? 'bg-ok-soft text-ok' : 'bg-brand-soft/60 text-fg-muted'
                   }`}>
@@ -475,7 +546,7 @@ export default function RoomPage() {
           </section>
         )}
 
-        {(room.status === 'candidates' || room.status === 'voting') && (
+        {(room.status === 'candidates' || room.status === 'shortlisting' || room.status === 'voting') && (
           <p className="text-xs text-fg-muted">
             探索檔位：{EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[1]}
             ・用餐時間：{formatMealTime(room.meal_time)}
@@ -660,6 +731,12 @@ export default function RoomPage() {
         )}
         {room.status === 'candidates' && (
           <>
+            {/* 門檻開放時候選清單必然很長，表決放在清單前面才看得到 */}
+            {shortlistOpen(candidates.filter(c => c.status === 'kept').length, members.length) && (
+              <ShortlistVotePanel wantShortlist={shortlistVotes.some(v => v.user_id === myUserId)}
+                yesCount={shortlistVotes.length} memberCount={members.length} busy={shortlistBusy}
+                onVote={onShortlistVote} />
+            )}
             <CandidateList rows={candidates} />
             {isHost && (
               <div className="grid grid-cols-2 gap-3">
@@ -668,18 +745,44 @@ export default function RoomPage() {
                   {editingConditions ? <><Spinner className="h-5 w-5" />處理中…</> : '修改條件'}
                 </button>
                 <button className="btn btn-primary w-full" disabled={startingVoting || editingConditions}
-                  aria-busy={startingVoting}
-                  onClick={async () => {
-                    if (startVotingInFlight.current) return
-                    startVotingInFlight.current = true
-                    setStartingVoting(true)
-                    setActionError('')
-                    const msg = await startVoting(room.id)
-                      .catch(() => '開始投票失敗：無法連線到伺服器')
-                      .finally(() => { startVotingInFlight.current = false; setStartingVoting(false) })
-                    if (msg) setActionError(msg)
-                  }}>
+                  aria-busy={startingVoting} onClick={onStartVoting}>
                   {startingVoting ? <><Spinner className="h-5 w-5" />處理中…</> : '開始投票'}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+        {room.status === 'shortlisting' && (
+          <>
+            <p className="text-sm text-fg-muted">
+              全員圈滿 {SHORTLIST_PICK_MIN} 家後房主可以開始投票；沒人圈的店不進轉盤
+            </p>
+            <CandidateList rows={candidates} picking={{
+              isPicked: rid => hasMyPick(shortlistPicks, myUserId, rid),
+              counts: pickCounts(shortlistPicks),
+              myCount: picksByMember[myUserId] ?? 0,
+              onToggle: onTogglePick,
+            }} />
+            {isHost && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <button className="btn btn-secondary w-full"
+                    disabled={editingConditions || startingVoting || shortlistBusy}
+                    aria-busy={editingConditions} onClick={onEditConditions}>
+                    {editingConditions ? <><Spinner className="h-5 w-5" />處理中…</> : '修改條件'}
+                  </button>
+                  <button className="btn btn-quiet w-full"
+                    disabled={shortlistBusy || startingVoting || editingConditions}
+                    aria-busy={shortlistBusy} onClick={onCancelShortlist}>
+                    {shortlistBusy ? <><Spinner className="h-5 w-5" />處理中…</> : '取消初選'}
+                  </button>
+                </div>
+                <button className="btn btn-primary w-full"
+                  disabled={shortlistUnfinished > 0 || startingVoting || editingConditions || shortlistBusy}
+                  aria-busy={startingVoting} onClick={onStartVoting}>
+                  {startingVoting ? <><Spinner className="h-5 w-5" />處理中…</>
+                    : shortlistUnfinished > 0 ? `還有 ${shortlistUnfinished} 人沒圈滿 ${SHORTLIST_PICK_MIN} 家`
+                    : '開始投票'}
                 </button>
               </div>
             )}
