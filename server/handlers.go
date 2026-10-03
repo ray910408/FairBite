@@ -116,6 +116,15 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, weather
 	api.HandleFunc("POST /api/rooms/{id}/location", func(w http.ResponseWriter, r *http.Request) {
 		handleChooseLocation(w, r, pool)
 	})
+	api.HandleFunc("POST /api/rooms/{id}/shortlist-vote", func(w http.ResponseWriter, r *http.Request) {
+		handleShortlistVote(w, r, pool)
+	})
+	api.HandleFunc("POST /api/rooms/{id}/pick", func(w http.ResponseWriter, r *http.Request) {
+		handlePick(w, r, pool)
+	})
+	api.HandleFunc("POST /api/rooms/{id}/cancel-shortlist", func(w http.ResponseWriter, r *http.Request) {
+		handleCancelShortlist(w, r, pool)
+	})
 	api.HandleFunc("POST /api/leave", func(w http.ResponseWriter, r *http.Request) {
 		handleLeave(w, r, pool, weather)
 	})
@@ -238,13 +247,18 @@ func handleStartVoting(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 		return
 	}
 	expectedSearchVersion := room.SearchVersion
+	// 初選（ADR-0010）可選：從 candidates 或 shortlisting 開始投票；其他狀態走 candidates 讓 TransitionRoom 回 409
+	from := room.Status
+	if from != "shortlisting" {
+		from = "candidates"
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := TransitionRoom(ctx, tx, room.ID, "candidates", "voting"); err != nil {
+	if err := TransitionRoom(ctx, tx, room.ID, from, "voting"); err != nil {
 		if errors.Is(err, ErrConflict) {
 			jsonError(w, http.StatusConflict, "房間狀態已變更")
 			return
@@ -269,6 +283,12 @@ func handleStartVoting(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 		jsonError(w, http.StatusConflict, "搜尋批次已更新")
 		return
 	}
+	if from == "shortlisting" {
+		if err := freezeShortlist(ctx, tx, room.ID); err != nil {
+			shortlistError(w, err)
+			return
+		}
+	}
 	// Migration 20260905000300 hides legacy odds rather than fabricating an old draw. Restore
 	// active candidates once, under the same room lock, before opening voting.
 	var redacted bool
@@ -277,11 +297,18 @@ func handleStartVoting(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
-	if redacted {
+	// 初選定案後也要重算：未圈選者轉成 shortlist 排除、kept 機率重新正規化
+	if redacted || from == "shortlisting" {
 		wx := loadWeatherCached(weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
-		if _, _, err := rescoreRoom(ctx, tx, room, wx); err != nil {
-			log.Printf("legacy candidates rescore failed: %v", err)
+		result, _, err := rescoreRoom(ctx, tx, room, wx)
+		if err != nil {
+			log.Printf("start-voting rescore failed: %v", err)
 			jsonError(w, http.StatusInternalServerError, "重算失敗，請稍後再試")
+			return
+		}
+		// 入圍店在圈選後全數打烊：不提交，交易回滾連同轉態與落選定案一起撤銷
+		if from == "shortlisting" && len(result.Kept) == 0 {
+			jsonError(w, http.StatusConflict, "入圍的店都已不在候選中（可能已打烊），請取消初選或修改條件")
 			return
 		}
 	}
@@ -298,13 +325,18 @@ func handleEditConditions(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 	if !ok {
 		return
 	}
+	// 初選中也可回準備；圈選與初選表決由 advance_room_search_version trigger 清掉
+	from := room.Status
+	if from != "shortlisting" {
+		from = "candidates"
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := TransitionRoom(ctx, tx, room.ID, "candidates", "lobby"); err != nil {
+	if err := TransitionRoom(ctx, tx, room.ID, from, "lobby"); err != nil {
 		if errors.Is(err, ErrConflict) {
 			jsonError(w, http.StatusConflict, "房間狀態已變更")
 		} else {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CandidateList from '../components/CandidateList'
+import ShortlistVotePanel from '../components/ShortlistVotePanel'
 import type { CandidateRow } from '../lib/types'
 
 const mocks = vi.hoisted(() => ({
@@ -18,6 +19,9 @@ const mocks = vi.hoisted(() => ({
   confirmDraw: vi.fn(),
   redrawRoom: vi.fn(),
   chooseLocation: vi.fn(async () => null),
+  startVoting: vi.fn(async (): Promise<string | null> => null),
+  cancelShortlist: vi.fn(async (): Promise<string | null> => null),
+  voteShortlist: vi.fn(async (): Promise<string | null> => null),
   members: {} as { data?: unknown; error?: unknown },
   effects: [] as Array<() => void | (() => void)>,
 }))
@@ -60,7 +64,9 @@ vi.mock('../lib/api', () => ({
   confirmDraw: mocks.confirmDraw,
   redrawRoom: mocks.redrawRoom,
   chooseLocation: mocks.chooseLocation,
-  startVoting: vi.fn(async () => null),
+  startVoting: mocks.startVoting,
+  cancelShortlist: mocks.cancelShortlist,
+  voteShortlist: mocks.voteShortlist,
 }))
 
 type ElementLike = {
@@ -723,6 +729,151 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
 
     expect(mocks.stateSetters[1]).toHaveBeenCalledWith('房間狀態已變更')
     expect(refetch).not.toHaveBeenCalled()
+  })
+})
+
+// 初選（ADR-0010）：這裡只驗 RoomPage／CandidateList 的接線，門檻與計數規則由 lib/shortlist.test.ts 窮舉
+describe('初選（Shortlist）', () => {
+  const kept = (rid: string): CandidateRow => ({
+    room_id: 'room-1', restaurant_id: rid, status: 'kept', probability: 0.1,
+    weight_breakdown: [], exclusion_reason: null, exclusion_kinds: [],
+    restaurants: { name: rid, lat: 25, lng: 121, place_id: rid, source: 'mock' },
+  })
+  const member = (uid: string, name: string) => ({
+    room_id: 'room-1', user_id: uid, budget_max: 800, cuisines: [], dietary: [],
+    max_distance_m: 1000, transport: 'walking', ready: true, profiles: { display_name: name },
+  })
+  const picks = (uid: string, rids: string[]) =>
+    rids.map(restaurant_id => ({ room_id: 'room-1', user_id: uid, restaurant_id }))
+  const rids = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7'] // 2 人 × 3 = 6，7 家才過門檻
+
+  function state(status: string, overrides: Record<string, unknown> = {}) {
+    return {
+      room: { id: 'room-1', code: 'C', host_id: 'host-1', status,
+        exploration: 'balanced', meal_time: null, cuisine_filter: false, search_version: 3 },
+      members: [member('host-1', '房主'), member('user-b', '小B')],
+      candidates: rids.map(kept), draw: null, myUserId: 'host-1',
+      connected: true, notFound: false, loadError: false, refetch: vi.fn(),
+      toggleVote: vi.fn(), togglePick: vi.fn(async (): Promise<string | null> => null),
+      hasMyVote: vi.fn(), ups: {}, vetoesRemaining: 2, shortlistVotes: [], shortlistPicks: [],
+      ...overrides,
+    }
+  }
+
+  async function render(status: string, overrides: Record<string, unknown> = {}) {
+    mocks.stateIndex = 0
+    mocks.useRoom.mockReturnValue(state(status, overrides))
+    return renderRoomPage()
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.stateIndex = 0; mocks.stateValues = []; mocks.stateSetters = []; mocks.effects = []
+  })
+
+  const panel = (tree: unknown) => findNode(tree, el => el.type === ShortlistVotePanel)
+
+  it('候選出爐：kept 多於成員數 × 3 才對全員顯示初選表決，排除的店不算', async () => {
+    const open = await render('candidates', {
+      myUserId: 'user-b', shortlistVotes: [{ room_id: 'room-1', user_id: 'user-b' }],
+    })
+    expect(panel(open)?.props).toMatchObject({ wantShortlist: true, yesCount: 1, memberCount: 2 })
+
+    const closed = await render('candidates', {
+      candidates: [...rids.slice(0, 6).map(kept), { ...kept('r7'), status: 'excluded' }],
+    })
+    expect(panel(closed)).toBeUndefined()
+  })
+
+  it('表決送出後 refetch；錯誤原文顯示', async () => {
+    const tree = await render('candidates')
+    const onVote = panel(tree)!.props!.onVote as (want: boolean) => Promise<void>
+    await onVote(true)
+    expect(mocks.voteShortlist).toHaveBeenCalledWith('room-1', true, 3)
+    expect(mocks.useRoom.mock.results[0].value.refetch).toHaveBeenCalledOnce()
+
+    mocks.voteShortlist.mockResolvedValueOnce('候選沒有超過成員數的 3 倍，不需要初選')
+    await onVote(true)
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('候選沒有超過成員數的 3 倍，不需要初選')
+  })
+
+  it('初選中：每位成員（含房主）顯示 kept 圈選數，取代準備狀態', async () => {
+    const tree = await render('shortlisting', {
+      // user-b 的 gone 不是候選，不算數
+      shortlistPicks: [...picks('host-1', ['r1', 'r2', 'r3']), ...picks('user-b', ['r1', 'gone'])],
+    })
+    const text = textContent(tree)
+    expect(text).toContain('已圈 3 家')
+    expect(text).toContain('圈選中 1/3')
+    expect(text).not.toContain('已準備')
+    expect(text).toContain('全員圈滿 3 家後房主可以開始投票；沒人圈的店不進轉盤')
+  })
+
+  it('初選中房主：有人沒圈滿時開始投票 disabled 並說明人數，圈滿後可開始', async () => {
+    const waiting = await render('shortlisting', {
+      shortlistPicks: [...picks('host-1', ['r1', 'r2', 'r3']), ...picks('user-b', ['r1'])],
+    })
+    expect(findButton(waiting, '還有 1 人沒圈滿 3 家').props?.disabled).toBe(true)
+    expect(findButton(waiting, '開始投票').type).toBeUndefined()
+
+    const ready = await render('shortlisting', {
+      shortlistPicks: [...picks('host-1', ['r1', 'r2', 'r3']), ...picks('user-b', ['r1', 'r4', 'r5'])],
+    })
+    const start = findButton(ready, '開始投票')
+    expect(start.props?.disabled).toBe(false)
+    await start.props!.onClick!()
+    expect(mocks.startVoting).toHaveBeenCalledWith('room-1')
+    expect(findButton(ready, '修改條件').type).toBe('button')
+  })
+
+  it('初選中成員：可圈選但看不到房主控制項；圈選錯誤原文顯示', async () => {
+    const togglePick = vi.fn(async () => '每人最多圈選 5 家')
+    const tree = await render('shortlisting', {
+      myUserId: 'user-b', togglePick,
+      shortlistPicks: [...picks('user-b', ['r1', 'r2']), ...picks('host-1', ['r1'])],
+    })
+    expect(findButton(tree, '取消初選').type).toBeUndefined()
+    expect(findButton(tree, '修改條件').type).toBeUndefined()
+    const list = findNode(tree, el => el.type === CandidateList)
+    const picking = list?.props?.picking as { myCount: number; counts: Record<string, number>;
+      isPicked(rid: string): boolean; onToggle(rid: string): Promise<void> }
+    expect(picking.myCount).toBe(2)
+    expect(picking.counts).toEqual({ r1: 2, r2: 1 })
+    expect(picking.isPicked('r2')).toBe(true)
+    expect(picking.isPicked('r3')).toBe(false)
+    await picking.onToggle('r3')
+    expect(togglePick).toHaveBeenCalledWith('r3')
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith('每人最多圈選 5 家')
+  })
+
+  it('取消初選先用 native confirm；取消不送，確定才送並 refetch', async () => {
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    const tree = await render('shortlisting')
+    await findButton(tree, '取消初選').props!.onClick!()
+    expect(confirm).toHaveBeenCalledWith('取消初選會清除所有人的圈選，回到候選出爐。確定繼續？')
+    expect(mocks.cancelShortlist).not.toHaveBeenCalled()
+
+    confirm.mockReturnValue(true)
+    await findButton(tree, '取消初選').props!.onClick!()
+    expect(mocks.cancelShortlist).toHaveBeenCalledWith('room-1')
+    expect(mocks.useRoom.mock.results[0].value.refetch).toHaveBeenCalledOnce()
+  })
+
+  it('CandidateList 圈選：aria-pressed、各店人數、額度用滿時只擋沒圈的店', () => {
+    const onToggle = vi.fn()
+    const tree = CandidateList({ rows: [kept('r1'), kept('r2')], picking: {
+      isPicked: rid => rid === 'r1', counts: { r1: 2 }, myCount: 5, onToggle,
+    } })
+    expect(textContent(tree)).toContain('已圈 5/5（至少 3 家）')
+    const picked = findNode(tree, el => el.type === 'button' && textContent(el) === '圈選（2 人）')
+    const other = findNode(tree, el => el.type === 'button' && textContent(el) === '圈選')
+    expect(picked?.props?.['aria-pressed']).toBe(true)
+    expect(picked?.props?.disabled).toBe(false)
+    expect(other?.props?.['aria-pressed']).toBe(false)
+    expect(other?.props?.disabled).toBe(true)
+    ;(picked!.props!.onClick as () => void)()
+    expect(onToggle).toHaveBeenCalledWith('r1')
   })
 })
 

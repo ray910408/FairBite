@@ -7,7 +7,7 @@ export type Room = {
   id: string
   code: string
   host_id: string
-  status: 'lobby' | 'candidates' | 'voting' | 'relocating' | 'pending' | 'decided'
+  status: 'lobby' | 'candidates' | 'shortlisting' | 'voting' | 'relocating' | 'pending' | 'decided'
   exploration: 'familiar' | 'balanced' | 'explore'
   // NULL = 馬上出發（migration 0017）
   meal_time: string | null
@@ -65,3 +65,7 @@ export type DrawRow = {
 }
 
 export type LocationVoteRow = { room_id: string; user_id: string }
+
+// 初選（ADR-0010）：表決意願與圈選，client 只讀，寫入走 Go
+export type ShortlistVoteRow = { room_id: string; user_id: string }
+export type ShortlistPickRow = { room_id: string; user_id: string; restaurant_id: string }

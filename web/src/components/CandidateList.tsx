@@ -2,6 +2,7 @@ import type { CandidateRow } from '../lib/types'
 import { buildGoogleMapsPlaceUrl } from '../lib/maps'
 import { isGoogleSourced } from '../lib/placesSource'
 import { chipLabel, formatPercents, sortExcluded, sortKept } from '../lib/probability'
+import { SHORTLIST_PICK_MAX, SHORTLIST_PICK_MIN } from '../lib/shortlist'
 import { VETO_QUOTA } from '../lib/votes'
 import { Chevron } from './icons'
 
@@ -13,7 +14,17 @@ type VotingProps = {
   onToggle: (restaurantId: string, kind: 'up' | 'veto') => void
 }
 
-export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; voting?: VotingProps }) {
+// 初選圈選（ADR-0010）：圈選只決定去留，不動機率顯示；counts 是各店被幾人圈選（公開）
+type PickingProps = {
+  isPicked: (rid: string) => boolean
+  counts: Record<string, number>
+  myCount: number
+  onToggle: (restaurantId: string) => void
+}
+
+export default function CandidateList({ rows, voting, picking }: {
+  rows: CandidateRow[]; voting?: VotingProps; picking?: PickingProps
+}) {
   const kept = sortKept(rows)
   const oddsKnown = kept.every(c => c.probability != null)
   const percents = formatPercents(kept.map(c => c.probability ?? 0))
@@ -27,6 +38,9 @@ export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; 
         <h2 className="text-base font-semibold">候選餐廳（{kept.length}）</h2>
         {voting && (
           <span className="text-xs text-fg-muted">否決額度 {voting.vetoesRemaining}/{VETO_QUOTA}（可收回）</span>
+        )}
+        {picking && (
+          <span className="text-xs text-fg-muted">已圈 {picking.myCount}/{SHORTLIST_PICK_MAX}（至少 {SHORTLIST_PICK_MIN} 家）</span>
         )}
       </div>
       {kept.map((c, ci) => (
@@ -75,6 +89,16 @@ export default function CandidateList({ rows, voting }: { rows: CandidateRow[]; 
                 className="btn btn-quiet flex-1 text-sm text-danger disabled:opacity-40"
                 onClick={() => voting.onToggle(c.restaurant_id, 'veto')}>
                 否決
+              </button>
+            </div>
+          )}
+          {picking && (
+            <div className="flex border-t border-border pt-2">
+              <button type="button" aria-pressed={picking.isPicked(c.restaurant_id)}
+                disabled={!picking.isPicked(c.restaurant_id) && picking.myCount >= SHORTLIST_PICK_MAX}
+                className={`btn flex-1 text-sm disabled:opacity-40 ${picking.isPicked(c.restaurant_id) ? 'btn-primary' : 'btn-quiet'}`}
+                onClick={() => picking.onToggle(c.restaurant_id)}>
+                圈選{(picking.counts[c.restaurant_id] ?? 0) > 0 ? `（${picking.counts[c.restaurant_id]} 人）` : ''}
               </button>
             </div>
           )}

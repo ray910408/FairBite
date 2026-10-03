@@ -158,6 +158,10 @@ push 到 `main` 時 `deploy-pages.yml` 的 `migrate` job 會自動 `supabase db 
 > `restaurants.time_zone`，欄位不存在時搜尋（快取寫入）與重算都會失敗。這是「新程式對舊
 > schema」的不相容，上面的 additive 規則保護不到：migration 必須先上線，Render 才能部署新 Go。
 
+> 2026-10-03 初選（`20261003000100_shortlist.sql`）：新 Go 每次重算與寫入搜尋結果都會讀寫
+> `room_candidates.shortlist_excluded`，欄位不存在時搜尋與重算都會失敗，同樣是「新程式對舊 schema」
+> 的不相容。migration 先單獨開 PR 合進 `main`，等 `migrate` job 跑綠，再合程式 PR——Render 不能在欄位存在前部署新 Go。
+
 ## 2026-09 安全修復部署閘門
 
 這次 migrations `20260905000100`–`20260905000300` **不是新舊版本完全相容的更新**。

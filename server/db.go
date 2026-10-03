@@ -374,32 +374,34 @@ func ReplaceCandidates(ctx context.Context, tx pgx.Tx, roomID string, res Engine
 		// arch c3：結構化 kinds 隨列持久化（kept 列吃欄位 default '{}'）
 		if _, err := tx.Exec(ctx, `
 			insert into room_candidates
-				(room_id, restaurant_id, status, exclusion_reason, exclusion_kinds, exposure_counted, query_matches, batch_excluded)
-			values ($1, $2, 'excluded', $3, $4, $5, $6, $7)`,
+				(room_id, restaurant_id, status, exclusion_reason, exclusion_kinds, exposure_counted, query_matches, batch_excluded, shortlist_excluded)
+			values ($1, $2, 'excluded', $3, $4, $5, $6, $7, $8)`,
 			roomID, e.Restaurant.ID, e.Reason, nonNilKinds(e.Kinds), exposureCounted[e.Restaurant.ID],
-			nonNilKinds(e.Restaurant.QueryMatches), hasKind(e.Kinds, "batch")); err != nil {
+			nonNilKinds(e.Restaurant.QueryMatches), hasKind(e.Kinds, "batch"), hasKind(e.Kinds, "shortlist")); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func LoadBatchExclusions(ctx context.Context, q querier, roomID string) (map[string]bool, error) {
-	rows, err := q.Query(ctx, `select restaurant_id from room_candidates
-		where room_id = $1 and batch_excluded`, roomID)
+// LoadPersistentExclusions：本批排除與初選落選——兩者都是重算的輸入，不是重算的產物
+func LoadPersistentExclusions(ctx context.Context, q querier, roomID string) (batch, shortlist map[string]bool, err error) {
+	rows, err := q.Query(ctx, `select restaurant_id, batch_excluded, shortlist_excluded from room_candidates
+		where room_id = $1 and (batch_excluded or shortlist_excluded)`, roomID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
-	out := map[string]bool{}
+	batch, shortlist = map[string]bool{}, map[string]bool{}
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
+		var b, s bool
+		if err := rows.Scan(&id, &b, &s); err != nil {
+			return nil, nil, err
 		}
-		out[id] = true
+		batch[id], shortlist[id] = b, s
 	}
-	return out, rows.Err()
+	return batch, shortlist, rows.Err()
 }
 
 func TransitionRoom(ctx context.Context, tx pgx.Tx, roomID, from, to string) error {

@@ -12,7 +12,10 @@ vi.mock('./supabase', () => ({
   supabase: { auth: { getSession: mocks.getSession } },
 }))
 
-import { chooseLocation, confirmDraw, editConditions, redrawRoom, searchRoom, voteLocation } from './api'
+import {
+  cancelShortlist, chooseLocation, confirmDraw, editConditions, pickShortlist, redrawRoom, searchRoom, voteLocation,
+  voteShortlist,
+} from './api'
 
 const degradedWarning = '外部搜尋暫時失敗，本次使用 30 天內的快取資料'
 
@@ -208,6 +211,36 @@ describe('location actions', () => {
     expect(fetchStub).toHaveBeenNthCalledWith(2, '/api/rooms/room-1/location', expect.objectContaining({
       body: JSON.stringify({ lat: 25.1, lng: 121.6, version: 3 }),
     }))
+  })
+})
+
+describe('shortlist actions', () => {
+  beforeEach(() => {
+    mocks.getSession.mockResolvedValue({ data: { session: { access_token: 'token' } } })
+    vi.unstubAllGlobals()
+  })
+
+  it('表決、圈選、取消初選打對 endpoint 與 body', async () => {
+    const fetchStub = vi.fn().mockImplementation(async () => new Response('{}'))
+    vi.stubGlobal('fetch', fetchStub)
+    await expect(voteShortlist('room-1', false, 2)).resolves.toBeNull()
+    await expect(pickShortlist('room-1', 'r1', 'retract', 2)).resolves.toBeNull()
+    await expect(cancelShortlist('room-1')).resolves.toBeNull()
+    expect(fetchStub).toHaveBeenNthCalledWith(1, '/api/rooms/room-1/shortlist-vote', expect.objectContaining({
+      body: JSON.stringify({ want: false, version: 2 }),
+    }))
+    expect(fetchStub).toHaveBeenNthCalledWith(2, '/api/rooms/room-1/pick', expect.objectContaining({
+      body: JSON.stringify({ restaurant_id: 'r1', op: 'retract', version: 2 }),
+    }))
+    expect(fetchStub).toHaveBeenNthCalledWith(3, '/api/rooms/room-1/cancel-shortlist', expect.objectContaining({
+      method: 'POST', body: undefined,
+    }))
+  })
+
+  it('409 原文直達，例如圈選上限', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: '每人最多圈選 5 家' }), { status: 409 })))
+    await expect(pickShortlist('room-1', 'r1', 'cast', 0)).resolves.toBe('每人最多圈選 5 家')
   })
 })
 
