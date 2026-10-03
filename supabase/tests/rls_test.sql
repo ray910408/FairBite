@@ -24,6 +24,8 @@ select results_eq(
       ('room_members','SELECT'),
       -- rooms 兩種權限都已是欄級（SELECT 見 0015、UPDATE 見 0003），
       -- 欄級 grant 不會出現在 role_table_grants，改由下面兩條 role_column_grants 釘住
+      ('shortlist_picks','SELECT'),
+      ('shortlist_votes','SELECT'),
       ('votes','SELECT')
     order by 1, 2
   $$,
