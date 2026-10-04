@@ -775,8 +775,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusInternalServerError, "讀取滿足度失敗")
 		return
 	}
+	evalAt, departNow := roomEvalMoment(room)
 	result := Evaluate(EngineInput{Restaurants: found, Members: members,
-		Now: roomEvalTime(room), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
+		Now: evalAt, DepartNow: departNow, CenterLat: room.CenterLat, CenterLng: room.CenterLng,
 		Weather: wx, Recency: recency, Exposure: exposure, Satisfaction: satisfaction,
 		Exploration: room.Exploration, CuisineFilter: room.CuisineFilter})
 

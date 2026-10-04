@@ -466,6 +466,54 @@ func TestClosingSoonDemoted(t *testing.T) {
 	}
 }
 
+// 馬上出發：營業與快打烊看「現在 + 最慢成員交通時間」；有用餐時間時 Now 已是抵達時刻，不再加。
+func TestDepartNowJudgesAtArrival(t *testing.T) {
+	cLat, cLng := snapCenter(25.0478, 121.5170)
+	at20 := func(id string, hours OpeningHours) Restaurant { // 量化圓心正北 1500 m：步行 20 分鐘
+		return rest(func(r *Restaurant) {
+			r.PlaceID, r.Hours, r.Lat, r.Lng = id, hours, cLat+1500/111194.93, cLng
+		})
+	}
+	rs := []Restaurant{
+		at20("gone", daily([2]int{0, 735})), // 12:15 打烊：現在營業、抵達已打烊；同時初選落選，守 shortlist 路徑
+		// 13:03 打烊：現在剩 63 分、抵達剩 43 分；若改從真實圓心算（約 1382 m）會剩 45 分 → 守 snapCenter
+		at20("tight", daily([2]int{0, 783})),
+		at20("opens", daily([2]int{725, 1440})), // 12:05 開門：現在未營業、抵達已營業
+		// 12:19 打烊：最慢（步行 20 分）抵達已打烊；取平均（17.75 分）會誤留 → 守「最慢成員」
+		at20("slowest", daily([2]int{0, 739})),
+	}
+	members := []Member{member(nil), member(func(m *Member) { m.UserID, m.Transport = "u2", "transit" })} // 大眾運輸 15.5 分
+	for _, tc := range []struct {
+		departNow             bool
+		excluded, tightReason string // excluded：依輸入順序的「id:kinds」，| 分隔
+		tightMult             float64
+	}{
+		{true, "gone:shortlist,closed|slowest:closed", "13:03 打烊", ClosingSoonMult},
+		{false, "gone:shortlist|opens:closed", "營業時間充裕", 1.0},
+	} {
+		res := Evaluate(EngineInput{Restaurants: rs, Members: members, ShortlistExcluded: map[string]bool{"gone": true},
+			Now: lunchMonday, DepartNow: tc.departNow, CenterLat: 25.0478, CenterLng: 121.5170})
+		var excluded []string
+		for _, e := range res.Excluded {
+			excluded = append(excluded, e.PlaceID+":"+strings.Join(e.Kinds, ","))
+		}
+		if got := strings.Join(excluded, "|"); got != tc.excluded {
+			t.Fatalf("departNow=%v 排除應為 %s，got %s", tc.departNow, tc.excluded, got)
+		}
+		var got *TraceEntry
+		for _, c := range res.Kept {
+			for _, e := range c.Trace {
+				if c.PlaceID == "tight" && e.Factor == "closing_soon" {
+					got = &e
+				}
+			}
+		}
+		if got == nil || got.Mult != tc.tightMult || got.Reason != tc.tightReason {
+			t.Errorf("departNow=%v tight 應 ×%v「%s」，got %+v", tc.departNow, tc.tightMult, tc.tightReason, got)
+		}
+	}
+}
+
 // 營業時段是餐廳當地時鐘：roomEvalTime 給的是 APP_TZ 時刻，引擎須換到餐廳時區再判定。
 func TestTimeJudgmentsUseRestaurantLocalTime(t *testing.T) {
 	load := func(name string) *time.Location {

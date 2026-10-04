@@ -72,15 +72,23 @@ func restaurantLocalTime(r Restaurant, t time.Time) time.Time {
 	return t
 }
 
-// roomEvalTime：所有時間敏感判定（營業/快打烊/天氣/時段）的單一評估時刻。
+// roomEvalTime：所有時間敏感判定（營業/快打烊/天氣/時段）的單一評估時刻；
+// 馬上出發時營業/快打烊再加交通時間（見 roomEvalMoment）。
 // T' = max(now, meal_time)：用餐時間是「抵達時刻」（CONTEXT.md），已過期的房
 // （19:00 的房 19:30 才抽）退回當下評估，不炸也不用未來式。NULL = 馬上出發。
 func roomEvalTime(room RoomRow) time.Time {
+	t, _ := roomEvalMoment(room)
+	return t
+}
+
+// roomEvalMoment：同 roomEvalTime，另回報 departNow（未設或已過期的用餐時間 = 現在才出發）。
+// departNow 時評估時刻是出發而非抵達，引擎的營業／快打烊要再加交通時間（engine.go arrivalAt）。
+func roomEvalMoment(room RoomRow) (t time.Time, departNow bool) {
 	now := nowInAppTZ()
 	if room.MealTime != nil {
 		if t := room.MealTime.In(appLocation); t.After(now) {
-			return t
+			return t, false
 		}
 	}
-	return now
+	return now, true
 }

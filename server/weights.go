@@ -182,9 +182,10 @@ const (
 	//             → d(mult)/d(dist) = -0.3/(15*75) = -1/3750 ≈ 2.67e-4 每公尺
 	// transit（1/8000）與 driving（1/20000）敏感度更低。圓心最壞位移 212 公尺 ⇒ distance
 	// 倍率最多偏 0.07、weather 0.06（範圍 1.2–0.7 與 1.0–0.7）。
+	// arrivalAt（馬上出發的抵達時刻）同理最多偏 212/75 ≈ 2.8 分鐘，營業／快打烊的切點跟著移動。
 	CenterGridM = 300.0
 
-	ClosingSoonMinutes  = 60
+	ClosingSoonMinutes  = 45 // 抵達後剩不到此分鐘數即打烊 → 降權（馬上出發的抵達時刻見 engine.go arrivalAt）
 	ClosingSoonMult     = 0.6
 	VoteBoostPerUp      = 0.10 // 每張贊成票 +10%（spec §5 投票加成）
 	VetoQuota           = 2    // 每人同房同時最多否決數（spec §4；D15 後唯一權威，UI 文案另有顯示用複本）

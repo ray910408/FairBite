@@ -76,6 +76,7 @@ type EngineInput struct {
 	Restaurants          []Restaurant
 	Members              []Member
 	Now                  time.Time
+	DepartNow            bool // 馬上出發：Now 是出發時刻，營業／快打烊改看 arrivalAt；false = Now 已是抵達時刻
 	CenterLat, CenterLng float64
 	Weather              *Weather                 // nil = 無資料（provider 失敗或未接），中性
 	Votes                map[string]VoteInfo      // key = rkey(r)；nil = 無投票資料（P1 相容）
@@ -325,8 +326,8 @@ func travelMinutes(m Member, distM float64) float64 {
 	return TransportOverheadMin[m.Transport] + distM/TransportMetersPerMin[m.Transport]
 }
 
-// snapCenter：把圓心捨入到固定網格上的一個點。圓心衍生的因素（distFactor、rainFactor —— 目前
-// 僅有的兩個）都必須先過這裡再算距離，**且之後不准再對距離做任何捨入**：公開出去的倍率、
+// snapCenter：把圓心捨入到固定網格上的一個點。圓心衍生的因素（distFactor、rainFactor、
+// arrivalAt —— 目前僅有的三個）都必須先過這裡再算距離，**且之後不准再對距離做任何捨入**：公開出去的倍率、
 // 計分、機率、reason 於是全部是「單一個網格點」的確定性函數，殘餘不確定性 = 一格，與候選
 // 數量無關（威脅模型與代價見 weights.go CenterGridM）。
 //
@@ -428,14 +429,31 @@ func timeSlotFactor(r Restaurant, in EngineInput) TraceEntry {
 	return TraceEntry{Mult: 1.0}
 }
 
+// arrivalAt：營業與快打烊的判定時刻。有用餐時間時 Now 就是抵達時刻；馬上出發則加上最慢成員的
+// 交通時間（全員到齊才開吃）。距離同 distFactor 從量化圓心起算：排除與快打烊倍率都公開，
+// 用真實圓心等於再開一條旁通道（見 snapCenter）。
+func arrivalAt(r Restaurant, in EngineInput) time.Time {
+	if !in.DepartNow {
+		return in.Now
+	}
+	centerLat, centerLng := snapCenter(in.CenterLat, in.CenterLng)
+	dist := Haversine(centerLat, centerLng, r.Lat, r.Lng)
+	var worst float64
+	for _, m := range in.Members {
+		worst = max(worst, travelMinutes(m, dist))
+	}
+	return in.Now.Add(time.Duration(worst * float64(time.Minute)))
+}
+
 func closingFactor(r Restaurant, in EngineInput) TraceEntry {
 	// 比照未知價位先例：未知不排除，也不臆測即將打烊。
 	if len(r.Hours) == 0 {
 		return TraceEntry{Mult: 1.0}
 	}
-	left := r.Hours.MinutesUntilClose(in.Now)
+	at := arrivalAt(r, in)
+	left := r.Hours.MinutesUntilClose(at)
 	if left >= 0 && left < ClosingSoonMinutes {
-		closeAt := in.Now.Add(time.Duration(left) * time.Minute)
+		closeAt := at.Add(time.Duration(left) * time.Minute)
 		return TraceEntry{"closing_soon", ClosingSoonMult,
 			fmt.Sprintf("%s 打烊", closeAt.Format("15:04"))}
 	}
@@ -544,12 +562,12 @@ func Evaluate(in EngineInput) EngineResult {
 		}
 		if in.ShortlistExcluded[rkey(r)] {
 			// 同時命中的硬性條件照列在後，UI 才不會吃掉原本理由；shortlist 固定排第一（落選旗標靠它持久化）
-			kinds, reasons := hardExclude(r, in.Members, restaurantLocalTime(r, in.Now), in.CuisineFilter)
+			kinds, reasons := hardExclude(r, in.Members, restaurantLocalTime(r, arrivalAt(r, in)), in.CuisineFilter)
 			res.Excluded = append(res.Excluded, Excluded{r, append([]string{"shortlist"}, kinds...),
 				strings.Join(append([]string{"初選無人圈選"}, reasons...), "；")})
 			continue
 		}
-		if kinds, reasons := hardExclude(r, in.Members, restaurantLocalTime(r, in.Now), in.CuisineFilter); len(kinds) > 0 {
+		if kinds, reasons := hardExclude(r, in.Members, restaurantLocalTime(r, arrivalAt(r, in)), in.CuisineFilter); len(kinds) > 0 {
 			res.Excluded = append(res.Excluded, Excluded{r, kinds, strings.Join(reasons, "；")})
 			continue
 		}
