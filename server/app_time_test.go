@@ -62,18 +62,22 @@ func TestRoomEvalTime(t *testing.T) {
 	setTestClock(t, func() time.Time { return base })
 	future, past := base.Add(5*time.Hour), base.Add(-2*time.Hour)
 	for _, tc := range []struct {
-		name string
-		meal *time.Time
-		want time.Time
+		name      string
+		meal      *time.Time
+		want      time.Time
+		departNow bool // 現在才出發：引擎營業／快打烊要再加交通時間
 	}{
-		{"未設定採用現在", nil, base},
-		{"未來用餐時間", &future, future},
-		{"過期採用現在", &past, base},
+		{"未設定採用現在", nil, base, true},
+		{"未來用餐時間", &future, future, false},
+		{"過期採用現在", &past, base, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := roomEvalTime(RoomRow{MealTime: tc.meal})
 			if !got.Equal(tc.want) || got.Location() != appLocation {
 				t.Fatalf("roomEvalTime = %v (%v), want %v in %v", got, got.Location(), tc.want, appLocation)
+			}
+			if _, departNow := roomEvalMoment(RoomRow{MealTime: tc.meal}); departNow != tc.departNow {
+				t.Fatalf("roomEvalMoment departNow = %v, want %v", departNow, tc.departNow)
 			}
 		})
 	}

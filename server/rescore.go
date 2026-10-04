@@ -46,8 +46,9 @@ func rescoreRoom(ctx context.Context, tx pgx.Tx, room RoomRow, wx *Weather) (Eng
 	if err != nil {
 		return EngineResult{}, nil, fmt.Errorf("載入本批排除與初選落選: %w", err)
 	}
+	evalAt, departNow := roomEvalMoment(room)
 	result := Evaluate(EngineInput{Restaurants: rs, Members: members,
-		Now: roomEvalTime(room), CenterLat: room.CenterLat, CenterLng: room.CenterLng,
+		Now: evalAt, DepartNow: departNow, CenterLat: room.CenterLat, CenterLng: room.CenterLng,
 		Weather: wx, Votes: votes, Recency: recency, Exposure: exposure, ExposureCounted: exposureCounted,
 		Satisfaction: satisfaction, Exploration: room.Exploration, CuisineFilter: room.CuisineFilter,
 		BatchExcluded: batchExcluded, ShortlistExcluded: shortlistExcluded})
