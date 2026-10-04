@@ -54,6 +54,14 @@ select lives_ok($$delete from room_members where room_id = '76600000-0000-4000-8
 select ok((select delete_version from rooms where id = '76600000-0000-4000-8000-000000000010') > 1,
  'leaving the room signals the remaining members');
 
+insert into auth.users(id,email) values ('76600000-0000-4000-8000-000000000003','rt-delete-c@test.dev');
+insert into room_members(room_id,user_id) values
+ ('76600000-0000-4000-8000-000000000010','76600000-0000-4000-8000-000000000003');
+update rooms set delete_version = 0 where id = '76600000-0000-4000-8000-000000000010';
+delete from auth.users where id = '76600000-0000-4000-8000-000000000003';
+select ok((select delete_version from rooms where id = '76600000-0000-4000-8000-000000000010') > 0,
+ 'account deletion cascading auth.users -> profiles -> room_members still signals the room');
+
 select lives_ok($$delete from rooms where id = '76600000-0000-4000-8000-000000000010'$$,
  'deleting the room cascades into a no-op signal on the vanished row');
 select * from finish();
