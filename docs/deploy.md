@@ -162,6 +162,10 @@ push 到 `main` 時 `deploy-pages.yml` 的 `migrate` job 會自動 `supabase db 
 > `room_candidates.shortlist_excluded`，欄位不存在時搜尋與重算都會失敗，同樣是「新程式對舊 schema」
 > 的不相容。migration 先單獨開 PR 合進 `main`，等 `migrate` job 跑綠，再合程式 PR——Render 不能在欄位存在前部署新 Go。
 
+> 2026-10-04 Realtime 停發 DELETE（`20261004000100_realtime_delete_privacy.sql`，ADR-0011）：
+> 上線後在 SQL Editor 確認 `select pubdelete from pg_publication where pubname = 'supabase_realtime'`
+> 回 `false`；回 `true` 代表有人在 Dashboard 的 Publications 打開 Delete，別房的刪除事件會再次外洩。
+
 ## 2026-09 安全修復部署閘門
 
 這次 migrations `20260905000100`–`20260905000300` **不是新舊版本完全相容的更新**。
