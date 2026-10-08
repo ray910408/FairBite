@@ -5,11 +5,13 @@ const base = 'h-5 w-5 shrink-0'
 
 export function Logo({ className = 'h-9 w-9' }: P) {
   return (
+    // 朱印「吃」：外框實心、內縮一圈細線，像蓋在菜單上的方印
     <svg viewBox="0 0 32 32" aria-hidden="true" className={className}>
-      <rect width="32" height="32" rx="8" className="fill-brand" />
-      <path d="M6 15h20a10 10 0 0 1-20 0Z" fill="#fff" />
-      <rect x="4" y="24.5" width="24" height="3" rx="1.5" fill="#fff" opacity=".85" />
-      <circle cx="16" cy="8" r="2.5" className="fill-brand-soft" />
+      <rect width="32" height="32" rx="3" className="fill-brand-fill" />
+      <rect x="2.5" y="2.5" width="27" height="27" rx="1.5" fill="none" strokeWidth="1"
+        opacity=".75" className="stroke-on-brand" />
+      <text x="16" y="16.5" textAnchor="middle" dominantBaseline="central" fontSize="18"
+        fontWeight="900" className="fill-on-brand font-serif">吃</text>
     </svg>
   )
 }
@@ -101,3 +103,21 @@ export const Star = ({ className = '', filled = true }: { className?: string; fi
     <path d="M12 2.5l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.3l-5.8 3.1 1.1-6.5L2.6 9.3l6.5-.9L12 2.5z" />
   </svg>
 )
+
+export function ArrowUp({ className = base }: P) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>
+      <path d="M12 19V5M5 12l7-7 7 7" />
+    </svg>
+  )
+}
+
+export function ArrowDown({ className = base }: P) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>
+      <path d="M12 5v14M19 12l-7 7-7-7" />
+    </svg>
+  )
+}

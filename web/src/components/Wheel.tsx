@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CandidateRow } from '../lib/types'
 import { formatPercents, sortKept } from '../lib/probability'
-
-const COLORS = ['#c2410c', '#0369a1', '#15803d', '#a16207', '#7e22ce',
-  '#be123c', '#0f766e', '#b91c1c', '#6d28d9', '#4d7c0f', '#0e7490', '#a21caf']
+import { wheelFill } from '../lib/wheelPalette'
 
 const SPIN_MS = 4000
 
@@ -31,7 +29,7 @@ export default function Wheel({ rows, winnerId, onDone }: {
     return kept.map((c, i) => {
       const start = acc
       acc += (c.probability ?? 0) * 360
-      return { c, start, end: acc, color: COLORS[i % COLORS.length] }
+      return { c, start, end: acc, color: wheelFill(i, kept.length) }
     })
   }, [kept])
   const percents = useMemo(() => formatPercents(kept.map(c => c.probability ?? 0)), [kept])
@@ -62,33 +60,36 @@ export default function Wheel({ rows, winnerId, onDone }: {
 
   return (
     <div className="card animate-rise space-y-4">
-      <p className="text-center text-sm text-fg-muted" role="status">轉盤抽選中…</p>
-      <div className="relative mx-auto w-64 max-w-full">
+      <p className="text-center font-serif text-sm tracking-[0.3em] text-fg-muted" role="status">轉盤抽選中…</p>
+      <div className="relative mx-auto w-56 max-w-full">
         <div className="absolute -top-2 left-1/2 z-10 -translate-x-1/2">
-          <svg viewBox="0 0 24 20" aria-hidden="true" className="h-5 w-6 drop-shadow-sm">
+          <svg viewBox="0 0 24 20" aria-hidden="true" className="h-[18px] w-[22px]">
             <path d="M12 20 1 0h22z" className="fill-fg" />
           </svg>
         </div>
-        <svg viewBox="0 0 200 200" aria-hidden="true"
-          className="rounded-full shadow-card ring-4 ring-surface"
+        {/* 印刷菜單的雙圈：墨線、留白、墨線 */}
+        <svg viewBox="0 0 200 200" aria-hidden="true" className="block rounded-full"
           style={{
+            boxShadow: '0 0 0 1px var(--color-rule), 0 0 0 5px var(--color-surface), 0 0 0 6px var(--color-rule)',
             transform: `rotate(${rotation}deg)`,
             transition: `transform ${prefersReduced() ? 0 : SPIN_MS}ms cubic-bezier(0.2, 0.8, 0.2, 1)`,
           }}>
           {slices.map(s => (
             <path key={s.c.restaurant_id} d={arcPath(100, 100, 98, s.start, s.end)}
-              fill={s.color} stroke="white" strokeWidth="1.5" />
+              style={{ fill: s.color, stroke: 'var(--color-surface)' }} strokeWidth="1.5" />
           ))}
-          <circle cx="100" cy="100" r="14" fill="white" />
+          <circle cx="100" cy="100" r="16" strokeWidth="1" className="fill-surface stroke-rule" />
+          <circle cx="100" cy="100" r="4" className="fill-brand" />
         </svg>
       </div>
       <ul className="space-y-1.5 text-sm">
         {slices.map((s, i) => (
-          <li key={s.c.restaurant_id} className="flex items-center gap-2">
-            <span aria-hidden="true" className="inline-block h-3 w-3 shrink-0 rounded-sm"
+          <li key={s.c.restaurant_id} className="flex min-w-0 items-baseline gap-1.5">
+            <span aria-hidden="true" className="inline-block size-2.5 shrink-0"
               style={{ background: s.color }} />
-            <span className="flex-1 truncate">{s.c.restaurants.name}</span>
-            <span className="font-mono text-fg-muted">{percents[i]}</span>
+            <span className="truncate font-serif">{s.c.restaurants.name}</span>
+            <span aria-hidden="true" className="leader" />
+            <span className="font-serif font-bold">{percents[i]}</span>
           </li>
         ))}
       </ul>

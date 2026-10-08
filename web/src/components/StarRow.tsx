@@ -17,7 +17,7 @@ export default function StarRow({ historyId, onRated }: { historyId: string; onR
         {[1, 2, 3, 4, 5].map(n => (
           <button key={n} type="button" aria-label={`${n} 顆星`}
             disabled={busy}
-            className={`flex h-11 w-11 items-center justify-center rounded-xl disabled:opacity-50 ${
+            className={`flex h-11 w-11 items-center justify-center rounded-btn disabled:opacity-50 ${
               n <= preview ? 'text-brand' : 'text-fg-muted'}`}
             onMouseEnter={() => setPreview(n)} onFocus={() => setPreview(n)}
             onClick={async () => {

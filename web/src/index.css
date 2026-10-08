@@ -1,36 +1,126 @@
 @import "tailwindcss";
 
 @theme {
-  /* CJK 走系統字（PingFang TC / 微軟正黑）：零下載、無 FOUT；拉丁字交給 system-ui */
+  /* 內文 CJK 走系統字（PingFang TC / 微軟正黑）：零下載、無 FOUT；拉丁字交給 system-ui */
   --font-sans:
     system-ui, -apple-system, "Segoe UI", "PingFang TC", "Noto Sans TC",
     "Microsoft JhengHei", "Hiragino Sans", sans-serif;
+  /* 只有標題用明體（index.html 載 Noto Serif TC）；字型未到時先用系統明體，FOUT 只在標題 */
+  --font-serif: "Noto Serif TC", "Songti TC", "PMingLiU", serif;
 
-  /* 暖橘（食慾）＋ 信任藍，淺色底 */
-  --color-canvas: #fff7ed;
-  --color-surface: #ffffff;
-  --color-fg: #0f172a;
-  /* slate-600 而非 500：淺暖底 #fff7ed 上 slate-500 只有 4.48:1，差一點過不了 AA */
-  --color-fg-muted: #475569;
-  --color-border: #f2e3d5;
-  /* brand 用 orange-700 而非 orange-600：白字對比 5.2:1，orange-600 只有 3.5:1 */
-  --color-brand: #c2410c;
-  --color-brand-strong: #9a3412;
-  --color-brand-soft: #ffedd5;
-  --color-accent: #2563eb;
-  --color-accent-strong: #1d4ed8;
-  --color-ok: #15803d;
-  --color-ok-soft: #dcfce7;
-  --color-warn: #b45309;
-  --color-warn-soft: #fef3c7;
-  --color-danger: #b91c1c;
-  --color-danger-soft: #fee2e2;
-  --color-ring: #c2410c;
+  /* 菜單本：米紙底、墨字、朱印。深色版（深夜居酒屋）在下方 prefers-color-scheme 覆寫同名 token */
+  --color-canvas: #f4efe4;
+  --color-surface: #fbf8f2;
+  --color-fg: #1f1a17;
+  --color-fg-muted: #5c544c; /* canvas 6.48:1、surface 7.01:1 */
+  --color-border: #d9d0c1;
+  /* rule＝雙線框與粗分隔線；leader＝店名與機率之間的點線 */
+  --color-rule: #1f1a17;
+  --color-leader: #b5ab9a;
+  /* brand 是文字／邊框／機率條用色；brand-fill 是實心按鈕與印章底色。
+     淺色兩者同為朱；深色時文字要亮（#e0725a）、底要深（#8f2a1a），一個 token 撐不住兩種用途 */
+  --color-brand: #a8321e;
+  --color-brand-strong: #7a1f12;
+  --color-brand-soft: #f1e2d3;
+  --color-brand-fill: #a8321e;
+  --color-brand-fill-hover: #8a2817;
+  --color-on-brand: #ffffff; /* 朱底白字 6.69:1 */
+  --color-accent: #2b4a6f;
+  --color-accent-strong: #1f3753;
+  --color-on-accent: #ffffff;
+  --color-ok: #2f6b3a;
+  --color-ok-soft: #e3ecdc;
+  --color-on-ok: #ffffff;
+  --color-warn: #8a5a12;
+  --color-warn-soft: #f6e8c9;
+  /* danger 用胭脂而非朱：和品牌朱同為紅系，色相要拉開，否決才不會像主按鈕 */
+  --color-danger: #8c2244;
+  --color-danger-soft: #f5e1e6;
+  --color-on-danger: #ffffff;
+  --color-ring: #a8321e;
 
-  --radius-card: 1rem;
-  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 8px 24px -14px rgb(124 45 18 / 0.25);
+  --radius-card: 3px;
+  --radius-btn: 2px;
+  --shadow-card: none;
 
   --animate-rise: rise 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  /* 關鍵時刻才動：候選逐行浮現、點線延伸、蓋印。全域 reduced-motion 規則會把它們收成瞬間完成 */
+  --animate-row-in: row-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-lead: lead 0.6s ease-out both;
+  --animate-stamp: stamp 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-stamp-sm: stamp-sm 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* 深夜居酒屋：炭黑底、米白字。所有組合實測 ≥4.5:1（on-* 對各自實心底、文字對 canvas／surface／soft） */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-canvas: #14110f;
+    --color-surface: #1d1a17;
+    --color-fg: #f2ebe1;
+    --color-fg-muted: #a99f92;
+    --color-border: #3a342d;
+    --color-rule: #a99f92;
+    --color-leader: #4a433a;
+    --color-brand: #e0725a;
+    --color-brand-strong: #f0907a;
+    --color-brand-soft: #3b2420;
+    --color-brand-fill: #8f2a1a;
+    --color-brand-fill-hover: #a3341f;
+    --color-on-brand: #f2ebe1;
+    --color-accent: #7f9fd6;
+    --color-accent-strong: #9db5e0;
+    --color-on-accent: #14110f;
+    --color-ok: #7bd88f;
+    --color-ok-soft: #193524;
+    --color-on-ok: #14110f;
+    --color-warn: #e8b45a;
+    --color-warn-soft: #3a2c12;
+    --color-danger: #f08aa0;
+    --color-danger-soft: #3d1a24;
+    --color-on-danger: #14110f;
+    --color-ring: #e0725a;
+  }
+}
+
+/* 轉盤 20 色：依排名取色；淺色版深淺交錯（相鄰必有明暗差），深色版相鄰只靠色相與 surface 描邊分隔；ink 是扇形上編號的字色。
+   淺色任兩色 ΔE76 ≥17、編號對比 ≥6.0；深色任兩色 ≥15、編號對比 ≥4.83。超過 20 格的處理見 lib/wheelPalette.ts */
+:root {
+  --wheel-1: #a8321e;  --wheel-ink-1: #ffffff;
+  --wheel-2: #8fbcd4;  --wheel-ink-2: #1f1a17;
+  --wheel-3: #4f6b3a;  --wheel-ink-3: #ffffff;
+  --wheel-4: #e8a9a0;  --wheel-ink-4: #1f1a17;
+  --wheel-5: #2b4a6f;  --wheel-ink-5: #ffffff;
+  --wheel-6: #d9a441;  --wheel-ink-6: #1f1a17;
+  --wheel-7: #8c2244;  --wheel-ink-7: #ffffff;
+  --wheel-8: #7fc3b3;  --wheel-ink-8: #1f1a17;
+  --wheel-9: #8a4b23;  --wheel-ink-9: #ffffff;
+  --wheel-10: #b9a3cf; --wheel-ink-10: #1f1a17;
+  --wheel-11: #2f6b5a; --wheel-ink-11: #ffffff;
+  --wheel-12: #e8955a; --wheel-ink-12: #1f1a17;
+  --wheel-13: #5e3d6b; --wheel-ink-13: #ffffff;
+  --wheel-14: #a9c27a; --wheel-ink-14: #1f1a17;
+  --wheel-15: #2b2724; --wheel-ink-15: #ffffff;
+  --wheel-16: #d99ab8; --wheel-ink-16: #1f1a17;
+  --wheel-17: #1f5f73; --wheel-ink-17: #ffffff;
+  --wheel-18: #e3d06a; --wheel-ink-18: #1f1a17;
+  --wheel-19: #5a5550; --wheel-ink-19: #ffffff;
+  --wheel-20: #d8c8a8; --wheel-ink-20: #1f1a17;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --wheel-1: #e0725a;  --wheel-2: #8fbcd4;  --wheel-3: #7a9a45;  --wheel-4: #e8a9a0;
+    --wheel-5: #7f9fd6;  --wheel-6: #d9a441;  --wheel-7: #d9708f;  --wheel-8: #7fc3b3;
+    --wheel-9: #b5713f;  --wheel-10: #b9a3cf; --wheel-11: #3f9a78; --wheel-12: #e8955a;
+    --wheel-13: #a98bd0; --wheel-14: #a9c27a; --wheel-15: #a7adb5; --wheel-16: #d99ab8;
+    --wheel-17: #3a9cb8; --wheel-18: #e3d06a; --wheel-19: #8a8378; --wheel-20: #d8c8a8;
+    --wheel-ink-1: #14110f;  --wheel-ink-2: #14110f;  --wheel-ink-3: #14110f;  --wheel-ink-4: #14110f;
+    --wheel-ink-5: #14110f;  --wheel-ink-6: #14110f;  --wheel-ink-7: #14110f;  --wheel-ink-8: #14110f;
+    --wheel-ink-9: #14110f;  --wheel-ink-10: #14110f; --wheel-ink-11: #14110f; --wheel-ink-12: #14110f;
+    --wheel-ink-13: #14110f; --wheel-ink-14: #14110f; --wheel-ink-15: #14110f; --wheel-ink-16: #14110f;
+    --wheel-ink-17: #14110f; --wheel-ink-18: #14110f; --wheel-ink-19: #14110f; --wheel-ink-20: #14110f;
+  }
 }
 
 @keyframes rise {
@@ -44,9 +134,69 @@
   }
 }
 
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 搭配 origin-left：點線從店名往機率方向延伸 */
+@keyframes lead {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* 印章由大縮小壓下、略回彈；最終停在 -10deg 斜蓋 */
+@keyframes stamp {
+  0% {
+    opacity: 0;
+    transform: scale(2.4) rotate(-26deg);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(0.88) rotate(-10deg);
+  }
+  75% {
+    transform: scale(1.05) rotate(-10deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(-10deg);
+  }
+}
+
+@keyframes stamp-sm {
+  0% {
+    opacity: 0;
+    transform: scale(2.2) rotate(-24deg);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(0.9) rotate(-8deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(-8deg);
+  }
+}
+
 @layer base {
   body {
     @apply bg-canvas text-fg antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-serif;
   }
   /* Tailwind v4 preflight 把 button 設成 cursor: default，要自己補回來 */
   button:not(:disabled),
@@ -68,32 +218,55 @@
   }
   /* min-h-11 = 44px 觸控目標 */
   .btn {
-    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-btn px-4
       text-base font-semibold transition-colors duration-150
       disabled:cursor-not-allowed disabled:opacity-50;
   }
   .btn-primary {
-    @apply bg-brand text-white hover:bg-brand-strong;
+    @apply bg-brand-fill text-on-brand hover:bg-brand-fill-hover;
+  }
+  /* 次要動作：墨線框（深色時是淺灰線），和 btn-quiet 同族但語意上是「另一條路」 */
+  .btn-secondary {
+    @apply border border-rule bg-transparent text-fg hover:bg-brand-soft;
   }
   .btn-accent {
-    @apply bg-accent text-white hover:bg-accent-strong;
+    @apply bg-accent text-on-accent hover:bg-accent-strong;
   }
   .btn-quiet {
-    @apply border border-border bg-surface text-fg hover:bg-brand-soft;
+    @apply border border-rule bg-transparent text-fg hover:bg-brand-soft;
   }
   .field {
-    @apply min-h-11 w-full rounded-xl border border-border bg-surface px-3 text-base
+    @apply min-h-11 w-full rounded-btn border border-border bg-surface px-3 text-base
       text-fg transition-colors duration-150 placeholder:text-fg-muted focus:border-brand;
   }
   .label {
     @apply text-sm font-medium text-fg-muted;
   }
   .chip {
-    @apply inline-flex min-h-11 items-center rounded-full border border-border bg-surface
+    @apply inline-flex min-h-11 items-center rounded-btn border border-border bg-surface
       px-4 text-sm transition-colors duration-150 hover:bg-brand-soft;
   }
   .banner {
-    @apply flex items-start gap-2 rounded-xl px-3 py-2 text-sm;
+    @apply flex items-start gap-2 rounded-btn px-3 py-2 text-sm;
+  }
+  /* 朱印章：房間狀態、房主等標記。斜蓋 -4deg，字用明體粗體 */
+  .seal {
+    @apply inline-flex items-center justify-center rounded-[3px] border-2 border-brand px-1.5
+      py-0.5 font-serif font-black tracking-[0.1em] whitespace-nowrap text-brand -rotate-[4deg];
+  }
+  /* 店名……機率 之間的點線；放在 items-baseline 的 flex 列裡，底線會落在基線上 */
+  .leader {
+    @apply min-w-2 flex-1 border-b-2 border-dotted border-leader;
+  }
+  /* 印刷菜單的雙線框：外框一條 rule、內縮 4px 再一條 */
+  .menu-frame {
+    @apply border border-rule bg-surface;
+    box-shadow:
+      inset 0 0 0 4px var(--color-surface),
+      inset 0 0 0 5px var(--color-rule);
+  }
+  .double-rule {
+    border-top: 4px double var(--color-rule);
   }
   /* group-open:rotate-180 在這個 Tailwind 版本沒生成出對應 utility，直接寫 CSS */
   .disclosure-chevron {
@@ -110,6 +283,8 @@
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    /* 逐行浮現用 delay 錯開；不歸零的話 both 會讓元素在 delay 期間保持透明 */
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }

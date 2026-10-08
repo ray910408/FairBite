@@ -27,38 +27,47 @@ import RelocationPanel from '../components/RelocationPanel'
 import ShortlistVotePanel from '../components/ShortlistVotePanel'
 import { GuestRegistrationPrompt } from '../components/GuestRegistrationPrompt'
 import { InviteQRCode } from '../components/InviteQRCode'
-import { Alert, Check, Copy, Logo, Spinner, Users } from '../components/icons'
+import { Alert, Check, Copy, Logo, Spinner } from '../components/icons'
 
 const STEPS = [
-  { key: 'lobby', label: '設定條件' },
-  { key: 'candidates', label: '候選出爐' },
-  { key: 'voting', label: '投票' },
-  { key: 'pending', label: '待確認' },
-  { key: 'decided', label: '定案' },
+  { key: 'lobby', label: '設定條件', numeral: '壹' },
+  { key: 'candidates', label: '候選出爐', numeral: '貳' },
+  { key: 'voting', label: '投票', numeral: '參' },
+  { key: 'pending', label: '待確認', numeral: '肆' },
+  { key: 'decided', label: '定案', numeral: '伍' },
 ] as const
 
 const SEARCH_SLOW_STATUS_MS = 3000
+
+// 菜單式狀態列：成員名……狀態。ready 與初選圈滿共用 ok 色
+const MEMBER_STATUS = 'inline-flex items-center gap-1 whitespace-nowrap text-sm'
+
+// 房內三組 segmented control：墨線框、選中反白（同首頁用餐時間）
+const SEGMENTED = 'divide-x divide-rule rounded-btn border border-rule'
+function segment(active: boolean) {
+  return `min-h-11 text-sm font-semibold tracking-[0.1em] transition-colors duration-150 ${
+    active ? 'bg-fg text-canvas' : 'text-fg enabled:hover:bg-brand-soft'}`
+}
 
 function Stepper({ status }: { status: Room['status'] }) {
   // relocating／shortlisting 不是獨立步驟：借用投票／候選出爐那格並改標籤
   const current = STEPS.findIndex(s => s.key === (
     status === 'relocating' ? 'voting' : status === 'shortlisting' ? 'candidates' : status))
+  // 320px 寬：五格不畫連接線、靠 justify-between 撐開，字距縮到 gap-0.5 才放得下
   return (
-    <ol className="flex items-center gap-1 text-xs">
+    <ol className="flex items-center justify-between gap-1 text-xs">
       {STEPS.map((s, i) => (
-        <li key={s.key} className="flex flex-1 items-center gap-1">
-          <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-semibold ${
-            i < current ? 'bg-ok text-white'
-              : i === current ? 'bg-brand text-white'
-              : 'bg-brand-soft text-brand-strong/60'
-          }`}>
-            {i < current ? <Check className="h-3.5 w-3.5" /> : i + 1}
-          </span>
-          <span className={i === current ? 'font-semibold text-fg' : 'text-fg-muted'}>
+        <li key={s.key} aria-current={i === current ? 'step' : undefined}
+          className="flex items-center gap-0.5 whitespace-nowrap">
+          {i < current ? <Check className="h-3.5 w-3.5 shrink-0 text-ok" />
+            : <span aria-hidden="true" className={`font-serif ${i === current ? 'font-black text-brand' : 'text-fg-muted'}`}>
+              {s.numeral}
+            </span>}
+          <span className={i === current ? 'font-bold text-brand underline decoration-2 underline-offset-[5px]'
+            : 'text-fg-muted'}>
             {s.key === 'voting' && status === 'relocating' ? '換地點'
               : s.key === 'candidates' && status === 'shortlisting' ? '初選' : s.label}
           </span>
-          {i < STEPS.length - 1 && <span className="h-px flex-1 bg-border" />}
         </li>
       ))}
     </ol>
@@ -69,10 +78,8 @@ function Stepper({ status }: { status: Room['status'] }) {
 function pickBadge(count: number) {
   const done = count >= SHORTLIST_PICK_MIN
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
-      done ? 'bg-ok-soft text-ok' : 'bg-brand-soft/60 text-fg-muted'
-    }`}>
-      {done && <Check className="h-3.5 w-3.5" />}
+    <span className={`${MEMBER_STATUS} ${done ? 'text-ok' : 'text-fg-muted'}`}>
+      {done && <Check className="h-3.5 w-3.5 shrink-0" />}
       {done ? `已圈 ${count} 家` : `圈選中 ${count}/${SHORTLIST_PICK_MIN}`}
     </span>
   )
@@ -445,8 +452,9 @@ export default function RoomPage() {
       {/* dialog 開著時整塊背景 inert：fixed 遮罩擋得住指標（elementFromPoint 實測），
           對 tab 順序毫無作用——沒有它鍵盤使用者可以 tab 到「開始搜尋餐廳」按 Enter（Codex P2） */}
       <div className="min-h-screen" inert={!!leaveDialog}>
-      <header className="sticky top-0 z-20 border-b border-border bg-canvas/85 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-lg items-center gap-3 p-3">
+      <header className="sticky top-0 z-20 bg-canvas/85 backdrop-blur">
+        {/* 320px 放不下最長的印章（等待選新地點）時讓印章換行，不撐出水平捲動 */}
+        <div className="mx-auto flex w-full max-w-lg flex-wrap items-center gap-x-2 gap-y-1 p-3 pb-2 sm:gap-x-3">
           {/* 回首頁＝離席（ADR-0007），代價不可逆——攔下導覽先查再確認 */}
           <Link to="/" aria-label="回首頁" ref={leaveTriggerRef}
             aria-busy={leaveChecking} onClick={askLeave}
@@ -455,18 +463,19 @@ export default function RoomPage() {
           </Link>
           {/* 12 碼在 320px 塞不下 text-lg + 0.25em 字距，小螢幕縮小、sm 以上維持原樣 */}
           <button onClick={copyCode}
-            className="btn btn-quiet min-h-11 gap-2 px-2 font-mono text-sm sm:px-3 sm:text-lg sm:tracking-[0.25em]">
+            className="btn btn-quiet min-h-11 gap-1.5 px-1.5 font-mono text-sm sm:gap-2 sm:px-3 sm:text-lg sm:tracking-[0.25em]">
             {room.code}
             {copied ? <Check className="h-4 w-4 text-ok" /> : <Copy className="h-4 w-4 text-fg-muted" />}
           </button>
           <span className="sr-only" aria-live="polite">{copied ? '邀請碼已複製' : ''}</span>
           <Link to="/history" className="btn btn-quiet min-h-11 px-1.5 text-xs sm:px-2 sm:text-sm">足跡</Link>
-          <span className="ml-auto whitespace-nowrap rounded-full bg-brand-soft px-2 sm:px-3 py-1 text-xs font-semibold text-brand-strong">
+          <span className="seal ml-auto text-xs min-[375px]:text-sm">
             {{ lobby: '等待中', candidates: '候選已出爐', shortlisting: '初選中', voting: '投票中', relocating: '等待選新地點', pending: '抽中待確認', decided: '已定案' }[room.status]}
           </span>
         </div>
-        <div className="mx-auto w-full max-w-lg px-3 pb-3">
+        <div className="mx-auto w-full max-w-lg px-3">
           <Stepper status={room.status} />
+          <div className="double-rule mt-3" />
         </div>
       </header>
 
@@ -500,31 +509,26 @@ export default function RoomPage() {
           </p>
         )}
 
-        <section className="card animate-rise">
-          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-fg-muted">
-            <Users className="h-4 w-4" />
-            成員（{members.length}）
-          </h2>
-          <ul className="space-y-2">
+        <section className="animate-rise">
+          <h2 className="mb-1.5 text-[15px] font-bold">成員（{members.length}）</h2>
+          <ul>
             {members.map(m => (
-              <li key={m.user_id} className="flex items-center gap-2 text-sm">
-                <span aria-hidden="true"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-soft text-xs font-semibold text-brand-strong">
-                  {(m.profiles?.display_name ?? '成').slice(0, 2)}
-                </span>
-                <span className="flex-1 truncate">
+              <li key={m.user_id} className="flex items-baseline gap-1.5 py-1.5">
+                <span className="min-w-0 truncate font-serif font-medium">
                   {m.profiles?.display_name ?? '成員'}
-                  {m.user_id === room.host_id && (
-                    <span className="ml-1 text-xs text-fg-muted">（房主）</span>
-                  )}
                 </span>
+                <span aria-hidden="true" className="leader" />
+                {m.user_id === room.host_id && (
+                  // 括號只給報讀器：印章裡只蓋「房主」兩字
+                  <span className="seal px-1 py-0 text-xs">
+                    <span className="sr-only">（</span>房主<span className="sr-only">）</span>
+                  </span>
+                )}
                 {room.status === 'shortlisting' ? (
                   pickBadge(picksByMember[m.user_id] ?? 0)
                 ) : m.user_id !== room.host_id && (
-                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
-                    m.ready ? 'bg-ok-soft text-ok' : 'bg-brand-soft/60 text-fg-muted'
-                  }`}>
-                    {m.ready && <Check className="h-3.5 w-3.5" />}
+                  <span className={`${MEMBER_STATUS} ${m.ready ? 'text-ok' : 'text-fg-muted'}`}>
+                    {m.ready && <Check className="h-3.5 w-3.5 shrink-0" />}
                     {m.ready ? '已準備' : '設定中'}
                   </span>
                 )}
@@ -563,13 +567,11 @@ export default function RoomPage() {
             <p className="mb-3 text-xs text-fg-muted">
               檔位依成員的同席紀錄調整機率；大家開始用這裡抽餐廳後才會逐漸生效
             </p>
-            <div className="grid grid-cols-3 gap-1 rounded-xl bg-brand-soft p-1">
+            <div className={`grid grid-cols-3 ${SEGMENTED}`}>
               {EXPLORATION_OPTIONS.map(([key, label]) => (
                 <button key={key} type="button" aria-pressed={room.exploration === key}
                   disabled={!isHost || searching}
-                  className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
-                    room.exploration === key ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
-                  } disabled:cursor-default`}
+                  className={`${segment(room.exploration === key)} disabled:cursor-default`}
                   onClick={() => saveRoomSetting({ exploration: key }, '探索檔位更新失敗')}>
                   {label}
                 </button>
@@ -586,22 +588,16 @@ export default function RoomPage() {
             </p>
             {isHost && (
               <div className="space-y-2">
-                <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
+                <div className={`grid grid-cols-2 ${SEGMENTED}`}>
                   <button type="button" aria-pressed={room.meal_time === null && !editingCustom}
                     disabled={searching}
-                    className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
-                      room.meal_time === null && !editingCustom
-                        ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
-                    }`}
+                    className={segment(room.meal_time === null && !editingCustom)}
                     onClick={() => saveMealTime(null)}>
                     馬上出發
                   </button>
                   <button type="button" aria-pressed={room.meal_time !== null || editingCustom}
                     disabled={searching}
-                    className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
-                      room.meal_time !== null || editingCustom
-                        ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
-                    }`}
+                    className={segment(room.meal_time !== null || editingCustom)}
                     onClick={() => {
                       cancelPendingMealTime()
                       setEditingCustom(true)
@@ -651,13 +647,11 @@ export default function RoomPage() {
               開啟後只保留符合成員菜系偏好的店；大家都沒選菜系時不會作用
               {!isHost && '（由房主設定）'}
             </p>
-            <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
+            <div className={`grid grid-cols-2 ${SEGMENTED}`}>
               {([[false, '關閉'], [true, '開啟']] as const).map(([value, label]) => (
                 <button key={label} type="button" aria-pressed={room.cuisine_filter === value}
                   disabled={!isHost || searching}
-                  className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
-                    room.cuisine_filter === value ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
-                  } disabled:cursor-default`}
+                  className={`${segment(room.cuisine_filter === value)} disabled:cursor-default`}
                   onClick={() => saveRoomSetting({ cuisine_filter: value }, '菜系過濾更新失敗')}>
                   {label}
                 </button>
@@ -890,7 +884,7 @@ export default function RoomPage() {
             </button>
             {/* 使用者在這裡已經看過後果：帶旗標過去讓 HomePage mount 直接退房，不再問第二次 */}
             <Link to="/" state={{ leaveConfirmed: true }}
-              className="btn w-full bg-danger text-white sm:flex-1">離開房間</Link>
+              className="btn w-full bg-danger text-on-danger sm:flex-1">離開房間</Link>
           </>
         ),
         children: LeaveRoomsBody({ target: leaveDialog }),

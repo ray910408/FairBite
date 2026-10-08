@@ -217,9 +217,9 @@ async function setConditionsAndReady(page: Page, budget: number, distance = 3000
 }
 
 function votingCard(page: Page, restaurantName: string) {
-  return page.locator('div.card')
+  return page.getByTestId('candidate-row')
     .filter({ has: page.getByText(restaurantName, { exact: true }) })
-    .filter({ has: page.getByRole('button', { name: /^👍 贊成/ }) })
+    .filter({ has: page.getByRole('button', { name: /^贊成/ }) })
 }
 
 function excludedRow(page: Page, restaurantName: string) {
@@ -507,9 +507,7 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     expect(eventIndex('guest-ready:complete')).toBeLessThan(eventIndex('search:start'))
     expect(eventIndex('host-conditions:complete')).toBeLessThan(eventIndex('search:start'))
     expect(eventIndex('room-setting:complete')).toBeLessThan(eventIndex('search:start'))
-    const restaurantNames = await b
-      .locator('div.card.animate-rise.space-y-2.p-3 span.flex-1.font-semibold')
-      .allInnerTexts()
+    const restaurantNames = await b.getByTestId('candidate-name').allInnerTexts()
     const keptCount = restaurantNames.length
     expect(keptCount).toBeGreaterThan(0)
     await expect(candidateHeadingA).toHaveText(`候選餐廳（${keptCount}）`)
@@ -562,13 +560,13 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await a.getByRole('button', { name: '開始投票' }).click()
     const upName = restaurantNames[0]
     await expect(votingCard(b, upName)
-      .getByRole('button', { name: '👍 贊成', exact: true })).toBeVisible()
+      .getByRole('button', { name: '贊成', exact: true })).toBeVisible()
 
     // B 對指定餐廳投贊成 → A 在同名卡片看到真實按鈕文案與票數。
     await votingCard(b, upName)
-      .getByRole('button', { name: '👍 贊成', exact: true }).click()
+      .getByRole('button', { name: '贊成', exact: true }).click()
     await expect(votingCard(a, upName)
-      .getByRole('button', { name: '👍 贊成（1）', exact: true })).toBeVisible()
+      .getByRole('button', { name: '贊成（1）', exact: true })).toBeVisible()
     await expect(votingCard(a, upName).getByText(/1 張贊成票/)).toBeVisible()
 
     // BUG-002：同店 up 與 veto 是獨立列。兩端 refresh 後收回 veto，up tally 必須仍是 1。
@@ -581,9 +579,9 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await retractVeto(b, upName)
     await Promise.all([a.reload(), b.reload()])
     await expect(votingCard(a, upName)
-      .getByRole('button', { name: '👍 贊成（1）', exact: true })).toBeVisible()
+      .getByRole('button', { name: '贊成（1）', exact: true })).toBeVisible()
     await expect(votingCard(b, upName)
-      .getByRole('button', { name: '👍 贊成（1）', exact: true })).toBeVisible()
+      .getByRole('button', { name: '贊成（1）', exact: true })).toBeVisible()
 
     // D10 #1：候選足夠時用滿 B 的兩個否決額度；否則驗證唯一可達變體。
     let quotaVariant: string
@@ -837,9 +835,7 @@ test('全否決擋抽選（嚴格條件房）', async ({ browser }) => {
     await expect(candidateHeadingA).toBeVisible()
     await expect(candidateHeadingB).toBeVisible()
     await expect(b.getByText('餐廳資料 Powered by Google', { exact: true })).toHaveCount(0)
-    const restaurantNames = await b
-      .locator('div.card.animate-rise.space-y-2.p-3 span.flex-1.font-semibold')
-      .allInnerTexts()
+    const restaurantNames = await b.getByTestId('candidate-name').allInnerTexts()
     const keptCount = restaurantNames.length
     expect(keptCount).toBeGreaterThan(0)
     expect(keptCount).toBeLessThanOrEqual(4)

@@ -228,48 +228,57 @@ export default function HomePage() {
       {/* dialog 開著時整塊背景 inert：fixed 遮罩擋得住指標，對 tab 順序毫無作用——
           沒有它鍵盤使用者可以 tab 到「建立房間」按 Enter，繞過還沒決定的退房（Codex P2） */}
       <div className="min-h-screen" inert={!!leaveTarget}>
-      <header className="mx-auto flex w-full max-w-md items-center justify-between p-4">
-        <div className="flex items-center gap-2">
-          <Logo className="h-8 w-8" />
-          <span className="text-lg font-bold">今天吃什麼</span>
-        </div>
-        <div className="flex flex-col items-end gap-1">
+      <header className="mx-auto w-full max-w-md px-4 pt-4">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Link to="/history" className="btn btn-quiet min-h-11 px-3 text-sm">足跡</Link>
-          {/* 登出走同一道 leavePending 閘門（比照建房/加入）：查房籍還在飛、或確認 dialog
-              開著時登出，App.tsx 的 auth listener 會卸載本頁，doLeave() 永遠不會執行，
-              伺服器端房籍留著——該使用者變成幽靈成員，條件與票繼續約束房間盤面。
-              閘門不會鎖死：fetchLeaveRooms 有 5 秒逾時，逾時也會開出 dialog，
-              兩顆按鈕都會讓 leavePending settle（roomMembership.test.ts 釘住那條出口） */}
-          <button className="btn btn-quiet min-h-11 px-3 text-sm" disabled={leavePending}
-            onClick={() => supabase.auth.signOut()}>
-            <LogOut className="h-4 w-4" />
-            登出
-          </button>
+            <Logo className="h-8 w-8" />
+            {/* 320px 要和兩顆按鈕並排：手機 text-lg，sm 以上才放大 */}
+            <span className="font-serif text-lg font-black tracking-[0.12em] whitespace-nowrap sm:text-xl">今天吃什麼</span>
           </div>
-          {leavePending && (
-            <p role="status" className="max-w-52 text-right text-xs text-fg-muted">
-              正在確認房間狀態，確認後才能登出
-            </p>
-          )}
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-1.5">
+              <Link to="/history" className="btn btn-quiet min-h-11 px-3 text-sm">足跡</Link>
+              {/* 登出走同一道 leavePending 閘門（比照建房/加入）：查房籍還在飛、或確認 dialog
+                  開著時登出，App.tsx 的 auth listener 會卸載本頁，doLeave() 永遠不會執行，
+                  伺服器端房籍留著——該使用者變成幽靈成員，條件與票繼續約束房間盤面。
+                  閘門不會鎖死：fetchLeaveRooms 有 5 秒逾時，逾時也會開出 dialog，
+                  兩顆按鈕都會讓 leavePending settle（roomMembership.test.ts 釘住那條出口） */}
+              <button className="btn btn-quiet min-h-11 px-3 text-sm" disabled={leavePending}
+                onClick={() => supabase.auth.signOut()}>
+                <LogOut className="h-4 w-4" />
+                登出
+              </button>
+            </div>
+            {leavePending && (
+              <p role="status" className="max-w-52 text-right text-xs text-fg-muted">
+                正在確認房間狀態，確認後才能登出
+              </p>
+            )}
+          </div>
         </div>
+        <div className="double-rule mt-4" />
       </header>
 
       <main className="mx-auto w-full max-w-md space-y-4 p-4">
         <CustomWheel />
-        <section className="card animate-rise space-y-3 bg-linear-to-b from-brand-soft to-surface">
-          <h1 className="text-2xl font-bold tracking-tight">開一場聚餐決策</h1>
-          <p className="text-sm text-fg-muted">
+        <section className="card animate-rise space-y-4 p-5">
+          <div aria-hidden="true" className="flex items-center gap-2.5 text-xs tracking-[0.3em] text-brand">
+            本日聚餐
+            <span className="h-px flex-1 bg-brand/30" />
+          </div>
+          <h1 className="text-3xl leading-tight font-black tracking-[0.04em]">開一場聚餐決策</h1>
+          <p className="text-sm leading-relaxed text-fg-muted">
             選好出發點與用餐時間建立房間，把邀請碼給大家，各自設好條件就能開始搜尋。
           </p>
           {authState === 'member' && <LocationPicker value={departure} onChange={handleDepartureChange} />}
           {authState === 'member' && <div className="space-y-2">
-            <span className="text-sm font-semibold text-fg-muted">用餐時間</span>
-            <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
+            <span className="block font-serif text-[15px] font-bold">用餐時間</span>
+            {/* 墨線框 segmented control：選中反白（同房內設定） */}
+            <div className="grid grid-cols-2 divide-x divide-rule rounded-btn border border-rule">
               {([['now', '馬上出發'], ['custom', '自訂時間']] as const).map(([key, label]) => (
                 <button key={key} type="button" aria-pressed={mealMode === key}
-                  className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
-                    mealMode === key ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
+                  className={`min-h-11 text-sm font-semibold tracking-[0.1em] transition-colors duration-150 ${
+                    mealMode === key ? 'bg-fg text-canvas' : 'text-fg hover:bg-brand-soft'
                   }`}
                   onClick={() => { setMealMode(key); setCreateError('') }}>
                   {label}
@@ -407,7 +416,7 @@ export default function HomePage() {
                 <button type="button" autoFocus className="btn btn-quiet w-full"
                   onClick={() => window.location.reload()}>重新整理再試</button>
               )}
-              <button type="button" className="btn w-full bg-danger text-white"
+              <button type="button" className="btn w-full bg-danger text-on-danger"
                 onClick={confirmLeave}>離開房間</button>
             </>
           ),

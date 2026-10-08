@@ -555,11 +555,11 @@ describe('ConditionsForm 選取樣式', () => {
     mocks.refIndex = 0
   })
 
-  it('選取的交通方式使用既有品牌色 classes', async () => {
+  it('選取的交通方式使用品牌實心色 classes（fill／on 成對，深色模式才看得到字）', async () => {
     const { default: ConditionsForm } = await import('./ConditionsForm')
     const walking = findButton(ConditionsForm({ searchVersion: 7, me, isHost: true }), '步行')
     expect(walking.props?.className).toContain(
-      'border-brand bg-brand text-white hover:bg-brand-strong',
+      'border-brand bg-brand-fill text-on-brand hover:bg-brand-fill-hover',
     )
   })
 })

@@ -166,7 +166,7 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
             <button key={v} type="button" aria-pressed={form.cuisines.includes(v)}
               disabled={frozen}
               className={`chip ${form.cuisines.includes(v)
-                ? 'border-brand bg-brand text-white hover:bg-brand-strong' : ''}`}
+                ? 'border-brand bg-brand-fill text-on-brand hover:bg-brand-fill-hover' : ''}`}
               onClick={() => save({ cuisines: toggle(form.cuisines, v) })}>{label}</button>
           ))}
         </div>
@@ -180,7 +180,7 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
             <button key={v} type="button" aria-pressed={form.dietary.includes(v)}
               disabled={frozen}
               className={`chip ${form.dietary.includes(v)
-                ? 'border-danger bg-danger text-white hover:bg-danger' : ''}`}
+                ? 'border-danger bg-danger text-on-danger hover:bg-danger' : ''}`}
               onClick={() => save({ dietary: toggle(form.dietary, v) })}>{label}</button>
           ))}
         </div>
@@ -206,7 +206,7 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
             <button key={v} type="button" aria-pressed={form.transport === v}
               disabled={frozen}
               className={`chip flex-1 justify-center ${form.transport === v
-                ? 'border-brand bg-brand text-white hover:bg-brand-strong' : ''}`}
+                ? 'border-brand bg-brand-fill text-on-brand hover:bg-brand-fill-hover' : ''}`}
               onClick={() => save({ transport: v })}>{label}</button>
           ))}
         </div>
@@ -216,7 +216,7 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
         <button type="button" aria-pressed={form.ready}
           disabled={disabled}
           className={`btn w-full ${form.ready
-            ? 'bg-ok text-white hover:bg-ok/90' : 'btn-quiet'}`}
+            ? 'bg-ok text-on-ok hover:bg-ok/90' : 'btn-quiet'}`}
           onClick={() => toggleReady()}>
           {form.ready && <Check className="h-5 w-5" />}
           {form.ready ? '已準備（點擊取消）' : '我準備好了'}

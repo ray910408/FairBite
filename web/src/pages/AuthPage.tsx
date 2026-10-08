@@ -178,11 +178,11 @@ export default function AuthPage() {
       </div>
 
       <div className="card animate-rise space-y-4">
-        <div className="grid grid-cols-2 gap-1 rounded-xl bg-brand-soft p-1">
+        <div className="grid grid-cols-2 divide-x divide-rule rounded-btn border border-rule">
           {(['login', 'register'] as const).map(m => (
             <button key={m} type="button" aria-pressed={mode === m}
-              className={`min-h-11 rounded-lg text-sm font-semibold transition-colors duration-150 ${
-                mode === m ? 'bg-surface text-brand shadow-sm' : 'text-brand-strong'
+              className={`min-h-11 text-sm font-semibold tracking-widest transition-colors duration-150 ${
+                mode === m ? 'bg-fg text-surface' : 'text-fg hover:bg-brand-soft'
               }`}
               onClick={() => {
                 if (mode === m) return

@@ -147,9 +147,9 @@ export default function HistoryPage() {
 
         {state.phase === 'ready' && total > 0 && (
           <>
-            {/* hero 彙總卡（design review D3）：比照 HomePage 開場卡／ResultCard 的
-                brand-soft 漸層；h1 入卡、總餐數為唯一主數字，已評／平均降次要 */}
-            <section className="card animate-rise space-y-3 bg-linear-to-b from-brand-soft to-surface">
+            {/* hero 彙總卡（design review D3）：比照 HomePage 開場卡的平面紙卡；
+                h1 入卡、總餐數為唯一主數字，已評／平均降次要 */}
+            <section className="card animate-rise space-y-3">
               <h1 className="text-2xl font-bold tracking-tight">足跡</h1>
               <div>
                 <p className="text-3xl font-bold">
@@ -171,8 +171,8 @@ export default function HistoryPage() {
                   {summary.cuisineTop.map(([label, n]) => (
                     <div key={label} className="flex items-center gap-2 text-sm">
                       <span className="w-12 shrink-0">{label}</span>
-                      <div className="h-2 flex-1 rounded-full bg-brand-soft">
-                        <div className="h-2 rounded-full bg-brand"
+                      <div className="h-2 flex-1 bg-brand-soft">
+                        <div className="h-2 bg-brand"
                           style={{ width: `${(n / summary.cuisineTop[0][1]) * 100}%` }} />
                       </div>
                       <span className="w-6 shrink-0 text-right text-xs text-fg-muted">{n}</span>
@@ -212,7 +212,7 @@ export default function HistoryPage() {
                             <span>{formatDay(r.decided_at)}</span>
                             {knownCuisineLabels(r.restaurants?.cuisine_tags ?? [])
                               .slice(0, 3).map(label => (
-                                <span key={label} className="rounded-full bg-brand-soft px-2 py-0.5">
+                                <span key={label} className="rounded-btn bg-brand-soft px-2 py-0.5">
                                   {label}
                                 </span>
                               ))}
@@ -279,7 +279,7 @@ export default function HistoryPage() {
               </button>
               {/* 使用者在這裡已經看過後果：帶旗標過去讓 HomePage mount 直接退房，不再問第二次 */}
               <Link to="/" state={{ leaveConfirmed: true }}
-                className="btn w-full bg-danger text-white">仍要回首頁</Link>
+                className="btn w-full bg-danger text-on-danger">仍要回首頁</Link>
             </>
           ),
           children: LeaveRoomsBody({ target: leaveDialog }),
