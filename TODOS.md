@@ -59,7 +59,9 @@
 - **Why:** 品牌資產與規範可能更新，正式上線前需以當時版本做最後確認。
 - **Depends on:** hosted 正式上線計畫。
 
-### limiter map TTL 清理（hosted 前）
+### ~~limiter map TTL 清理（hosted 前）~~
+
+已結案（7820d26，2026-09-06）：`limiterStore` 每分鐘回收閒置滿一分鐘且額度已回滿的 bucket，並以 `limiterMaxEntries`（10,000）封頂；2026-10-08 查證。原始評估：
 
 - **What:** `server/handlers.go` 的 `limiterStore` per-user map 加 TTL 清理（程式內 ponytail 註解已標「P2 部署時加」）。
 - **Why:** 長時間運行的 hosted 部署下，每個曾出現的 user id 永久佔一個 limiter → 緩慢記憶體洩漏。本機/demo 無感。
@@ -121,14 +123,14 @@ feat/phase-1 全分支 final review 的 DEFER-P2 批次。前三項優先（安�
 
 優先：
 
-1. **join_room 走 PostgREST，不受應用層限流** — Go 的 rate limiter 只護 `/api/*`；join_room 是 RPC 直打 PostgREST，邀請碼有列舉面。要在 DB 層或 gateway 補限流。
+1. ~~**join_room 走 PostgREST，不受應用層限流** — Go 的 rate limiter 只護 `/api/*`；join_room 是 RPC 直打 PostgREST，邀請碼有列舉面。要在 DB 層或 gateway 補限流。~~ — 已解決：`join_room` 在 DB 層以 `join_attempts` 限每人每分鐘 10 次（f7d070c），2026-09-20 起 `resolve_room_invite` 共用同一額度（55a7944）；2026-10-08 以本機 DB 查證。
 2. ~~**react-router RSC CVE（GHSA-qwww-vcr4-c8h2）為 production dep**~~ — 已解決：升級至 7.18.2，2026-08-09 驗證 `npm audit` clean。
-3. **rooms 欄級 grant + 平台預設 TRUNCATE revoke** — 現行 UPDATE grant 比意圖粗（可改 created_at）；anon/authenticated 持有平台預設 TRUNCATE（NOLOGIN + PostgREST 不發，目前不可達）。
+3. ~~**rooms 欄級 grant + 平台預設 TRUNCATE revoke** — 現行 UPDATE grant 比意圖粗（可改 created_at）；anon/authenticated 持有平台預設 TRUNCATE（NOLOGIN + PostgREST 不發，目前不可達）。~~ — 已解決：authenticated 對 `rooms` 只剩 `exploration`、`meal_time`、`cuisine_filter` 三欄 UPDATE，anon/authenticated 在 public schema 沒有任何 TRUNCATE 授權（f7d070c 起）；2026-10-08 以本機 DB 查證。
 
 其餘：
 
 4. `NewVerifier` 的 `len(secret) < 32` 拒啟動分支無測試。
-5. `guard_room_columns` 無 `set search_path`（不可利用，linter 會唸）。（P2 計畫已吸收：Task 2 重寫該函式時順手補，2026-08-06 eng review D5）
+5. ~~`guard_room_columns` 無 `set search_path`（不可利用，linter 會唸）。（P2 計畫已吸收：Task 2 重寫該函式時順手補，2026-08-06 eng review D5）~~ — 已解決：函式定義已帶 `SET search_path TO 'public'`；2026-10-08 以本機 DB 查證。
 6. `handle_new_user` 保留預設 `EXECUTE TO PUBLIC`（returns trigger 不可直呼，僅不一致）。
 7. grant 矩陣 pin 只盯 `grantee='authenticated'`，grant to PUBLIC 的放寬不會觸發。
 8. `MinutesUntilClose` 的 `-1`（未營業）路徑無測試。
@@ -149,13 +151,13 @@ QA 對象 https://ray910408.github.io/FairBite/#/auth（headless，test 帳號�
 
 - **ISSUE-002（High，未修）預設條件產生退化結果集** — 全預設（NT$300 上限／800m／步行）在台北 101 搜尋，15 家排除 14 家、全部理由都是「超過 NT$300」，只剩 1 家候選、抽中機率 100%。轉盤只有一個選項等於產品主張不成立，且 App 沒有任何「候選過少、建議放寬條件」的提示就讓使用者走到投票與轉盤。需要產品決策：調預設值、依商圈動態調整、或加候選過少的引導。
 
-- **ISSUE-005（Low）足跡頁把 3/5 星畫成 3 顆滿星** — `HistoryPage.tsx` 的清單列只渲染 N 顆實心星、沒有空心星做 5 星刻度，3 分讀起來像滿分。摘要區的「平均 3.0 ★」正確，只有列表圖示缺刻度。`icons.tsx` 的 `Star` 已有 `filled` prop（PR #17 加的），補刻度是小改。
+- ~~**ISSUE-005（Low）足跡頁把 3/5 星畫成 3 顆滿星** — `HistoryPage.tsx` 的清單列只渲染 N 顆實心星、沒有空心星做 5 星刻度，3 分讀起來像滿分。摘要區的「平均 3.0 ★」正確，只有列表圖示缺刻度。`icons.tsx` 的 `Star` 已有 `filled` prop（PR #17 加的），補刻度是小改。~~ — 已修（c8d9c57，2026-08-22）：清單列固定畫 5 顆星，未達分數者為空心；2026-10-08 查證。
 
 - **ISSUE-006（Low，間歇）冷啟動首次登入 `dining_history?rating=lte.2` 回 401** — 全新瀏覽器 process 首次登入時觀察到一次（該次首頁 HTML 載入 7489ms），相鄰的同表查詢是 200。像是這支請求在 token 掛上去前就送出的競態；畫面無提示，只有 console 一行 401，影響是「避開不喜歡的菜系」訊號被靜默丟掉。清 localStorage 重登／登出重登／重整各測一次都無法重現。
 
 - **ISSUE-007（Low）邀請碼錯誤橫幅不會消失** — 「房間不存在或已開始」在首頁一直停留到換路由，中間展開地圖、搜尋地點、切用餐時間、觸發另一則驗證訊息期間都還在，跟當下操作已無關。
 
-- **ISSUE-008（Low）邀請碼欄位無長度／格式驗證** — 實際碼是 12 碼，輸入 6 碼仍會送出 `rpc/join_room`。前端可先擋掉省一次往返。
+- ~~**ISSUE-008（Low）邀請碼欄位無長度／格式驗證** — 實際碼是 12 碼，輸入 6 碼仍會送出 `rpc/join_room`。前端可先擋掉省一次往返。~~ — 已修（d217f63，2026-08-22）：邀請碼欄位在 `<form>` 內用原生 `minLength`／`maxLength` 12 與 hex `pattern` 驗證，不足 12 碼不會送出；2026-10-08 查證。
 
 - **ISSUE-009（Low）登入切註冊分頁會帶走密碼值** — Email 帶過去合理，密碼帶過去容易讓使用者在沒察覺下用一組錯的密碼建帳號。錯誤訊息本身有正確清掉。
 
