@@ -24,7 +24,10 @@ export function InviteQRCode({ code }: { code: string }) {
   const [copyState, setCopyState] = useState<CopyState>('idle')
   return (
     <div className="flex flex-col items-center gap-2">
-      <QRCodeSVG value={url} size={176} marginSize={2} title={`加入房間 ${code}`} />
+      {/* 唯一允許的 raw 色：QR 必須淺底深碼＋白色 quiet zone，深色主題反相會讓相機掃不到 */}
+      <div className="rounded-btn border border-border bg-white p-2">
+        <QRCodeSVG value={url} size={176} marginSize={2} title={`加入房間 ${code}`} />
+      </div>
       <p className="text-center text-xs text-fg-muted">用手機相機掃描加入房間</p>
       <button type="button" className="btn btn-quiet w-full"
         onClick={async () => setCopyState(await copyInviteLink(url))}>複製邀請連結</button>

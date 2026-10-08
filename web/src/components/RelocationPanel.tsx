@@ -29,7 +29,7 @@ export default function RelocationPanel({
       <section className="card space-y-2" aria-labelledby="relocation-vote-title">
         <h2 id="relocation-vote-title" className="text-base font-semibold">要改用餐地點嗎？</h2>
         <label className="flex min-h-11 items-center gap-3 text-sm">
-          <input type="checkbox" className="h-5 w-5" checked={wantChange}
+          <input type="checkbox" className="h-5 w-5 accent-brand" checked={wantChange}
             aria-checked={wantChange} disabled={busy}
             onChange={e => onVote(e.target.checked)} />
           <span>我想換地點</span>

@@ -198,7 +198,7 @@ describe('RoomPage voting controls', () => {
     const tree = CandidateList({ rows, voting: {
       hasMyVote: () => true, ups: { r1: 1 }, vetoesRemaining: 0, onToggle: vi.fn(),
     } } as never)
-    const up = findNode(tree, el => el.type === 'button' && textContent(el) === '👍 贊成（1）')
+    const up = findNode(tree, el => el.type === 'button' && textContent(el) === '贊成（1）')
     const veto = findNode(tree, el => el.type === 'button' && textContent(el) === '否決')
     expect(up?.props?.['aria-pressed']).toBe(true)
     expect(veto?.props?.['aria-pressed']).toBe(true)

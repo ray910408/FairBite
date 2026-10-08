@@ -26,8 +26,9 @@ export function LeaveConfirm({ title, onClose, actions, actionsClassName, childr
   children: ReactNode
 }) {
   return (
-    // Esc 掛外層：焦點由 autoFocus 進到按鈕，keydown 從 dialog 內冒泡上來
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-fg/40 p-3"
+    // Esc 掛外層：焦點由 autoFocus 進到按鈕，keydown 從 dialog 內冒泡上來。
+    // 遮罩用 black 而非 fg：fg 在深色主題是米白，會變成一層亮霧
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-3"
       onKeyDown={onClose && (e => { if (e.key === 'Escape') onClose() })}>
       <div role="dialog" aria-modal="true" aria-labelledby="leave-title"
         className="card flex max-h-full w-full max-w-sm animate-rise flex-col space-y-3">
@@ -67,7 +68,7 @@ export function LeaveRoomsBody({ target }: { target: LeaveTarget }) {
         </p>
       )}
       {rooms.map(r => (
-        <div key={r.id} className={multi ? 'space-y-2 rounded-xl border border-border p-3' : ''}>
+        <div key={r.id} className={multi ? 'space-y-2 rounded-card border border-border p-3' : ''}>
           {multi && <p className="text-sm font-semibold">房間 {r.code}</p>}
           <ul className="list-disc space-y-1 pl-5 text-sm text-fg-muted">
             {leaveNotice(r.status, r.memberCount, r.code, r.isHost).map(p => <li key={p}>{p}</li>)}

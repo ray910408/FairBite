@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Chevron } from './icons'
+import { wheelFill, wheelInk } from '../lib/wheelPalette'
 
-const COLORS = ['#c2410c', '#0369a1', '#15803d', '#a16207', '#7e22ce', '#be123c']
 const MAX_OPTIONS = 20
 const MAX_LENGTH = 40
 const SPIN_MS = 3200
@@ -59,7 +59,7 @@ export default function CustomWheel() {
 
   const background = options.length
     ? `conic-gradient(${options.map((_, i) =>
-      `${COLORS[i % COLORS.length]} ${i * 100 / options.length}% ${(i + 1) * 100 / options.length}%`
+      `${wheelFill(i, options.length)} ${i * 100 / options.length}% ${(i + 1) * 100 / options.length}%`
     ).join(', ')})`
     : undefined
 
@@ -67,7 +67,7 @@ export default function CustomWheel() {
     <details className="card animate-rise">
       <summary className="flex min-h-11 list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
         <span>
-          <span className="block text-base font-semibold">自製轉盤</span>
+          <span className="block font-serif text-base font-bold">自製轉盤</span>
           <span className="block text-sm text-fg-muted">自己填選項，轉一下決定</span>
         </span>
         <Chevron className="disclosure-chevron h-5 w-5 shrink-0" />
@@ -92,33 +92,37 @@ export default function CustomWheel() {
         </form>
 
         <div className="relative mx-auto w-64 max-w-full pt-2" aria-hidden="true">
-          <svg viewBox="0 0 24 20" className="absolute top-0 left-1/2 z-10 h-5 w-6 -translate-x-1/2 drop-shadow-sm">
+          <svg viewBox="0 0 24 20" className="absolute top-0 left-1/2 z-10 h-5 w-6 -translate-x-1/2">
             <path d="M12 20 1 0h22z" className="fill-fg" />
           </svg>
+          {/* 印刷菜單的雙圈：墨線、留白、墨線 */}
           <div data-testid="custom-wheel-disc"
-            className="relative aspect-square rounded-full bg-brand-soft shadow-card ring-4 ring-surface"
+            className="relative aspect-square rounded-full bg-brand-soft"
             style={{ background, transform: `rotate(${rotation}deg)`,
+              boxShadow: '0 0 0 1px var(--color-rule), 0 0 0 5px var(--color-surface), 0 0 0 6px var(--color-rule)',
               transition: spinning ? `transform ${SPIN_MS}ms cubic-bezier(0.2, 0.8, 0.2, 1)` : 'none' }}>
             {options.map((label, i) => {
               const angle = (i + 0.5) * 2 * Math.PI / options.length
               return (
-                <span key={label} className="absolute flex h-6 w-6 items-center justify-center text-sm font-bold text-white"
+                <span key={label} className="absolute flex h-6 w-6 items-center justify-center text-sm font-bold"
                   style={{ left: `${50 + 38 * Math.sin(angle)}%`, top: `${50 - 38 * Math.cos(angle)}%`,
-                    transform: 'translate(-50%, -50%)' }}>{i + 1}</span>
+                    transform: 'translate(-50%, -50%)', color: wheelInk(i, options.length) }}>{i + 1}</span>
               )
             })}
-            <span className="absolute top-1/2 left-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 rounded-full bg-surface shadow-sm" />
+            <span className="absolute top-1/2 left-1/2 flex size-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-rule bg-surface">
+              <span className="size-2 rounded-full bg-brand" />
+            </span>
           </div>
         </div>
 
         {options.length > 0 && (
-          <ol aria-label="轉盤選項" className="max-h-64 space-y-1 overflow-y-auto">
+          <ol aria-label="轉盤選項" className="max-h-64 divide-y divide-dotted divide-leader overflow-y-auto">
             {options.map((label, i) => (
-              <li key={label} className="flex items-center gap-2 rounded-lg px-2"
+              <li key={label} className="flex items-center gap-2 rounded-[2px] px-2 py-1"
                 style={{ background: winner === label ? 'var(--color-brand-soft)' : undefined }}>
-                <span aria-hidden="true" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
-                  style={{ background: COLORS[i % COLORS.length] }}>{i + 1}</span>
-                <span className="min-w-0 flex-1 wrap-anywhere text-sm">{label}</span>
+                <span aria-hidden="true" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[2px] text-xs font-bold"
+                  style={{ background: wheelFill(i, options.length), color: wheelInk(i, options.length) }}>{i + 1}</span>
+                <span className="min-w-0 flex-1 wrap-anywhere font-serif text-sm">{label}</span>
                 <button type="button" className="btn btn-quiet shrink-0 px-3 text-sm"
                   aria-label={`刪除 ${label}`} disabled={spinning}
                   onClick={() => { changeOptions(options.filter(option => option !== label)); input.current?.focus() }}>刪除</button>
@@ -131,7 +135,7 @@ export default function CustomWheel() {
           {spinning ? '轉動中…' : winner ? '再轉一次' : '開始轉盤'}
         </button>
         <p role="status" aria-live="polite" aria-atomic="true" className="text-center text-sm wrap-anywhere">
-          {spinning ? '轉盤抽選中…' : winner ? <>抽中：<strong>{winner}</strong></>
+          {spinning ? '轉盤抽選中…' : winner ? <>抽中：<strong className="font-serif">{winner}</strong></>
             : options.length < 2 ? `再加入 ${2 - options.length} 個選項就能開始` : `共 ${options.length} 個選項，每個機率 1/${options.length}`}
         </p>
       </section>

@@ -40,9 +40,10 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; OpenStreetMap contributors', maxZoom: 19,
       }).addTo(map)
+      // 圖磚兩種主題都是淺色，圖釘用 brand-fill（兩主題都夠深）＋on-brand 白圈，跟著主題又不失對比
       const icon = L.divIcon({
         className: '',
-        html: '<div style="width:18px;height:18px;border-radius:9999px;background:#e11d48;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>',
+        html: '<div style="width:18px;height:18px;border-radius:9999px;background:var(--color-brand-fill);border:3px solid var(--color-on-brand);box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>',
         iconSize: [18, 18], iconAnchor: [9, 9],
       })
       const marker = L.marker([start.lat, start.lng], { draggable: true, icon }).addTo(map)
@@ -167,7 +168,7 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
           <button type="button" className="btn btn-quiet w-full" onClick={useGPS}>
             使用目前位置
           </button>
-          <div ref={mapEl} className="h-56 w-full overflow-hidden rounded-xl" aria-label="出發點地圖" />
+          <div ref={mapEl} className="h-56 w-full overflow-hidden rounded-card border border-border" aria-label="出發點地圖" />
           <p className="text-xs text-fg-muted">搜尋後可拖曳圖釘或點地圖微調</p>
         </div>
       )}

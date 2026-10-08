@@ -17,7 +17,7 @@ export default function ShortlistVotePanel({ wantShortlist, yesCount, memberCoun
       <h2 id="shortlist-vote-title" className="text-base font-semibold">候選太多？先初選再投票</h2>
       <p className="text-sm text-fg-muted">每人圈 {SHORTLIST_PICK_MIN} 到 {SHORTLIST_PICK_MAX} 家，沒人圈的店不進轉盤</p>
       <label className="flex min-h-11 items-center gap-3 text-sm">
-        <input type="checkbox" className="h-5 w-5" checked={wantShortlist}
+        <input type="checkbox" className="h-5 w-5 accent-brand" checked={wantShortlist}
           aria-checked={wantShortlist} disabled={busy}
           onChange={e => onVote(e.target.checked)} />
         <span>我想先初選</span>

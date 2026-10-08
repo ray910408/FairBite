@@ -1,6 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="8" fill="#c2410c"/>
-  <path d="M6 15h20a10 10 0 0 1-20 0Z" fill="#fff"/>
-  <rect x="4" y="24.5" width="24" height="3" rx="1.5" fill="#fff" opacity=".85"/>
-  <circle cx="16" cy="8" r="2.5" fill="#ffedd5"/>
+  <rect width="32" height="32" rx="3" fill="#a8321e"/>
+  <rect x="2.5" y="2.5" width="27" height="27" rx="1.5" fill="none" stroke="#fff" stroke-width="1" opacity=".75"/>
+  <text x="16" y="16.5" text-anchor="middle" dominant-baseline="central" font-size="18" font-weight="900" font-family="'Noto Serif TC','Songti TC','PMingLiU',serif" fill="#fff">吃</text>
 </svg>
