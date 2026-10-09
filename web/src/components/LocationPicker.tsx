@@ -66,7 +66,11 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
     })
     return () => {
       disposed = true
-      mapRef.current?.remove()
+      // Leaflet 1.9 的 remove() 不取消縮放動畫的 250ms setTimeout；動畫中卸載（如點地圖後立刻按完成）
+      // 計時器會讀已刪的 _mapPane 丟 _leaflet_pos TypeError。先收尾動畫，計時器到時就直接 return。
+      const map = mapRef.current as (LeafletMap & { _onZoomTransitionEnd?: () => void }) | null
+      map?._onZoomTransitionEnd?.()
+      map?.remove()
       mapRef.current = null
       markerRef.current = null
     }

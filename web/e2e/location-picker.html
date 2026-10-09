@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <title>LocationPicker harness</title>
+  </head>
+  <body>
+    <!-- location-picker.spec.ts 專用：vite dev 直接掛真元件，不需 Go／Supabase -->
+    <div id="root"></div>
+    <script type="module">
+      import { StrictMode, createElement as h, useState } from 'react'
+      import { createRoot } from 'react-dom/client'
+      import '/src/index.css'
+      import LocationPicker from '/src/components/LocationPicker.tsx'
+
+      function Harness() {
+        const [value, setValue] = useState(null)
+        return h(LocationPicker, { value, onChange: setValue })
+      }
+      createRoot(document.getElementById('root')).render(h(StrictMode, null, h(Harness)))
+    </script>
+  </body>
+</html>
