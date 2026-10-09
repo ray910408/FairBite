@@ -4,14 +4,16 @@ select no_plan();
 
 select is((select pubdelete from pg_publication where pubname = 'supabase_realtime'), false,
  'realtime never publishes DELETE: apply_rls skips RLS for deletes');
+-- regclass 依賴 nspname，才只會在 pg_class⋈pg_namespace 之後求值；寫死 'public.%I' 時 cast
+-- 只依賴 relname，planner 曾在 join 前對 auth.instances 求值而報 relation "public.instances" does not exist
 select is_empty($$
   select p.tablename::text from pg_publication_tables p
   where p.pubname = 'supabase_realtime' and p.schemaname = 'public'
     and exists (select 1 from pg_attribute a
-                where a.attrelid = format('public.%I', p.tablename)::regclass
+                where a.attrelid = format('%I.%I', p.schemaname, p.tablename)::regclass
                   and a.attname = 'room_id' and not a.attisdropped)
     and not exists (select 1 from pg_trigger t
-                    where t.tgrelid = format('public.%I', p.tablename)::regclass
+                    where t.tgrelid = format('%I.%I', p.schemaname, p.tablename)::regclass
                       and t.tgfoid = 'public.signal_room_delete'::regproc
                       and t.tgenabled <> 'D' and t.tgoldtable is not null
                       and (t.tgtype & 8) <> 0 and (t.tgtype & 1) = 0)
