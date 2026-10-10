@@ -67,6 +67,7 @@ vi.mock('../lib/api', () => ({
   startVoting: mocks.startVoting,
   cancelShortlist: mocks.cancelShortlist,
   voteShortlist: mocks.voteShortlist,
+  pendingLeave: () => null,
 }))
 
 type ElementLike = {

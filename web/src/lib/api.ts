@@ -141,3 +141,8 @@ export function leaveRooms(): Promise<void> {
   })()
   return leaveInFlight
 }
+
+// 退房還在飛（null = 沒有）：房籍查詢要等它落地，否則會把馬上要刪的房當成還在
+export function pendingLeave(): Promise<void> | null {
+  return leaveInFlight
+}

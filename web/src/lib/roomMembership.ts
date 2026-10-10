@@ -1,3 +1,4 @@
+import { pendingLeave } from './api'
 import { supabase } from './supabase'
 import type { Room } from './types'
 import { getUid } from './uid'
@@ -34,6 +35,11 @@ export function isStaleRoom(createdAt: string, mealTime: string | null, now = Da
 export async function fetchLeaveRooms(): Promise<LeaveRoom[] | null> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
+    // 首頁的退房還在飛（Render 冷啟動可達 50 秒）時先等它落地：查得太早，末位退房
+    // 該刪的房還在，足跡頁回首頁就會問要不要離開它（2026-10-10 回報）。失敗也照查——
+    // 房籍真的還在就該問。等待上限是 leaveRooms 自己的 60 秒逾時，不計入 QUERY_TIMEOUT_MS。
+    const leave = pendingLeave()
+    if (leave) await leave.catch(() => {})
     const settled = await Promise.race([
       Promise.all([
         supabase.from('room_members').select('room_id, rooms(code, status, host_id, created_at, meal_time)'),
