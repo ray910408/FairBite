@@ -63,6 +63,7 @@ export default function HistoryPage() {
     // 首頁的退房還在飛：這裡等它落地，按鈕會無聲卡到 50 秒（冷啟動）。直接回首頁，
     // 由首頁 mount 等（fetchLeaveRooms），等待中的狀態列看得見
     if (pendingLeave()) {
+      leaveGen.current++ // 較早一次點擊還在查的回應作廢，不再導航第二次
       nav('/')
       return
     }

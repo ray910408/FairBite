@@ -80,6 +80,39 @@ describe('fetchLeaveRooms 等飛行中的退房落地', () => {
     await expect(fetchLeaveRooms()).resolves.toEqual([])
     expect(mocks.from).toHaveBeenCalledWith('room_members')
   })
+
+  describe('等待的時間界線', () => {
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    // 冷啟動 6 秒才落地：等待若被算進 5 秒查詢逾時，會回 null 開保守 dialog，又是誤問
+    it('等退房的時間不計入查詢逾時', async () => {
+      mocks.pendingLeave.mockReturnValue(new Promise<void>(r => setTimeout(r, 6000)))
+
+      let outcome: unknown = 'still-pending'
+      const pending = fetchLeaveRooms().then(v => (outcome = v))
+      await vi.advanceTimersByTimeAsync(6000)
+      await pending
+      expect(outcome).toEqual([])
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    // getSession 懸掛時 leaveRooms 的 60 秒逾時蓋不到，leave 永不 settle——本函式仍要 settle
+    it('退房永不 settle 時等滿 60 秒照查，不吊死呼叫端', async () => {
+      mocks.pendingLeave.mockReturnValue(new Promise<void>(() => {}))
+
+      let outcome: unknown = 'still-pending'
+      const pending = fetchLeaveRooms().then(v => (outcome = v))
+      await vi.advanceTimersByTimeAsync(60_000 - 1)
+      expect(outcome).toBe('still-pending')
+      expect(mocks.from).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1)
+      await pending
+      expect(outcome).toEqual([])
+      expect(vi.getTimerCount()).toBe(0)
+    })
+  })
 })
 
 // 殘留房（ADR-0007 2026-10-01 修訂）：判斷錯向「不是殘留」只會多問一次，錯向「是」會靜默退掉

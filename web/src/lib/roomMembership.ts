@@ -23,6 +23,8 @@ export type LeaveTarget = { kind: 'rooms'; rooms: LeaveRoom[] } | { kind: 'unkno
 // 沒有任何出口，使用者被鎖死在頁面上。逾時併入既有的「查詢失敗」路徑（回 null →
 // kind:'unknown' 保守 dialog），一樣不猜後果，但至少一定給得出兩顆按鈕。
 const QUERY_TIMEOUT_MS = 5000
+// 查詢前等飛行中退房的上限（見 fetchLeaveRooms）：比照 leaveRooms 的 60 秒逾時
+const LEAVE_WAIT_MS = 60_000
 
 // ADR-0007 2026-10-01 修訂：用餐時間（未設定＝建房時間）過了 12 小時，這頓早就吃完或不吃了，
 // 滑掉 App 或退房請求失敗留下的房籍不該隔幾天還問「回到房間」。時間解析失敗回 false（照舊問）。
@@ -37,9 +39,14 @@ export async function fetchLeaveRooms(): Promise<LeaveRoom[] | null> {
   try {
     // 首頁的退房還在飛（Render 冷啟動可達 50 秒）時先等它落地：查得太早，末位退房
     // 該刪的房還在，足跡頁回首頁就會問要不要離開它（2026-10-10 回報）。失敗也照查——
-    // 房籍真的還在就該問。等待上限是 leaveRooms 自己的 60 秒逾時，不計入 QUERY_TIMEOUT_MS。
+    // 房籍真的還在就該問。等待另設上限、不計入 QUERY_TIMEOUT_MS：leaveRooms 的 60 秒逾時
+    // 蓋不到 post() 前面的 getSession（token 刷新懸掛時 leave 永不 settle），沒有這道上限
+    // 本函式「一定 settle」的保證就破了，三個呼叫端的閘門一起鎖死。
     const leave = pendingLeave()
-    if (leave) await leave.catch(() => {})
+    if (leave) {
+      await Promise.race([leave.catch(() => {}), new Promise(resolve => { timer = setTimeout(resolve, LEAVE_WAIT_MS) })])
+      clearTimeout(timer)
+    }
     const settled = await Promise.race([
       Promise.all([
         supabase.from('room_members').select('room_id, rooms(code, status, host_id, created_at, meal_time)'),
