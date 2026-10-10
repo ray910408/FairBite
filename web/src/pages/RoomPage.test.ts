@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   startVoting: vi.fn(async (): Promise<string | null> => null),
   cancelShortlist: vi.fn(async (): Promise<string | null> => null),
   voteShortlist: vi.fn(async (): Promise<string | null> => null),
+  pendingLeave: vi.fn<() => Promise<void> | null>(() => null),
   members: {} as { data?: unknown; error?: unknown },
   effects: [] as Array<() => void | (() => void)>,
 }))
@@ -67,6 +68,7 @@ vi.mock('../lib/api', () => ({
   startVoting: mocks.startVoting,
   cancelShortlist: mocks.cancelShortlist,
   voteShortlist: mocks.voteShortlist,
+  pendingLeave: mocks.pendingLeave,
 }))
 
 type ElementLike = {
@@ -987,6 +989,18 @@ describe('回首頁離席確認', () => {
     const tree = await mount()
     await clickHome(tree)
     expect(mocks.navigate).toHaveBeenCalledWith('/')
+    expect(mocks.stateSetters[LEAVE_DIALOG]).not.toHaveBeenCalled()
+  })
+
+  // 上一頁回到房內時首頁的末位退房還在飛（冷啟動）：當場查會誤問、等它則按鈕無聲卡住
+  it('首頁的退房還在飛：不查房籍，直接回首頁', async () => {
+    mocks.members = { data: [row('room-1', 'ABC123', 'pending')], error: null }
+    mocks.pendingLeave.mockReturnValueOnce(new Promise<void>(() => {}))
+    const tree = await mount()
+    const preventDefault = await clickHome(tree)
+    expect(preventDefault).toHaveBeenCalled()
+    expect(mocks.navigate).toHaveBeenCalledWith('/')
+    expect(mocks.from).not.toHaveBeenCalledWith('room_members')
     expect(mocks.stateSetters[LEAVE_DIALOG]).not.toHaveBeenCalled()
   })
 

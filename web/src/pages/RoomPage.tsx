@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMidnightRerender } from '../hooks/useMidnightRerender'
 import { useRoom } from '../hooks/useRoom'
 import {
-  cancelShortlist, chooseLocation, confirmDraw, editConditions, redrawRoom, startVoting, voteLocation, voteShortlist,
+  cancelShortlist, chooseLocation, confirmDraw, editConditions, pendingLeave, redrawRoom, startVoting, voteLocation,
+  voteShortlist,
 } from '../lib/api'
 import { loadRoomDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
 import { isVetoDeadEnd } from '../lib/deadEnd'
@@ -436,6 +437,12 @@ export default function RoomPage() {
   async function askLeave(e: React.MouseEvent<HTMLAnchorElement>) {
     e.preventDefault()
     const request = ++leaveGen.current
+    // 上一頁回到房內時首頁的退房可能還在飛：這裡等它落地，按鈕會無聲卡到 50 秒（冷啟動）。
+    // 直接回首頁，由首頁 mount 等（比照 HistoryPage）
+    if (pendingLeave()) {
+      nav('/')
+      return
+    }
     setLeaveChecking(true)
     const rooms = await fetchLeaveRooms()
     if (request !== leaveGen.current) return // 更新的一次在跑，checking 由它負責關掉

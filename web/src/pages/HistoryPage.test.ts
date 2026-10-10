@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
   members: {} as { data?: unknown; error?: unknown },
   getUid: vi.fn(),
+  pendingLeave: vi.fn<() => Promise<void> | null>(() => null),
 }))
 
 vi.mock('react', async importOriginal => {
@@ -34,6 +35,7 @@ vi.mock('react', async importOriginal => {
 vi.mock('react-router-dom', () => ({ Link: 'a', useNavigate: () => mocks.navigate }))
 vi.mock('../lib/supabase', () => ({ supabase: { from: mocks.from } }))
 vi.mock('../lib/uid', () => ({ getUid: mocks.getUid }))
+vi.mock('../lib/api', () => ({ pendingLeave: mocks.pendingLeave }))
 
 type NodeLike = { type?: unknown; props?: Record<string, unknown> }
 
@@ -117,6 +119,7 @@ afterEach(() => vi.unstubAllGlobals())
 
 beforeEach(() => {
   mocks.navigate.mockReset()
+  mocks.pendingLeave.mockReset().mockReturnValue(null)
   mocks.members = { data: [], error: null }
   mocks.getUid.mockReset().mockResolvedValue('me')
   mocks.from.mockReset().mockImplementation((table: string) => ({
@@ -178,6 +181,19 @@ describe('足跡頁回首頁離席確認', () => {
     const tree = await render()
     await clickHome(tree)
     expect(mocks.navigate).toHaveBeenCalledWith('/')
+    expect(mocks.stateSetters[DIALOG]).not.toHaveBeenCalled()
+  })
+
+  // 首頁末位退房還在飛（冷啟動）時點進足跡再回首頁：房還沒刪，當場查會誤問一間馬上
+  // 消失的房（2026-10-10 回報）；等它落地則按鈕無聲卡住——交給首頁 mount 去等
+  it('首頁的退房還在飛：不查房籍，直接回首頁', async () => {
+    mocks.members = { data: [room('room-1', 'ABC123', 'pending')], error: null }
+    mocks.pendingLeave.mockReturnValue(new Promise<void>(() => {}))
+    const tree = await render()
+    const preventDefault = await clickHome(tree)
+    expect(preventDefault).toHaveBeenCalled()
+    expect(mocks.navigate).toHaveBeenCalledWith('/')
+    expect(mocks.from).not.toHaveBeenCalledWith('room_members')
     expect(mocks.stateSetters[DIALOG]).not.toHaveBeenCalled()
   })
 

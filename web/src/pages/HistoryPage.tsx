@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { pendingLeave } from '../lib/api'
 import { supabase } from '../lib/supabase'
 import { formatDay, groupByMonth, knownCuisineLabels, summarize, trendRatings, type FootprintRow } from '../lib/footprint'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
@@ -59,6 +60,13 @@ export default function HistoryPage() {
   async function askLeave(e: React.MouseEvent<HTMLAnchorElement>) {
     e.preventDefault()
     leaveTriggerRef.current = e.currentTarget // 兩個入口共用一個 dialog，記住是誰開的
+    // 首頁的退房還在飛：這裡等它落地，按鈕會無聲卡到 50 秒（冷啟動）。直接回首頁，
+    // 由首頁 mount 等（fetchLeaveRooms），等待中的狀態列看得見
+    if (pendingLeave()) {
+      leaveGen.current++ // 較早一次點擊還在查的回應作廢，不再導航第二次
+      nav('/')
+      return
+    }
     // 舊回應作廢（load 同款模式）：aria-busy 擋不住點擊，兩次點擊之間房籍還可能在別的
     // 分頁被改。第一次查到「沒房」若晚於第二次回來，就會 nav('/') 跳過剛開好的 dialog，
     // 把新房籍靜默退掉——只有最後一次點擊的回應能生效。

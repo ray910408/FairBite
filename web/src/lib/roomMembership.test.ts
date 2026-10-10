@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // 房籍查詢的成功路徑由三個呼叫端整條打過（HistoryPage / RoomPage 的 askLeave、
 // HomePage 的 mount 攔截）；這裡只釘住它們共同押注的那件事——這個 promise 一定會 settle。
-const mocks = vi.hoisted(() => ({ from: vi.fn(), getUid: vi.fn() }))
+const mocks = vi.hoisted(() => ({ from: vi.fn(), getUid: vi.fn(), pendingLeave: vi.fn<() => Promise<void> | null>(() => null),
+}))
 
 vi.mock('./supabase', () => ({ supabase: { from: mocks.from } }))
 vi.mock('./uid', () => ({ getUid: mocks.getUid }))
+vi.mock('./api', () => ({ pendingLeave: mocks.pendingLeave }))
 
 import { fetchLeaveRooms, isStaleRoom } from './roomMembership'
 
@@ -48,6 +50,68 @@ describe('fetchLeaveRooms 逾時出口', () => {
 
     await expect(fetchLeaveRooms()).resolves.toBeNull()
     expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+// 末位退房在飛時查房籍，該刪的房還在——足跡頁回首頁就問要不要離開它（2026-10-10 回報）
+describe('fetchLeaveRooms 等飛行中的退房落地', () => {
+  beforeEach(() => {
+    mocks.getUid.mockReset().mockResolvedValue('me')
+    mocks.from.mockReset().mockReturnValue({ select: () => Promise.resolve({ data: [], error: null }) })
+  })
+  afterEach(() => mocks.pendingLeave.mockReset().mockReturnValue(null))
+
+  it('退房成功落地後才查', async () => {
+    let land!: () => void
+    mocks.pendingLeave.mockReturnValue(new Promise<void>(r => { land = r }))
+
+    const pending = fetchLeaveRooms()
+    await new Promise(r => setTimeout(r, 0))
+    expect(mocks.from).not.toHaveBeenCalled()
+
+    land()
+    await expect(pending).resolves.toEqual([])
+    expect(mocks.from).toHaveBeenCalledWith('room_members')
+  })
+
+  it('退房失敗照查：房籍真的還在就該問', async () => {
+    mocks.pendingLeave.mockReturnValue(Promise.reject(new Error('離席失敗（500）')))
+
+    await expect(fetchLeaveRooms()).resolves.toEqual([])
+    expect(mocks.from).toHaveBeenCalledWith('room_members')
+  })
+
+  describe('等待的時間界線', () => {
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    // 冷啟動 6 秒才落地：等待若被算進 5 秒查詢逾時，會回 null 開保守 dialog，又是誤問
+    it('等退房的時間不計入查詢逾時', async () => {
+      mocks.pendingLeave.mockReturnValue(new Promise<void>(r => setTimeout(r, 6000)))
+
+      let outcome: unknown = 'still-pending'
+      const pending = fetchLeaveRooms().then(v => (outcome = v))
+      await vi.advanceTimersByTimeAsync(6000)
+      await pending
+      expect(outcome).toEqual([])
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    // getSession 懸掛時 leaveRooms 的 60 秒逾時蓋不到，leave 永不 settle——本函式仍要 settle
+    it('退房永不 settle 時等滿 60 秒照查，不吊死呼叫端', async () => {
+      mocks.pendingLeave.mockReturnValue(new Promise<void>(() => {}))
+
+      let outcome: unknown = 'still-pending'
+      const pending = fetchLeaveRooms().then(v => (outcome = v))
+      await vi.advanceTimersByTimeAsync(60_000 - 1)
+      expect(outcome).toBe('still-pending')
+      expect(mocks.from).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1)
+      await pending
+      expect(outcome).toEqual([])
+      expect(vi.getTimerCount()).toBe(0)
+    })
   })
 })
 
