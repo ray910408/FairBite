@@ -459,9 +459,10 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     }
   })
 
-  it('任一非房主未 ready 時搜尋鈕 disabled，直接呼叫 stale handler 也不送 /search', async () => {
+  it('任一非房主未 ready 時搜尋鈕 disabled 並講還差幾人，直接呼叫 stale handler 也不送 /search', async () => {
     const tree = await renderRoomPage()
-    const search = findButton(tree, '開始搜尋餐廳')
+    expect(findButton(tree, '開始搜尋餐廳').type).toBeUndefined()
+    const search = findButton(tree, '還有 1 人還沒準備好')
     expect(search.props?.disabled).toBe(true)
     await search.props?.onClick?.()
     expect(mocks.searchRoom).not.toHaveBeenCalled()
@@ -613,6 +614,60 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     mocks.useRoom.mockReturnValue(roomState({ myUserId: 'user-b' }))
     const tree = await renderRoomPage()
     expect(findButton(tree, '我準備好了').type).toBe('button')
+  })
+
+  const keptRow = {
+    room_id: 'room-1', restaurant_id: 'r1', status: 'kept', probability: 1,
+    weight_breakdown: [], exclusion_reason: null, exclusion_kinds: [],
+    restaurants: { name: '店', lat: 25, lng: 121, place_id: 'p', source: 'google' },
+  }
+  const memberC = { ...hostMe, user_id: 'user-c', profiles: { display_name: '小C' } }
+
+  it.each([
+    ['lobby', false, '設好條件後，按最下方「我準備好了」'],
+    ['lobby', true, '已準備好，等房主開始搜尋'],
+    ['candidates', false, '候選出爐了，等房主開始投票'],
+    ['voting', false, '投完票後，等房主啟動轉盤'],
+    ['pending', false, '等房主確認，或排除這家重轉'],
+  ])('成員視角在 %s（ready=%s）講清楚在等誰', async (status, ready, hint) => {
+    mocks.useRoom.mockReturnValue(roomState({ myUserId: 'user-b', room: { ...lobbyRoom, status },
+      members: [hostMe, { ...memberB, ready }], candidates: [keptRow] }))
+    expect(textContent(await renderRoomPage())).toContain(hint)
+  })
+
+  it('候選多到開放初選表決時，提示成員可以先表決', async () => {
+    const many = Array.from({ length: 7 }, (_, i) => ({ ...keptRow, restaurant_id: `r${i}` }))
+    mocks.useRoom.mockReturnValue(roomState({ myUserId: 'user-b', room: { ...lobbyRoom, status: 'candidates' },
+      candidates: many }))
+    const text = textContent(await renderRoomPage())
+    expect(text).toContain('候選很多：可以先表決要不要初選')
+    expect(text).not.toContain('候選出爐了，等房主開始投票')
+  })
+
+  it('自己準備好但還有人沒準備：講在等其他人，不說在等房主', async () => {
+    mocks.useRoom.mockReturnValue(roomState({ myUserId: 'user-b',
+      members: [hostMe, { ...memberB, ready: true }, memberC] }))
+    const text = textContent(await renderRoomPage())
+    expect(text).toContain('已準備好，還在等 1 人')
+    expect(text).not.toContain('等房主開始搜尋')
+  })
+
+  it('候選全滅時只留死路橫幅，不叫成員等轉盤', async () => {
+    mocks.useRoom.mockReturnValue(roomState({ myUserId: 'user-b', room: { ...lobbyRoom, status: 'voting' },
+      candidates: [{ ...keptRow, status: 'excluded', exclusion_kinds: ['veto'] }] }))
+    const text = textContent(await renderRoomPage())
+    expect(text).toContain('候選已全數被否決')
+    expect(text).not.toContain('等房主啟動轉盤')
+  })
+
+  it('房主視角、或還不知道自己是誰時不顯示等待提示', async () => {
+    mocks.useRoom.mockReturnValue(roomState({ room: { ...lobbyRoom, status: 'candidates' } }))
+    expect(textContent(await renderRoomPage())).not.toContain('等房主')
+  })
+
+  it('uid 還沒讀到時不把房主當成員提示', async () => {
+    mocks.useRoom.mockReturnValue(roomState({ myUserId: '' }))
+    expect(textContent(await renderRoomPage())).not.toContain('我準備好了」')
   })
 
   it('lobby 顯示菜系過濾開關；成員視角 disabled', async () => {

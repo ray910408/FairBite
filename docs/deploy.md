@@ -260,3 +260,5 @@ CORS 只允許單一來源。改前端網域時要同時改兩處，少一處就
 - Render 的 `WEB_ORIGIN`（只填 origin，不含 `/FairBite` 路徑）
 - `web/.env.production` 的 `VITE_API_URL`（改後端網域時）
 - 改成 root 網域（custom domain）時，同步調整 `web/public/404.html` 的 base 推導；目前寫死取第一段路徑（project site 前提），root 下會把 `/room/abc` 誤判成 base `/room/` 而轉址迴圈
+
+另外，`web/index.html` 的 `og:image` 寫死目前的 Pages 網址（連結預覽圖必須是絕對網址）。這條跟 CORS 無關，漏改只會讓 LINE 等處的連結預覽圖失效。

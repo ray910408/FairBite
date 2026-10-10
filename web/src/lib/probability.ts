@@ -44,6 +44,16 @@ export function chipLabel(e: TraceEntry): string {
   return `${name} ×${e.mult.toFixed(2)} · ${e.reason}`
 }
 
+// 不改變相對機率的倍率不顯示：恰為 1，或每家可抽候選的因素、倍率、原因完全相同（全場同乘＝互相抵銷）。
+// 比原始值不比顯示文字：距離是連續值，0.996 印成 ×1.00 但機率照樣被它拉開；
+// 原因也要比：快打烊倍率是常數 0.6，但各家打烊時刻不同，只比倍率會把時刻一起藏掉
+export function decisiveFactors(kept: CandidateRow[]): (e: TraceEntry) => boolean {
+  const key = (e: TraceEntry) => JSON.stringify([e.factor, e.mult, e.reason])
+  const uniform = new Set(kept.length < 2 ? [] : kept[0].weight_breakdown.map(key)
+    .filter(k => kept.every(c => c.weight_breakdown.some(e => key(e) === k))))
+  return e => e.mult !== 1 && !uniform.has(key(e))
+}
+
 export function sortKept(rows: CandidateRow[]): CandidateRow[] {
   return rows
     .filter(r => r.status === 'kept')

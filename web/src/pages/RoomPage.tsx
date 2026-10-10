@@ -195,8 +195,21 @@ export default function RoomPage() {
 
   const me = members.find(m => m.user_id === myUserId)
   const isHost = room.host_id === myUserId
-  const guestsReady = !members.some(m => m.user_id !== room.host_id && !m.ready)
+  const guestsNotReady = members.filter(m => m.user_id !== room.host_id && !m.ready).length
+  const guestsReady = guestsNotReady === 0
   guestsReadyRef.current = guestsReady
+  // 非房主看不到房主的按鈕：講清楚現在在等誰、輪到自己做什麼。
+  // uid 還沒讀到時不知道是不是房主，先不講；候選全滅另有死路橫幅，不能再叫人等轉盤；
+  // 初選表決開放時成員自己有事可做，不能只叫人等
+  const keptCount = candidates.filter(c => c.status === 'kept').length
+  const guestHint = isHost || !me ? undefined : ({
+    lobby: !me.ready ? '設好條件後，按最下方「我準備好了」'
+      : guestsReady ? '已準備好，等房主開始搜尋' : `已準備好，還在等 ${guestsNotReady} 人`,
+    candidates: shortlistOpen(keptCount, members.length)
+      ? '候選很多：可以先表決要不要初選，之後等房主開始投票' : '候選出爐了，等房主開始投票',
+    voting: keptCount > 0 ? '投完票後，等房主啟動轉盤' : undefined,
+    pending: '等房主確認，或排除這家重轉',
+  } as Partial<Record<Room['status'], string>>)[room.status]
   // 初選：圈選只算仍是 kept 的候選（同 server keptPicksSQL）
   const picksByMember = keptPickCounts(shortlistPicks, candidates)
   const shortlistUnfinished = membersBelowMin(members, picksByMember)
@@ -543,6 +556,7 @@ export default function RoomPage() {
             ))}
           </ul>
         </section>
+        {guestHint && <p role="status" className="banner bg-brand-soft text-brand-strong">{guestHint}</p>}
 
         {(room.status === 'voting' || room.status === 'relocating' || (room.status === 'lobby' && isHost)) && (
           <RelocationPanel key={room.id} isHost={isHost} status={room.status}
@@ -722,7 +736,8 @@ export default function RoomPage() {
                 }
               }
             }}>
-            {searching ? <><Spinner className="h-5 w-5" />搜尋中…</> : '開始搜尋餐廳'}
+            {searching ? <><Spinner className="h-5 w-5" />搜尋中…</>
+              : guestsReady ? '開始搜尋餐廳' : `還有 ${guestsNotReady} 人還沒準備好`}
           </button>
         )}
         {searchSlow && (

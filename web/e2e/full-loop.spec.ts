@@ -484,6 +484,8 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     })
     await setConditions(a, 1600)
     await expect(search).toBeEnabled()
+    const searchResponse = a.waitForResponse(response =>
+      response.request().method() === 'POST' && response.url().endsWith('/search'))
     await search.evaluate(button => {
       button.click()
       button.click()
@@ -512,7 +514,11 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     expect(keptCount).toBeGreaterThan(0)
     await expect(candidateHeadingA).toHaveText(`候選餐廳（${keptCount}）`)
     await expect(candidateHeadingB).toHaveText(`候選餐廳（${keptCount}）`)
-    await expect(b.getByText(/1\/2 位成員偏好命中/).first()).toBeVisible()
+    // 台式偏好有進引擎：菜系過濾開啟時每家都是 1/2 命中，全場同倍率不改變機率，
+    // 畫面會收起這個倍率（probability.ts decisiveFactors），所以改看 /search 回的 trace
+    const searchBody = await (await searchResponse).json() as { kept: { trace: { reason: string }[] }[] }
+    expect(searchBody.kept.flatMap(k => k.trace).some(t => /1\/2 位成員偏好命中/.test(t.reason))).toBe(true)
+    if (keptCount > 1) await expect(b.getByText(/位成員偏好命中/)).toHaveCount(0) // 只剩一家時不套全場規則
     console.log(`[task-13] runtime kept count: ${keptCount}`)
 
     // BUG-003：只有房主能回到條件階段；交易清空候選並把全員 ready 歸零，
@@ -541,7 +547,8 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await Promise.all([clearedA, clearedB])
     await expect(candidateHeadingA).toHaveCount(0)
     await expect(candidateHeadingB).toHaveCount(0)
-    await expect(a.getByRole('button', { name: '開始搜尋餐廳' })).toBeVisible()
+    // 成員準備被重設：房主鈕直接講還差幾人，不是只變灰
+    await expect(a.getByRole('button', { name: '還有 1 人還沒準備好' })).toBeDisabled()
     await expect(b.getByRole('button', { name: '我準備好了' })).toBeVisible()
     await expect(a.getByText('已準備', { exact: true })).toHaveCount(0)
 
@@ -882,7 +889,7 @@ test('房主繼任（lobby 中房主回首頁）', async ({ browser }) => {
     await createAndJoinRoom(a, b)
     // 繼任前：B 是普通成員——有 ready 鈕、無房主搜尋鈕
     await expect(b.getByRole('button', { name: '我準備好了' })).toBeVisible()
-    await expect(b.getByRole('button', { name: '開始搜尋餐廳' })).toHaveCount(0)
+    await expect(b.getByRole('button', { name: /開始搜尋餐廳|還沒準備好/ })).toHaveCount(0)
     // readiness 成為 search invariant 後，先讓 B ready，房主搜尋鈕才是可聚焦的背景控制項。
     await b.getByRole('button', { name: '我準備好了' }).click()
     await expect(a.getByText('已準備', { exact: true })).toHaveCount(1)

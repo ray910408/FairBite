@@ -15,7 +15,7 @@
 
 - **晚餐/其他時段 × 菜系加成：** 待 provider tag 詞彙擴充、`googleTypeTags` 有真實對映後回歸；新增 slot 的前置條件已註記於 `server/weights.go`（P3 eng review D23）。（2026-08-13：hotpot 已有真實映射，前置滿足；開 slot 與否仍是獨立產品決策。）
 
-- **均勻倍率 chip 策略：** timeslot 全場命中、rain 全場飽和、「推薦過但尚未中選」穩態 chip 三案併為一次決策：由引擎 guard 或 web 端過濾（P3 batch 1 final review）。
+- ~~**均勻倍率 chip 策略：** timeslot 全場命中、rain 全場飽和、「推薦過但尚未中選」穩態 chip 三案併為一次決策：由引擎 guard 或 web 端過濾（P3 batch 1 final review）。~~ 已結案（2026-10-10）：web 端過濾，`probability.ts` 的 `decisiveFactors` 收起倍率恰為 1 的 chip，以及每家可抽候選的因素、原始倍率、原因完全相同的 chip——比原始值是因為距離是連續值（0.996 印成 ×1.00 仍會拉開機率），原因要一起比是因為快打烊倍率是常數、各家打烊時刻不同；trace 照舊完整寫入、`/search` 回應照舊帶齊。
 
 - ~~**dining_history 排序索引**：足跡頁查詢為 `user_id` 過濾＋`decided_at` 排序，既有 `dining_history_recency (user_id, restaurant_id, decided_at)` 中欄卡住排序用不上；個人規模無感，下次動 `dining_history` schema 時順手補 `(user_id, decided_at desc)`（2026-08-14 Round 2 eng review）。~~ 已結案（2026-08-15）：0022 順手補 `(user_id, decided_at desc)`。
 
@@ -149,7 +149,7 @@ feat/phase-1 全分支 final review 的 DEFER-P2 批次。前三項優先（安�
 
 QA 對象 https://ray910408.github.io/FairBite/#/auth（headless，test 帳號）。ISSUE 編號對應 `.gstack/qa-reports/qa-report-fairbite-2026-08-16.md`（該目錄被 .gitignore 蓋住，只在本機）。PR #17 已修 ISSUE-001（回首頁離席確認）與 ISSUE-003（星排視覺）。
 
-- **ISSUE-002（High，未修）預設條件產生退化結果集** — 全預設（NT$300 上限／800m／步行）在台北 101 搜尋，15 家排除 14 家、全部理由都是「超過 NT$300」，只剩 1 家候選、抽中機率 100%。轉盤只有一個選項等於產品主張不成立，且 App 沒有任何「候選過少、建議放寬條件」的提示就讓使用者走到投票與轉盤。需要產品決策：調預設值、依商圈動態調整、或加候選過少的引導。
+- **ISSUE-002（High，未修，待確認是否結案）預設條件產生退化結果集**（2026-10-10 複測已不重現：預算改 Google 價位層級後，台北 101 全預設以真 API 搜尋保留 14 家、排除 4 家。下方為原始紀錄） — 全預設（NT$300 上限／800m／步行）在台北 101 搜尋，15 家排除 14 家、全部理由都是「超過 NT$300」，只剩 1 家候選、抽中機率 100%。轉盤只有一個選項等於產品主張不成立，且 App 沒有任何「候選過少、建議放寬條件」的提示就讓使用者走到投票與轉盤。需要產品決策：調預設值、依商圈動態調整、或加候選過少的引導。
 
 - ~~**ISSUE-005（Low）足跡頁把 3/5 星畫成 3 顆滿星** — `HistoryPage.tsx` 的清單列只渲染 N 顆實心星、沒有空心星做 5 星刻度，3 分讀起來像滿分。摘要區的「平均 3.0 ★」正確，只有列表圖示缺刻度。`icons.tsx` 的 `Star` 已有 `filled` prop（PR #17 加的），補刻度是小改。~~ — 已修（c8d9c57，2026-08-22）：清單列固定畫 5 顆星，未達分數者為空心；2026-10-08 查證。
 
