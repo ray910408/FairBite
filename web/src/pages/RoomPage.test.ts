@@ -635,6 +635,15 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     expect(textContent(await renderRoomPage())).toContain(hint)
   })
 
+  it('候選多到開放初選表決時，提示成員可以先表決', async () => {
+    const many = Array.from({ length: 7 }, (_, i) => ({ ...keptRow, restaurant_id: `r${i}` }))
+    mocks.useRoom.mockReturnValue(roomState({ myUserId: 'user-b', room: { ...lobbyRoom, status: 'candidates' },
+      candidates: many }))
+    const text = textContent(await renderRoomPage())
+    expect(text).toContain('候選很多：可以先表決要不要初選')
+    expect(text).not.toContain('候選出爐了，等房主開始投票')
+  })
+
   it('自己準備好但還有人沒準備：講在等其他人，不說在等房主', async () => {
     mocks.useRoom.mockReturnValue(roomState({ myUserId: 'user-b',
       members: [hostMe, { ...memberB, ready: true }, memberC] }))

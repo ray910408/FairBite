@@ -93,13 +93,13 @@ describe('decisiveFactors', () => {
     const show = decisiveFactors(rows)
     expect(rows.map(r => r.weight_breakdown.filter(show).length)).toEqual([1, 1])
   })
-  it('依顯示精度判斷：×1.00 中性、畫面相同的倍率視為全場同乘', () => {
+  it('依原始倍率判斷：印成 ×1.00 但不是 1、或只差在小數後幾位，都會拉開機率，照樣顯示', () => {
     const rows = [
-      row(f('weather', 1.004), f('preference', 0.6000000001), f('distance', 1.2)),
-      row(f('weather', 1.004), f('preference', 0.6), f('distance', 1.1)),
+      row(f('distance', 0.996), f('preference', 0.6000000001)),
+      row(f('distance', 1.004), f('preference', 0.6)),
     ]
     const show = decisiveFactors(rows)
     expect(rows.map(r => r.weight_breakdown.filter(show).map(e => e.factor)))
-      .toEqual([['distance'], ['distance']])
+      .toEqual([['distance', 'preference'], ['distance', 'preference']])
   })
 })

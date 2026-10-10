@@ -15,7 +15,7 @@
 
 - **晚餐/其他時段 × 菜系加成：** 待 provider tag 詞彙擴充、`googleTypeTags` 有真實對映後回歸；新增 slot 的前置條件已註記於 `server/weights.go`（P3 eng review D23）。（2026-08-13：hotpot 已有真實映射，前置滿足；開 slot 與否仍是獨立產品決策。）
 
-- ~~**均勻倍率 chip 策略：** timeslot 全場命中、rain 全場飽和、「推薦過但尚未中選」穩態 chip 三案併為一次決策：由引擎 guard 或 web 端過濾（P3 batch 1 final review）。~~ 已結案（2026-10-10）：web 端過濾，`probability.ts` 的 `decisiveFactors` 收起 ×1.00 的 chip，以及每家可抽候選都一字不差（因素＋倍率＋原因）的 chip——原因要一起比，快打烊倍率是常數、各家打烊時刻不同；trace 照舊完整寫入、`/search` 回應照舊帶齊。
+- ~~**均勻倍率 chip 策略：** timeslot 全場命中、rain 全場飽和、「推薦過但尚未中選」穩態 chip 三案併為一次決策：由引擎 guard 或 web 端過濾（P3 batch 1 final review）。~~ 已結案（2026-10-10）：web 端過濾，`probability.ts` 的 `decisiveFactors` 收起倍率恰為 1 的 chip，以及每家可抽候選的因素、原始倍率、原因完全相同的 chip——比原始值是因為距離是連續值（0.996 印成 ×1.00 仍會拉開機率），原因要一起比是因為快打烊倍率是常數、各家打烊時刻不同；trace 照舊完整寫入、`/search` 回應照舊帶齊。
 
 - ~~**dining_history 排序索引**：足跡頁查詢為 `user_id` 過濾＋`decided_at` 排序，既有 `dining_history_recency (user_id, restaurant_id, decided_at)` 中欄卡住排序用不上；個人規模無感，下次動 `dining_history` schema 時順手補 `(user_id, decided_at desc)`（2026-08-14 Round 2 eng review）。~~ 已結案（2026-08-15）：0022 順手補 `(user_id, decided_at desc)`。
 

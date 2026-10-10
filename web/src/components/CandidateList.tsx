@@ -89,7 +89,7 @@ export default function CandidateList({ rows, voting, picking }: {
                     {factors.map((e, i) => (
                       <span key={i}
                         className={`inline-flex items-center gap-[3px] ${
-                          e.mult > 1 ? 'text-ok' : 'text-warn' // ×1.00 已由 decisiveFactors 濾掉
+                          e.mult > 1 ? 'text-ok' : 'text-warn' // 倍率恰為 1 的已由 decisiveFactors 濾掉
                         }`}>
                         {e.mult > 1 && <ArrowUp className="h-[11px] w-[11px] shrink-0" />}
                         {e.mult < 1 && <ArrowDown className="h-[11px] w-[11px] shrink-0" />}

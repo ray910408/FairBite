@@ -199,12 +199,15 @@ export default function RoomPage() {
   const guestsReady = guestsNotReady === 0
   guestsReadyRef.current = guestsReady
   // 非房主看不到房主的按鈕：講清楚現在在等誰、輪到自己做什麼。
-  // uid 還沒讀到時不知道是不是房主，先不講；候選全滅另有死路橫幅，不能再叫人等轉盤
+  // uid 還沒讀到時不知道是不是房主，先不講；候選全滅另有死路橫幅，不能再叫人等轉盤；
+  // 初選表決開放時成員自己有事可做，不能只叫人等
+  const keptCount = candidates.filter(c => c.status === 'kept').length
   const guestHint = isHost || !me ? undefined : ({
     lobby: !me.ready ? '設好條件後，按最下方「我準備好了」'
       : guestsReady ? '已準備好，等房主開始搜尋' : `已準備好，還在等 ${guestsNotReady} 人`,
-    candidates: '候選出爐了，等房主開始投票',
-    voting: candidates.some(c => c.status === 'kept') ? '投完票後，等房主啟動轉盤' : undefined,
+    candidates: shortlistOpen(keptCount, members.length)
+      ? '候選很多：可以先表決要不要初選，之後等房主開始投票' : '候選出爐了，等房主開始投票',
+    voting: keptCount > 0 ? '投完票後，等房主啟動轉盤' : undefined,
     pending: '等房主確認，或排除這家重轉',
   } as Partial<Record<Room['status'], string>>)[room.status]
   // 初選：圈選只算仍是 kept 的候選（同 server keptPicksSQL）

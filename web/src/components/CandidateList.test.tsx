@@ -17,7 +17,7 @@ const row = (id: string, minutes: number, mult: number): CandidateRow => ({
 
 it('候選列顯示店家資訊，只留會拉開機率的倍率', () => {
   const html = renderToStaticMarkup(<CandidateList rows={[row('a', 1, 1.2), row('b', 5, 1.1)]} />)
-  expect(html).toContain('★4.3・中等・日式')
+  expect(html).toContain('★4.3・價位中等・日式')
   expect(html).toContain('平均交通約 1 分鐘')
   expect(html).toContain('平均交通約 5 分鐘')
   expect(html).not.toContain('偏好命中') // 全場同倍率
