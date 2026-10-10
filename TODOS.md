@@ -153,7 +153,7 @@ QA 對象 https://ray910408.github.io/FairBite/#/auth（headless，test 帳號�
 
 - ~~**ISSUE-005（Low）足跡頁把 3/5 星畫成 3 顆滿星** — `HistoryPage.tsx` 的清單列只渲染 N 顆實心星、沒有空心星做 5 星刻度，3 分讀起來像滿分。摘要區的「平均 3.0 ★」正確，只有列表圖示缺刻度。`icons.tsx` 的 `Star` 已有 `filled` prop（PR #17 加的），補刻度是小改。~~ — 已修（c8d9c57，2026-08-22）：清單列固定畫 5 顆星，未達分數者為空心；2026-10-08 查證。
 
-- **ISSUE-006（Low，間歇）冷啟動首次登入 `dining_history?rating=lte.2` 回 401** — 全新瀏覽器 process 首次登入時觀察到一次（該次首頁 HTML 載入 7489ms），相鄰的同表查詢是 200。像是這支請求在 token 掛上去前就送出的競態；畫面無提示，只有 console 一行 401，影響是「避開不喜歡的菜系」訊號被靜默丟掉。清 localStorage 重登／登出重登／重整各測一次都無法重現。
+- ~~**ISSUE-006（Low，間歇）冷啟動首次登入 `dining_history?rating=lte.2` 回 401** — 全新瀏覽器 process 首次登入時觀察到一次（該次首頁 HTML 載入 7489ms），相鄰的同表查詢是 200。像是這支請求在 token 掛上去前就送出的競態；畫面無提示，只有 console 一行 401，影響是「避開不喜歡的菜系」訊號被靜默丟掉。清 localStorage 重登／登出重登／重整各測一次都無法重現。~~ — 已修（2026-10-10）：不是前端競態，token 有掛上。401 body 是 PostgREST 的 `PGRST303 JWT issued at future`：v14.15（正式站同版，見 `supabase/.temp/rest-version`）閒置後快取時鐘停在舊值，剛簽發的 JWT 被判 iat 超前 30 秒以上（上游 PostgREST#5196，v14.18 修）。本機 Kong log 的 401 全在 PostgREST 閒置之後（6.4 小時、40 秒）；同一刻打到房籍查詢時，新帳號首頁會跳「你還在房間裡」。`web/src/lib/supabase.ts` 的 client fetch 遇到這個錯誤會隔 1 秒原樣重送一次。
 
 - **ISSUE-007（Low）邀請碼錯誤橫幅不會消失** — 「房間不存在或已開始」在首頁一直停留到換路由，中間展開地圖、搜尋地點、切用餐時間、觸發另一則驗證訊息期間都還在，跟當下操作已無關。
 
