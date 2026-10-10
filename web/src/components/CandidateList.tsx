@@ -1,7 +1,8 @@
 import type { CandidateRow } from '../lib/types'
 import { buildGoogleMapsPlaceUrl } from '../lib/maps'
 import { isGoogleSourced } from '../lib/placesSource'
-import { chipLabel, formatPercents, sortExcluded, sortKept } from '../lib/probability'
+import { restaurantFacts } from '../lib/labels'
+import { chipLabel, decisiveFactors, formatPercents, sortExcluded, sortKept } from '../lib/probability'
 import { SHORTLIST_PICK_MAX, SHORTLIST_PICK_MIN } from '../lib/shortlist'
 import { VETO_QUOTA } from '../lib/votes'
 import { ArrowDown, ArrowUp, Chevron } from './icons'
@@ -30,6 +31,7 @@ export default function CandidateList({ rows, voting, picking }: {
   const percents = formatPercents(kept.map(c => c.probability ?? 0))
   const excluded = sortExcluded(rows)
   const max = Math.max(...kept.map(c => c.probability ?? 0), 0.0001)
+  const decisive = decisiveFactors(kept)
   const showGoogleAttribution = rows.some(c => isGoogleSourced(c.restaurants.source))
 
   // 精簡按鈕：btn-primary 本身沒邊框，補框才不會和 btn-quiet 切換時寬度跳 2px。
@@ -55,6 +57,8 @@ export default function CandidateList({ rows, voting, picking }: {
         <ul className="mt-3">
           {kept.map((c, ci) => {
             const google = isGoogleSourced(c.restaurants.source)
+            const facts = restaurantFacts(c.restaurants)
+            const factors = c.weight_breakdown.filter(decisive)
             return (
               <li key={c.restaurant_id} data-testid="candidate-row"
                 className="flex animate-row-in flex-col gap-2 border-t border-border px-1 py-3.5"
@@ -79,12 +83,13 @@ export default function CandidateList({ rows, voting, picking }: {
                   <div className="h-full bg-brand"
                     style={{ width: `${((c.probability ?? 0) / max) * 100}%` }} />
                 </div>}
-                {c.weight_breakdown.length > 0 && (
+                {facts.length > 0 && <p className="text-[13px]">{facts.join('・')}</p>}
+                {factors.length > 0 && (
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[12.5px] leading-relaxed">
-                    {c.weight_breakdown.map((e, i) => (
+                    {factors.map((e, i) => (
                       <span key={i}
                         className={`inline-flex items-center gap-[3px] ${
-                          e.mult > 1 ? 'text-ok' : e.mult < 1 ? 'text-warn' : 'text-fg-muted'
+                          e.mult > 1 ? 'text-ok' : 'text-warn' // ×1.00 已由 decisiveFactors 濾掉
                         }`}>
                         {e.mult > 1 && <ArrowUp className="h-[11px] w-[11px] shrink-0" />}
                         {e.mult < 1 && <ArrowDown className="h-[11px] w-[11px] shrink-0" />}

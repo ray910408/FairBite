@@ -15,6 +15,15 @@ type Props = {
   current?: DeparturePoint | null
 }
 
+// 確認鈕只在有東西可確認時出現：換地點一定要選新點；lobby 要選了和現任不同的點。
+// 現任＝本機記得的出發點，確認成功後 saveRoomDeparture 寫入 → 按鈕自動收起，
+// 不留一顆再按就把全員準備歸零的按鈕（relocation.go 會遞增 search_version）
+export function showLocationConfirm(status: Props['status'], point: DeparturePoint | null,
+  current: DeparturePoint | null) {
+  if (status === 'relocating') return true
+  return point !== null && (point.lat !== current?.lat || point.lng !== current?.lng)
+}
+
 export default function RelocationPanel({
   isHost, status, wantChange, yesCount, memberCount, busy, onVote, onChoose, current = null,
 }: Props) {
@@ -56,10 +65,13 @@ export default function RelocationPanel({
           relocating 則必須選新點，舊點不算數 */}
       <LocationPicker value={point ?? (status === 'lobby' ? initial : null)} onChange={setPoint}
         fallbackLabel={status === 'lobby' ? '已設定' : undefined} />
-      <button type="button" className="btn btn-primary min-h-11 w-full"
-        disabled={busy || !point} onClick={() => point && onChoose(point)}>
-        {status === 'relocating' ? '確認新地點' : '確認用餐地點'}
-      </button>
+      {/* lobby 沒改點就沒有東西可確認：不擺一顆灰掉的主按鈕在房主第一眼的位置 */}
+      {showLocationConfirm(status, point, current) && (
+        <button type="button" className="btn btn-primary min-h-11 w-full"
+          disabled={busy || !point} onClick={() => point && onChoose(point)}>
+          {status === 'relocating' ? '確認新地點' : '確認用餐地點'}
+        </button>
+      )}
     </section>
   )
 }

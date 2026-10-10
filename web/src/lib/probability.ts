@@ -44,6 +44,14 @@ export function chipLabel(e: TraceEntry): string {
   return `${name} ×${e.mult.toFixed(2)} · ${e.reason}`
 }
 
+// 不改變相對機率的倍率不顯示：中性（×1.00），或每家可抽候選的 chip 一字不差（全場同乘＝互相抵銷）。
+// 比對整串 chip 文字：快打烊倍率是常數 0.6，但各家打烊時刻不同，只比倍率會把時刻一起藏掉
+export function decisiveFactors(kept: CandidateRow[]): (e: TraceEntry) => boolean {
+  const uniform = new Set(kept.length < 2 ? [] : kept[0].weight_breakdown.map(chipLabel)
+    .filter(k => kept.every(c => c.weight_breakdown.some(e => chipLabel(e) === k))))
+  return e => e.mult.toFixed(2) !== '1.00' && !uniform.has(chipLabel(e))
+}
+
 export function sortKept(rows: CandidateRow[]): CandidateRow[] {
   return rows
     .filter(r => r.status === 'kept')

@@ -1,4 +1,4 @@
-import { CUISINE_LABEL } from './labels'
+import { knownCuisineLabels } from './labels'
 
 // 足跡頁（spec 2026-08-14）資料塑形。查詢結果為 decided_at 倒序，
 // 這裡的函式都以此為輸入前提。日期一律瀏覽器當地時間（決策 #8）。
@@ -16,11 +16,8 @@ export type FootprintSummary = {
   cuisineTop: [string, number][]   // [中文標籤, 次數] 前 5；未知內部 tag（如 dimsum）不計
 }
 
-// spec「已知 tag 才顯示」規則的單一真相點（summarize 與清單 chips 共用）：
-// 不在對照表的內部 tag（如 dimsum）不顯示；保輸入順序
-export function knownCuisineLabels(tags: string[]): string[] {
-  return tags.map(t => CUISINE_LABEL[t]).filter((l): l is string => Boolean(l))
-}
+// 「已知 tag 才顯示」的單一真相點搬到 labels.ts（候選列也用）；足跡頁照舊從這裡拿
+export { knownCuisineLabels }
 
 export function summarize(rows: FootprintRow[], total: number): FootprintSummary {
   const rated = rows.filter(r => r.rating !== null)
