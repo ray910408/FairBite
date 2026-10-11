@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMidnightRerender } from '../hooks/useMidnightRerender'
 import { useRoom } from '../hooks/useRoom'
+import { useRoomSettingsWrites } from '../hooks/useRoomSettingsWrites'
 import {
   cancelShortlist, chooseLocation, confirmDraw, editConditions, pendingLeave, redrawRoom, startVoting, voteLocation,
   voteShortlist,
@@ -9,9 +10,7 @@ import {
 import { loadRoomDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
 import { isVetoDeadEnd } from '../lib/deadEnd'
 import { EXPLORATION_OPTIONS } from '../lib/labels'
-import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
-import { isGoogleSourced } from '../lib/placesSource'
-import { snapshotCandidates } from '../lib/probability'
+import { formatMealTime } from '../lib/mealTime'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import {
   SHORTLIST_PICK_MIN, hasMyPick, keptPickCounts, membersBelowMin, pickCounts, shortlistOpen,
@@ -21,70 +20,16 @@ import type { Room } from '../lib/types'
 import ConditionsForm from '../components/ConditionsForm'
 import { LeaveConfirm, LeaveRoomsBody } from '../components/LeaveConfirm'
 import CandidateList from '../components/CandidateList'
-import Wheel from '../components/Wheel'
-import ResultCard from '../components/ResultCard'
-import RatingPrompt from '../components/RatingPrompt'
+import DrawPanel from '../components/DrawPanel'
+import { MemberList } from '../components/MemberList'
 import RelocationPanel from '../components/RelocationPanel'
+import { RoomHeader } from '../components/RoomHeader'
+import { RoomSettings } from '../components/RoomSettings'
 import ShortlistVotePanel from '../components/ShortlistVotePanel'
-import { GuestRegistrationPrompt } from '../components/GuestRegistrationPrompt'
 import { InviteQRCode } from '../components/InviteQRCode'
-import { Alert, Check, Copy, Logo, Spinner } from '../components/icons'
-
-const STEPS = [
-  { key: 'lobby', label: '設定條件', numeral: '壹' },
-  { key: 'candidates', label: '候選出爐', numeral: '貳' },
-  { key: 'voting', label: '投票', numeral: '參' },
-  { key: 'pending', label: '待確認', numeral: '肆' },
-  { key: 'decided', label: '定案', numeral: '伍' },
-] as const
+import { Alert, Logo, Spinner } from '../components/icons'
 
 const SEARCH_SLOW_STATUS_MS = 3000
-
-// 菜單式狀態列：成員名……狀態。ready 與初選圈滿共用 ok 色
-const MEMBER_STATUS = 'inline-flex items-center gap-1 whitespace-nowrap text-sm'
-
-// 房內三組 segmented control：墨線框、選中反白（同首頁用餐時間）
-const SEGMENTED = 'divide-x divide-rule rounded-btn border border-rule'
-function segment(active: boolean) {
-  return `min-h-11 text-sm font-semibold tracking-[0.1em] transition-colors duration-150 ${
-    active ? 'bg-fg text-canvas' : 'text-fg enabled:hover:bg-brand-soft'}`
-}
-
-function Stepper({ status }: { status: Room['status'] }) {
-  // relocating／shortlisting 不是獨立步驟：借用投票／候選出爐那格並改標籤
-  const current = STEPS.findIndex(s => s.key === (
-    status === 'relocating' ? 'voting' : status === 'shortlisting' ? 'candidates' : status))
-  // 320px 寬：五格不畫連接線、靠 justify-between 撐開，字距縮到 gap-0.5 才放得下
-  return (
-    <ol className="flex items-center justify-between gap-1 text-xs">
-      {STEPS.map((s, i) => (
-        <li key={s.key} aria-current={i === current ? 'step' : undefined}
-          className="flex items-center gap-0.5 whitespace-nowrap">
-          {i < current ? <Check className="h-3.5 w-3.5 shrink-0 text-ok" />
-            : <span aria-hidden="true" className={`font-serif ${i === current ? 'font-black text-brand' : 'text-fg-muted'}`}>
-              {s.numeral}
-            </span>}
-          <span className={i === current ? 'font-bold text-brand underline decoration-2 underline-offset-[5px]'
-            : 'text-fg-muted'}>
-            {s.key === 'voting' && status === 'relocating' ? '換地點'
-              : s.key === 'candidates' && status === 'shortlisting' ? '初選' : s.label}
-          </span>
-        </li>
-      ))}
-    </ol>
-  )
-}
-
-// 初選中每位成員（含房主）的圈選進度；圈滿下限用 ok 樣式，比照「已準備」
-function pickBadge(count: number) {
-  const done = count >= SHORTLIST_PICK_MIN
-  return (
-    <span className={`${MEMBER_STATUS} ${done ? 'text-ok' : 'text-fg-muted'}`}>
-      {done && <Check className="h-3.5 w-3.5 shrink-0" />}
-      {done ? `已圈 ${count} 家` : `圈選中 ${count}/${SHORTLIST_PICK_MIN}`}
-    </span>
-  )
-}
 
 export default function RoomPage() {
   const { id = '' } = useParams()
@@ -116,16 +61,6 @@ export default function RoomPage() {
   // 房籍查詢自己的世代（比照 HistoryPage）：aria-busy 擋不住點擊，兩次點擊之間房籍
   // 還可能在別的分頁被改，只有最後一次點擊的回應能生效
   const leaveGen = useRef(0)
-  const mealTimeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const pendingMealTime = useRef<{ generation: number; iso: string | null } | null>(null)
-  const roomWriteChain = useRef(Promise.resolve())
-  const roomWriteGeneration = useRef(0)
-  const roomWriteQueued = useRef(0)
-  const roomWriteFailures = useRef(new Set<keyof Pick<Room, 'exploration' | 'meal_time' | 'cuisine_filter'>>())
-  const roomWritesValid = useRef(true)
-  const mealTimeGeneration = useRef(0)
-  const durableMealTimeGeneration = useRef(0)
-  const durableMealTime = useRef<string | null>(room?.meal_time ?? null)
   const conditionsFlush = useRef<() => Promise<boolean>>(async () => true)
   const guestsReadyRef = useRef(true)
   const searchInFlight = useRef(false)
@@ -137,16 +72,23 @@ export default function RoomPage() {
   const editConditionsInFlight = useRef(false)
   const pendingActionInFlight = useRef(false)
   const currentDraw = draw?.version === room?.draw_version ? draw : null
-  const drawCandidates = currentDraw ? snapshotCandidates(candidates, currentDraw.probabilities) : []
 
   useEffect(() => {
     const d = room?.meal_time ? new Date(room.meal_time) : null
     setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
     setDraftMM(d ? String(d.getMinutes()).padStart(2, '0') : '')
   }, [room?.meal_time])
-  useEffect(() => {
-    durableMealTime.current = room?.meal_time ?? null
-  }, [room?.id, room?.meal_time])
+  // 本 hook 的 effect 必須排第二：RoomPage.test.ts 依呼叫順序取 effects[2] 當下面的搜尋 lifecycle
+  const settings = useRoomSettingsWrites(room, {
+    setActionError,
+    setRoomSettingsBlocked,
+    showMealTime: iso => {
+      const d = iso ? new Date(iso) : null
+      setEditingCustom(d !== null)
+      setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
+      setDraftMM(d ? String(d.getMinutes()).padStart(2, '0') : '')
+    },
+  })
   useEffect(() => {
     const mounted = searchMounted
     const generation = searchGeneration
@@ -214,113 +156,6 @@ export default function RoomPage() {
   const picksByMember = keptPickCounts(shortlistPicks, candidates)
   const shortlistUnfinished = membersBelowMin(members, picksByMember)
 
-  function updateRoomSettingsGate() {
-    setRoomSettingsBlocked(roomWriteQueued.current > 0 || pendingMealTime.current !== null || !roomWritesValid.current)
-  }
-
-  function restoreDurableMealTime() {
-    const d = durableMealTime.current ? new Date(durableMealTime.current) : null
-    setEditingCustom(d !== null)
-    setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
-    setDraftMM(d ? String(d.getMinutes()).padStart(2, '0') : '')
-  }
-
-  function enqueueRoomWrite(generation: number, patch: Partial<Pick<Room, 'exploration' | 'meal_time' | 'cuisine_filter'>>,
-    errorMessage: string, onLatestFailure?: () => void) {
-    roomWriteQueued.current++
-    updateRoomSettingsGate()
-    const operation = roomWriteChain.current.then(async () => {
-      let failed = false
-      try {
-        const { error, count } = await supabase.from('rooms')
-          .update(patch, { count: 'exact' }).eq('id', room!.id)
-        failed = !!error || count === 0
-      } catch {
-        failed = true
-      }
-      const fields = Object.keys(patch) as Array<keyof typeof patch>
-      if (failed) {
-        for (const field of fields) roomWriteFailures.current.add(field)
-        roomWritesValid.current = false
-        onLatestFailure?.()
-        setActionError(errorMessage)
-      } else {
-        if ('meal_time' in patch && generation > durableMealTimeGeneration.current) {
-          durableMealTimeGeneration.current = generation
-          durableMealTime.current = patch.meal_time ?? null
-          if (patch.meal_time === null) {
-            setEditingCustom(false)
-            setDraftHH('')
-            setDraftMM('')
-          }
-        }
-        for (const field of fields) roomWriteFailures.current.delete(field)
-        roomWritesValid.current = roomWriteFailures.current.size === 0
-        if (roomWritesValid.current) {
-          setActionError('')
-        }
-      }
-      return !failed
-    })
-    const settled = operation.then(result => {
-      roomWriteQueued.current--
-      updateRoomSettingsGate()
-      return result
-    })
-    roomWriteChain.current = settled.then(() => undefined)
-    return settled
-  }
-
-  function enqueuePendingMealTime() {
-    clearTimeout(mealTimeTimer.current)
-    mealTimeTimer.current = undefined
-    const pending = pendingMealTime.current
-    if (!pending) return roomWriteChain.current
-    pendingMealTime.current = null
-    return enqueueRoomWrite(pending.generation, { meal_time: pending.iso }, '用餐時間更新失敗', () => {
-      if (pending.generation === mealTimeGeneration.current) restoreDurableMealTime()
-    })
-  }
-
-  function saveRoomSetting(patch: Partial<Pick<Room, 'exploration' | 'cuisine_filter'>>, errorMessage: string) {
-    void enqueuePendingMealTime()
-    const generation = ++roomWriteGeneration.current
-    setActionError('')
-    return enqueueRoomWrite(generation, patch, errorMessage)
-  }
-
-  async function flushRoomWrites() {
-    enqueuePendingMealTime()
-    await roomWriteChain.current
-    return roomWritesValid.current && roomWriteQueued.current === 0 && pendingMealTime.current === null
-  }
-
-  function cancelPendingMealTime() {
-    clearTimeout(mealTimeTimer.current)
-    mealTimeTimer.current = undefined
-    pendingMealTime.current = null
-    updateRoomSettingsGate()
-  }
-
-  function saveMealTime(iso: string | null) {
-    setActionError('')
-    cancelPendingMealTime()
-    const generation = ++roomWriteGeneration.current
-    mealTimeGeneration.current = generation
-    pendingMealTime.current = { generation, iso }
-    updateRoomSettingsGate()
-    mealTimeTimer.current = setTimeout(() => {
-      void enqueuePendingMealTime()
-    }, 400)
-  }
-
-  function updateMealTime(hhmm: string) {
-    setActionError('')
-    const r = buildMealTimeISO(hhmm)
-    if ('error' in r) { setActionError(r.error); return }
-    saveMealTime(r.iso)
-  }
-
   async function copyCode() {
     try {
       await navigator.clipboard.writeText(room!.code)
@@ -343,6 +178,58 @@ export default function RoomPage() {
     setActionError('')
     const msg = await togglePick(restaurantId)
     if (msg) setActionError(msg)
+  }
+
+  async function onSearch() {
+    if (searchInFlight.current || !guestsReadyRef.current) return
+    searchInFlight.current = true
+    const generation = ++searchGeneration.current
+    const controller = new AbortController()
+    searchAbort.current = controller
+    const isCurrent = () => searchMounted.current &&
+      searchGeneration.current === generation && !controller.signal.aborted
+    setSearching(true)
+    setActionError('')
+    try {
+      const [conditionsOK, roomSettingsOK] = await Promise.all([
+        conditionsFlush.current(),
+        settings.flushRoomWrites(),
+      ])
+      if (!isCurrent() || !conditionsOK || !roomSettingsOK || !guestsReadyRef.current) return
+      const { searchRoom } = await import('../lib/api')
+      if (!isCurrent()) return
+      const o = await searchRoom(room!.id, {
+        signal: controller.signal,
+        onRequestStart: () => {
+          if (!isCurrent()) return
+          const slowTimer = setTimeout(() => {
+            if (searchSlowTimer.current === slowTimer && isCurrent()) setSearchSlow(true)
+          }, SEARCH_SLOW_STATUS_MS)
+          searchSlowTimer.current = slowTimer
+        },
+      })
+      if (!isCurrent()) return
+      setActionError(o.error ?? '')
+      setActionWarning(o.warning ?? '')
+    } catch {
+      if (!isCurrent()) return
+      setActionError('搜尋失敗：無法連線到伺服器')
+    } finally {
+      const currentRequest = isCurrent()
+      if (searchAbort.current === controller) {
+        searchAbort.current = undefined
+        searchInFlight.current = false
+      }
+      if (currentRequest) {
+        const timer = searchSlowTimer.current
+        searchSlowTimer.current = undefined
+        if (timer !== undefined) {
+          clearTimeout(timer)
+          setSearchSlow(false)
+        }
+        setSearching(false)
+      }
+    }
   }
 
   // candidates 與 shortlisting 共用：初選未圈滿時伺服器回 409 原文
@@ -419,7 +306,7 @@ export default function RoomPage() {
       // Relocating uses frozen conditions; its ConditionsForm is already unmounted.
       const [conditionsOK, roomSettingsOK] = await Promise.all([
         room!.status === 'lobby' ? conditionsFlush.current() : true,
-        flushRoomWrites(),
+        settings.flushRoomWrites(),
       ])
       if (!conditionsOK || !roomSettingsOK) return
       const msg = await chooseLocation(room!.id, point.lat, point.lng, room!.search_version)
@@ -430,6 +317,33 @@ export default function RoomPage() {
       }
     } catch { setActionError('更新地點失敗：無法連線到伺服器') }
     finally { setRelocationBusy(false) }
+  }
+
+  // 抽中待確認的兩個房主動作：成功後等 refetch 完成才解除 busy
+  async function onRedraw() {
+    if (pendingActionInFlight.current) return
+    pendingActionInFlight.current = true; setPendingAction('redraw'); setActionError('')
+    try {
+      const msg = await redrawRoom(room!.id, currentDraw!.version)
+        .catch(() => '重轉失敗：無法連線到伺服器')
+      if (msg) setActionError(msg)
+      else await refetch().catch(() => setActionError('重轉成功，但重新載入失敗，請重新整理頁面'))
+    } finally {
+      pendingActionInFlight.current = false; setPendingAction(null)
+    }
+  }
+
+  async function onConfirmDraw() {
+    if (pendingActionInFlight.current) return
+    pendingActionInFlight.current = true; setPendingAction('confirm'); setActionError('')
+    try {
+      const msg = await confirmDraw(room!.id, currentDraw!.version)
+        .catch(() => '確認失敗：無法連線到伺服器')
+      if (msg) setActionError(msg)
+      else await refetch().catch(() => setActionError('確認成功，但重新載入失敗，請重新整理頁面'))
+    } finally {
+      pendingActionInFlight.current = false; setPendingAction(null)
+    }
   }
 
   function closeLeave() {
@@ -472,32 +386,7 @@ export default function RoomPage() {
       {/* dialog 開著時整塊背景 inert：fixed 遮罩擋得住指標（elementFromPoint 實測），
           對 tab 順序毫無作用——沒有它鍵盤使用者可以 tab 到「開始搜尋餐廳」按 Enter（Codex P2） */}
       <div className="min-h-screen" inert={!!leaveDialog}>
-      <header className="sticky top-0 z-20 bg-canvas/85 backdrop-blur">
-        {/* 320px 放不下最長的印章（等待選新地點）時讓印章換行，不撐出水平捲動 */}
-        <div className="mx-auto flex w-full max-w-lg flex-wrap items-center gap-x-2 gap-y-1 p-3 pb-2 sm:gap-x-3">
-          {/* 回首頁＝離席（ADR-0007），代價不可逆——攔下導覽先查再確認 */}
-          <Link to="/" aria-label="回首頁" ref={leaveTriggerRef}
-            aria-busy={leaveChecking} onClick={askLeave}
-            className="-ml-1.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl">
-            <Logo className="h-8 w-8" />
-          </Link>
-          {/* 12 碼在 320px 塞不下 text-lg + 0.25em 字距，小螢幕縮小、sm 以上維持原樣 */}
-          <button onClick={copyCode}
-            className="btn btn-quiet min-h-11 gap-1.5 px-1.5 font-mono text-sm sm:gap-2 sm:px-3 sm:text-lg sm:tracking-[0.25em]">
-            {room.code}
-            {copied ? <Check className="h-4 w-4 text-ok" /> : <Copy className="h-4 w-4 text-fg-muted" />}
-          </button>
-          <span className="sr-only" aria-live="polite">{copied ? '邀請碼已複製' : ''}</span>
-          <Link to="/history" className="btn btn-quiet min-h-11 px-1.5 text-xs sm:px-2 sm:text-sm">足跡</Link>
-          <span className="seal ml-auto text-xs min-[375px]:text-sm">
-            {{ lobby: '等待中', candidates: '候選已出爐', shortlisting: '初選中', voting: '投票中', relocating: '等待選新地點', pending: '抽中待確認', decided: '已定案' }[room.status]}
-          </span>
-        </div>
-        <div className="mx-auto w-full max-w-lg px-3">
-          <Stepper status={room.status} />
-          <div className="double-rule mt-3" />
-        </div>
-      </header>
+      {RoomHeader({ room, copied, onCopy: copyCode, leaveChecking, onLeave: askLeave, leaveTriggerRef })}
 
       <main className="mx-auto w-full max-w-lg space-y-4 p-4">
         {!connected && (
@@ -529,33 +418,7 @@ export default function RoomPage() {
           </p>
         )}
 
-        <section className="animate-rise">
-          <h2 className="mb-1.5 text-[15px] font-bold">成員（{members.length}）</h2>
-          <ul>
-            {members.map(m => (
-              <li key={m.user_id} className="flex items-baseline gap-1.5 py-1.5">
-                <span className="min-w-0 truncate font-serif font-medium">
-                  {m.profiles?.display_name ?? '成員'}
-                </span>
-                <span aria-hidden="true" className="leader" />
-                {m.user_id === room.host_id && (
-                  // 括號只給報讀器：印章裡只蓋「房主」兩字
-                  <span className="seal px-1 py-0 text-xs">
-                    <span className="sr-only">（</span>房主<span className="sr-only">）</span>
-                  </span>
-                )}
-                {room.status === 'shortlisting' ? (
-                  pickBadge(picksByMember[m.user_id] ?? 0)
-                ) : m.user_id !== room.host_id && (
-                  <span className={`${MEMBER_STATUS} ${m.ready ? 'text-ok' : 'text-fg-muted'}`}>
-                    {m.ready && <Check className="h-3.5 w-3.5 shrink-0" />}
-                    {m.ready ? '已準備' : '設定中'}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
+        {MemberList({ room, members, picksByMember })}
         {guestHint && <p role="status" className="banner bg-brand-soft text-brand-strong">{guestHint}</p>}
 
         {(room.status === 'voting' || room.status === 'relocating' || (room.status === 'lobby' && isHost)) && (
@@ -577,165 +440,14 @@ export default function RoomPage() {
             ・用餐時間：{formatMealTime(room.meal_time)}
           </p>
         )}
-        {room.status === 'lobby' && (
-          <section className="card animate-rise">
-            <h2 className="mb-1 text-sm font-semibold text-fg-muted">探索檔位</h2>
-            <p className="mb-3 text-xs text-fg-muted">
-              {EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[2]}
-              {!isHost && '（由房主設定）'}
-            </p>
-            {/* D14：冷啟動誠實說明 —— 檔位靠同席紀錄運作，沒紀錄前三檔等效 */}
-            <p className="mb-3 text-xs text-fg-muted">
-              檔位依成員的同席紀錄調整機率；大家開始用這裡抽餐廳後才會逐漸生效
-            </p>
-            <div className={`grid grid-cols-3 ${SEGMENTED}`}>
-              {EXPLORATION_OPTIONS.map(([key, label]) => (
-                <button key={key} type="button" aria-pressed={room.exploration === key}
-                  disabled={!isHost || searching}
-                  className={`${segment(room.exploration === key)} disabled:cursor-default`}
-                  onClick={() => saveRoomSetting({ exploration: key }, '探索檔位更新失敗')}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-        {room.status === 'lobby' && (
-          <section className="card animate-rise">
-            <h2 className="mb-1 text-sm font-semibold text-fg-muted">用餐時間</h2>
-            <p className="mb-3 text-xs text-fg-muted">
-              {formatMealTime(room.meal_time)}
-              {!isHost && '（由房主設定）'}
-            </p>
-            {isHost && (
-              <div className="space-y-2">
-                <div className={`grid grid-cols-2 ${SEGMENTED}`}>
-                  <button type="button" aria-pressed={room.meal_time === null && !editingCustom}
-                    disabled={searching}
-                    className={segment(room.meal_time === null && !editingCustom)}
-                    onClick={() => saveMealTime(null)}>
-                    馬上出發
-                  </button>
-                  <button type="button" aria-pressed={room.meal_time !== null || editingCustom}
-                    disabled={searching}
-                    className={segment(room.meal_time !== null || editingCustom)}
-                    onClick={() => {
-                      cancelPendingMealTime()
-                      setEditingCustom(true)
-                    }}>
-                    自訂時間
-                  </button>
-                </div>
-                {(editingCustom || room.meal_time !== null) && (
-                  <div className="flex items-center gap-2">
-                    <select className="field flex-1" aria-label="用餐時間（時）"
-                      disabled={searching}
-                      value={draftHH}
-                      onChange={e => {
-                        const hh = e.target.value
-                        setDraftHH(hh)
-                        if (hh && draftMM) void updateMealTime(`${hh}:${draftMM}`)
-                      }}>
-                      <option value="" disabled>時</option>
-                      {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0')).map(h => (
-                        <option key={h} value={h}>{h}</option>
-                      ))}
-                    </select>
-                    <span className="text-fg-muted">:</span>
-                    <select className="field flex-1" aria-label="用餐時間（分）"
-                      disabled={searching}
-                      value={draftMM}
-                      onChange={e => {
-                        const mm = e.target.value
-                        setDraftMM(mm)
-                        if (draftHH && mm) void updateMealTime(`${draftHH}:${mm}`)
-                      }}>
-                      <option value="" disabled>分</option>
-                      {Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0')).map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
-        )}
-        {room.status === 'lobby' && (
-          <section className="card animate-rise">
-            <h2 className="mb-1 text-sm font-semibold text-fg-muted">菜系過濾</h2>
-            <p className="mb-3 text-xs text-fg-muted">
-              開啟後只保留符合成員菜系偏好的店；大家都沒選菜系時不會作用
-              {!isHost && '（由房主設定）'}
-            </p>
-            <div className={`grid grid-cols-2 ${SEGMENTED}`}>
-              {([[false, '關閉'], [true, '開啟']] as const).map(([value, label]) => (
-                <button key={label} type="button" aria-pressed={room.cuisine_filter === value}
-                  disabled={!isHost || searching}
-                  className={`${segment(room.cuisine_filter === value)} disabled:cursor-default`}
-                  onClick={() => saveRoomSetting({ cuisine_filter: value }, '菜系過濾更新失敗')}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
+        {room.status === 'lobby' && RoomSettings({ room, isHost, searching, settings,
+          editingCustom, setEditingCustom, draftHH, setDraftHH, draftMM, setDraftMM })}
         {room.status === 'lobby' && me && <ConditionsForm me={me} isHost={isHost} searchVersion={room.search_version} disabled={searching}
           onFlushAvailable={flush => { conditionsFlush.current = flush ?? (async () => false) }} />}
         {room.status === 'lobby' && isHost && (
           <button className="btn btn-primary w-full"
             disabled={searching || roomSettingsBlocked || !guestsReady} aria-busy={searching}
-            onClick={async () => {
-              if (searchInFlight.current || !guestsReadyRef.current) return
-              searchInFlight.current = true
-              const generation = ++searchGeneration.current
-              const controller = new AbortController()
-              searchAbort.current = controller
-              const isCurrent = () => searchMounted.current &&
-                searchGeneration.current === generation && !controller.signal.aborted
-              setSearching(true)
-              setActionError('')
-              try {
-                const [conditionsOK, roomSettingsOK] = await Promise.all([
-                  conditionsFlush.current(),
-                  flushRoomWrites(),
-                ])
-                if (!isCurrent() || !conditionsOK || !roomSettingsOK || !guestsReadyRef.current) return
-                const { searchRoom } = await import('../lib/api')
-                if (!isCurrent()) return
-                const o = await searchRoom(room.id, {
-                  signal: controller.signal,
-                  onRequestStart: () => {
-                    if (!isCurrent()) return
-                    const slowTimer = setTimeout(() => {
-                      if (searchSlowTimer.current === slowTimer && isCurrent()) setSearchSlow(true)
-                    }, SEARCH_SLOW_STATUS_MS)
-                    searchSlowTimer.current = slowTimer
-                  },
-                })
-                if (!isCurrent()) return
-                setActionError(o.error ?? '')
-                setActionWarning(o.warning ?? '')
-              } catch {
-                if (!isCurrent()) return
-                setActionError('搜尋失敗：無法連線到伺服器')
-              } finally {
-                const currentRequest = isCurrent()
-                if (searchAbort.current === controller) {
-                  searchAbort.current = undefined
-                  searchInFlight.current = false
-                }
-                if (currentRequest) {
-                  const timer = searchSlowTimer.current
-                  searchSlowTimer.current = undefined
-                  if (timer !== undefined) {
-                    clearTimeout(timer)
-                    setSearchSlow(false)
-                  }
-                  setSearching(false)
-                }
-              }
-            }}>
+            onClick={onSearch}>
             {searching ? <><Spinner className="h-5 w-5" />搜尋中…</>
               : guestsReady ? '開始搜尋餐廳' : `還有 ${guestsNotReady} 人還沒準備好`}
           </button>
@@ -835,61 +547,9 @@ export default function RoomPage() {
           <p role="status" className="banner bg-brand-soft text-brand-strong">正在同步最新抽選結果…</p>
         )}
         {(room.status === 'pending' || room.status === 'decided') && currentDraw && (
-          <div className="space-y-4">
-            {!spun && currentDraw.probabilities[currentDraw.winner_restaurant_id] != null ? (
-              <Wheel key={currentDraw.version} rows={drawCandidates} winnerId={currentDraw.winner_restaurant_id}
-                onDone={() => setSpun(true)} />
-            ) : (
-              <>
-                <ResultCard draw={currentDraw} candidates={drawCandidates} me={me}
-                  confirmed={room.status === 'decided'} />
-                {room.status === 'decided' && <RatingPrompt roomId={room.id} />}
-                {room.status === 'decided' && isGuest && (
-                  <GuestRegistrationPrompt userId={myUserId} roomId={room.id} open />
-                )}
-                {room.status === 'pending' && isHost && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <button type="button" className="btn btn-secondary w-full"
-                      disabled={pendingAction !== null} aria-busy={pendingAction === 'redraw'}
-                      onClick={async () => {
-                        if (pendingActionInFlight.current) return
-                        pendingActionInFlight.current = true; setPendingAction('redraw'); setActionError('')
-                        try {
-                          const msg = await redrawRoom(room.id, currentDraw.version)
-                            .catch(() => '重轉失敗：無法連線到伺服器')
-                          if (msg) setActionError(msg)
-                          else await refetch().catch(() => setActionError('重轉成功，但重新載入失敗，請重新整理頁面'))
-                        } finally {
-                          pendingActionInFlight.current = false; setPendingAction(null)
-                        }
-                      }}>
-                      {pendingAction === 'redraw' ? <><Spinner className="h-5 w-5" />重轉中…</> : '排除這家並重轉'}
-                    </button>
-                    <button type="button" className="btn btn-primary w-full"
-                      disabled={pendingAction !== null} aria-busy={pendingAction === 'confirm'}
-                      onClick={async () => {
-                        if (pendingActionInFlight.current) return
-                        pendingActionInFlight.current = true; setPendingAction('confirm'); setActionError('')
-                        try {
-                          const msg = await confirmDraw(room.id, currentDraw.version)
-                            .catch(() => '確認失敗：無法連線到伺服器')
-                          if (msg) setActionError(msg)
-                          else await refetch().catch(() => setActionError('確認成功，但重新載入失敗，請重新整理頁面'))
-                        } finally {
-                          pendingActionInFlight.current = false; setPendingAction(null)
-                        }
-                      }}>
-                      {pendingAction === 'confirm' ? <><Spinner className="h-5 w-5" />確認中…</> : '確認就吃這家'}
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-            {candidates.some(c => c.status === 'kept' && isGoogleSourced(c.restaurants.source)) && (
-              <p className="text-xs text-fg-muted">餐廳資料 Powered by Google</p>
-            )}
-            <p className="text-xs text-fg-muted">天氣資料 Open-Meteo.com（CC BY 4.0）</p>
-          </div>
+          <DrawPanel room={room} draw={currentDraw} candidates={candidates} spun={spun} onSpun={() => setSpun(true)}
+            me={me} myUserId={myUserId} isHost={isHost} isGuest={isGuest}
+            pendingAction={pendingAction} onRedraw={onRedraw} onConfirm={onConfirmDraw} />
         )}
       </main>
       </div>
