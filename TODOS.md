@@ -114,7 +114,7 @@ QA 對象 https://ray910408.github.io/FairBite/#/auth（headless，test 帳號�
 
 - **`leaveConfirmed` 旗標路徑無 E2E** — 單元測試已覆蓋「消耗旗標」與「回到同一筆 entry 不重用」，但沒有真瀏覽器走查（需新增一條「房內按確認→首頁」）。
 
-- **E2E 冷啟動 Realtime 待觀察（2026-10-11，`ci.yml` 的 `e2e` job）** — 2026-08-16 觀察到 `supabase start` 後首跑 `waitForRoomRealtime` 的 10 秒逾時撐不過 Realtime 首次訂閱。CI 在測試前先等一次訂閱成功並印出耗時：首次 CI（PR #44）暖身 2.2 秒、11/11 通過，本機冷啟動 1.6 秒。再看幾次 CI 的暖身耗時，穩定就結案。（用餐時間已固定 15:00，結果不隨執行時刻變動，見 `full-loop.spec.ts` 的 `E2E_MEAL_HH`。）
+- **E2E 冷啟動 Realtime 待觀察（2026-10-11，`ci.yml` 的 `e2e` job）** — 2026-08-16 觀察到 `supabase start` 後首跑 `waitForRoomRealtime` 的 10 秒逾時撐不過 Realtime 首次訂閱。CI 在測試前先等一次訂閱成功並印出耗時：首次 CI（PR #44）暖身 2.2 秒、11/11 通過，本機冷啟動 1.6 秒。再看幾次 CI 的暖身耗時，穩定就結案。（用餐時間固定在午後 15:00／15:30，結果不隨執行時刻變動，見 `full-loop.spec.ts` 的 `mealTimeForE2E`。）
 
 - **離席 dialog 的房籍清單在跨分頁競態下會過期**（PR #17 Codex review 2026-08-16，評估後不修）— dialog 開著時另一個分頁建房／加入，清單不會包含新房籍，但按下確認送出的 `/api/leave` 是以執行當下的房籍為準、全退，於是新房被靜默退掉且後果從沒顯示過。修法是「破壞性點擊當下重查，集合有變就要求再確認一次」。
   不修的理由：ADR-0007 Consequences 已裁定「多分頁開首頁會跳出離席確認；個人規模接受，不另做分頁互斥」，這條要求的正是分頁互斥。且它不是本 PR 造成的回歸——改動前是 mount 直接靜默全退、連 dialog 都沒有，現在只是清單可能過期，嚴格來說是變好而非變差。
