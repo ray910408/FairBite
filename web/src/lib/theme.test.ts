@@ -1,7 +1,13 @@
 /// <reference types="node" />
 import { readFileSync } from 'node:fs'
-import { afterEach, expect, it, vi } from 'vitest'
-import { applyTheme, getThemePref, setThemePref } from './theme'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+
+// theme.ts 在記憶體記著手選結果：每支測試重新載入模組，狀態才不會跨測試外漏
+let theme: typeof import('./theme')
+beforeEach(async () => {
+  vi.resetModules()
+  theme = await import('./theme')
+})
 
 // index.html 的 inline script 和 applyTheme 各有一份偏好解析；兩份逐案比對，改一邊忘了另一邊會紅
 const inlineScript = readFileSync(new URL('../../index.html', import.meta.url), 'utf8')
@@ -35,17 +41,26 @@ it.each([
   const inline = stubEnv(stored, systemDark)
   new Function(inlineScript)()
   const app = stubEnv(stored, systemDark)
-  applyTheme()
+  theme.applyTheme()
   const color = expected === 'dark' ? '#14110f' : '#f4efe4'
   expect(inline.result()).toEqual({ theme: expected, metas: [color, color] })
   expect(app.result()).toEqual(inline.result())
 })
 
-it('跟隨系統不留 key；storage 丟例外時退回跟隨系統', () => {
+it('storage 讀取丟例外時退回跟隨系統；跟隨系統不留 key', () => {
+  vi.stubGlobal('localStorage', { getItem() { throw new Error('denied') } })
+  expect(theme.getThemePref()).toBe('system')
   const env = stubEnv('dark', false)
-  setThemePref('system')
+  theme.setThemePref('system')
   expect(env.store.has('theme')).toBe(false)
   expect(env.result().theme).toBe('light')
-  vi.stubGlobal('localStorage', { getItem() { throw new Error('denied') } })
-  expect(getThemePref()).toBe('system')
+})
+
+it('storage 寫不進去時，手選的主題這次瀏覽仍有效，系統切換不會蓋掉', () => {
+  const env = stubEnv(null, false)
+  vi.stubGlobal('localStorage', { getItem: () => null, setItem() { throw new Error('quota') }, removeItem() {} })
+  theme.setThemePref('dark')
+  theme.applyTheme() // initTheme 的系統切換監聽器就是這樣呼叫
+  expect(env.result().theme).toBe('dark')
+  expect(theme.getThemePref()).toBe('dark')
 })
