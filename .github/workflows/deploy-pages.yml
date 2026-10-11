@@ -72,12 +72,21 @@ jobs:
             exit 1
           fi
           case "$HOOK_URL" in *\?*) sep='&' ;; *) sep='?' ;; esac
+          # repo 公開、Actions log 也公開：整串 URL 已被 secrets 遮罩，但失敗時會印 Render 的回應，
+          # 回應若單獨帶到 key 就不會被遮——先把 key 本身也登記成遮罩
+          key="${HOOK_URL##*key=}"
+          echo "::add-mask::${key%%&*}"
           # 連線失敗時 curl 非零結束，在 Actions 的 bash -e 下會直接中止、印不出原因；改記成 000
           code=$(curl -sS -o response.json -w '%{http_code}' -X POST "${HOOK_URL}${sep}ref=${GITHUB_SHA}") || code=000
           case "$code" in
             200) cat response.json; echo ;;
             202) echo "Render 有別的部署在跑，這次已排隊，下一步會等到它上線" ;;
-            *) echo "::error::Render deploy hook 回 HTTP $code"; exit 1 ;;
+            *)
+              echo "::error::Render deploy hook 回 HTTP $code"
+              # 印出 Render 的錯誤說明（2026-10-11 首次上線回 500 時沒印，無從判斷原因）
+              [ -s response.json ] && head -c 500 response.json
+              echo
+              exit 1 ;;
           esac
       # 舊版在新版就緒前會繼續服務，所以要等 /healthz 回報的 commit（Render 的 RENDER_GIT_COMMIT）
       # 真的變成這次的 SHA 才算上線；只比對有值的回報，空值或舊 commit 一律繼續等
