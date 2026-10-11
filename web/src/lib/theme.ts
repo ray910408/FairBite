@@ -4,8 +4,11 @@ export type ThemePref = 'system' | 'light' | 'dark'
 
 const KEY = 'theme'
 const systemDark = () => matchMedia('(prefers-color-scheme: dark)')
+// 這次瀏覽手選過就以它為準：storage 寫不進去時，系統切換觸發的 applyTheme() 才不會讀回舊值蓋掉手選
+let chosen: ThemePref | null = null
 
 export function getThemePref(): ThemePref {
+  if (chosen) return chosen
   try {
     const v = localStorage.getItem(KEY)
     if (v === 'light' || v === 'dark') return v
@@ -22,6 +25,7 @@ export function applyTheme(pref = getThemePref()) {
 }
 
 export function setThemePref(pref: ThemePref) {
+  chosen = pref
   try {
     if (pref === 'system') localStorage.removeItem(KEY)
     else localStorage.setItem(KEY, pref)
