@@ -2865,3 +2865,22 @@ func TestSearchEvaluatesOpeningHoursAtMealTime(t *testing.T) {
 			kinds, w.Body.String())
 	}
 }
+
+// deploy-pages.yml 的 deploy-api 輪詢 /healthz 的 commit 欄位確認 Render 已上線新版：
+// 欄位改名或拿掉，部署會卡到逾時、前端永遠不會上線。
+func TestHealthzReportsDeployedCommit(t *testing.T) {
+	t.Setenv("RENDER_GIT_COMMIT", "abc1234def5678")
+	h := buildRoutes(nil, nil, nil, nil, newLimiterStore(1000, 1000))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	var body struct {
+		OK     bool   `json:"ok"`
+		Commit string `json:"commit"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != http.StatusOK {
+		t.Fatalf("GET /healthz = %d %s, err %v", w.Code, w.Body.String(), err)
+	}
+	if !body.OK || body.Commit != "abc1234def5678" {
+		t.Fatalf("healthz body = %+v, want ok=true commit=abc1234def5678", body)
+	}
+}

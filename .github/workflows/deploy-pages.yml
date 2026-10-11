@@ -1,9 +1,9 @@
 name: Deploy web
 
-# main 綠燈後先把 pending migrations 推上 Supabase，再把 web/dist 推上 GitHub Pages。
-# 後端在 Render，由 Render 自己監看 main（Go 新碼可能早於 migrate job 幾分鐘，
-# 靠「migrations 只增不改」維持相容；見 docs/deploy.md）。
-# 手動 workflow_dispatch 也只允許 main；非 main 不會推 production schema 或部署 Pages。
+# main 綠燈後依序部署 DB → API → Web：先把 pending migrations 推上 Supabase，再用 Deploy
+# Hook 叫 Render 部署同一個 commit 並等它上線，最後才把 web/dist 推上 GitHub Pages。
+# Render 的 Auto-Deploy 必須是 Off，否則它會自己監看 main、搶在 migrate 之前上線（docs/deploy.md）。
+# 手動 workflow_dispatch 也只允許 main；非 main 不會推 production schema 或部署 API／Pages。
 on:
   push:
     branches: [main]
@@ -51,8 +51,54 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
-  deploy:
+  # 0017（2026-08-14 線上壞一天）、09-30 餐廳時區、10-03 初選都是「新 Go 讀寫的欄位還不存在」：
+  # Render 自己監看 main 時沒有任何東西讓它等 migrate，後兩次只能靠人工拆 PR 避開。
+  # 改由這個 job 在 migrate 之後才觸發部署。
+  deploy-api:
     needs: migrate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      API_URL: https://fairbite.onrender.com
+    steps:
+      # 帶 ref 指定部署這個 commit。202＝Render 還有別的部署在跑、這次沒有排進去，等一下再送
+      - name: Trigger Render deploy
+        env:
+          HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$HOOK_URL" ]; then
+            echo "::error::缺 repo secret RENDER_DEPLOY_HOOK_URL（Render → Settings → Deploy Hook）"
+            exit 1
+          fi
+          case "$HOOK_URL" in *\?*) sep='&' ;; *) sep='?' ;; esac
+          for attempt in $(seq 1 20); do
+            # 連線失敗時 curl 非零結束，在 Actions 的 bash -e 下會直接中止、印不出原因；改記成 000
+            code=$(curl -sS -o response.json -w '%{http_code}' -X POST "${HOOK_URL}${sep}ref=${GITHUB_SHA}") || code=000
+            if [ "$code" = 200 ]; then cat response.json; echo; exit 0; fi
+            if [ "$code" != 202 ]; then echo "::error::Render deploy hook 回 HTTP $code"; exit 1; fi
+            echo "Render 還有別的部署在跑（202），30 秒後重送（$attempt/20）"
+            sleep 30
+          done
+          echo "::error::Render 一直有別的部署在跑，放棄"
+          exit 1
+      # 舊版在新版就緒前會繼續服務，所以要等 /healthz 回報的 commit（Render 的 RENDER_GIT_COMMIT）
+      # 真的變成這次的 SHA 才算上線；只比對有值的回報，空值或舊 commit 一律繼續等
+      - name: Wait for Render to serve this commit
+        run: |
+          for attempt in $(seq 1 60); do
+            commit=$(curl -sS --max-time 60 "$API_URL/healthz" | jq -r '.commit // empty' 2>/dev/null || true)
+            if [ ${#commit} -ge 7 ] && [ "${GITHUB_SHA#"$commit"}" != "$GITHUB_SHA" ]; then
+              echo "Render 已上線 $commit"
+              exit 0
+            fi
+            echo "線上 commit：${commit:-（未回報）}，20 秒後再查（$attempt/60）"
+            sleep 20
+          done
+          echo "::error::Render 沒有在時限內上線 $GITHUB_SHA"
+          exit 1
+
+  deploy:
+    needs: deploy-api # 間接也等 migrate：前端最後上，新畫面不會打到還沒部署的 API
     runs-on: ubuntu-latest
     environment:
       name: github-pages
