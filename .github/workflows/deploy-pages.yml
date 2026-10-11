@@ -61,7 +61,8 @@ jobs:
     env:
       API_URL: https://fairbite.onrender.com
     steps:
-      # 帶 ref 指定部署這個 commit。202＝Render 還有別的部署在跑、這次沒有排進去，等一下再送
+      # 帶 ref 指定部署這個 commit。200＝已開始；202＝有別的部署在跑，這次已排進佇列、Render 會在它
+      # 結束後接著部署（docs: deploy-hooks）——不要重送，每送一次就多排一個重複的部署
       - name: Trigger Render deploy
         env:
           HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
@@ -71,16 +72,13 @@ jobs:
             exit 1
           fi
           case "$HOOK_URL" in *\?*) sep='&' ;; *) sep='?' ;; esac
-          for attempt in $(seq 1 20); do
-            # 連線失敗時 curl 非零結束，在 Actions 的 bash -e 下會直接中止、印不出原因；改記成 000
-            code=$(curl -sS -o response.json -w '%{http_code}' -X POST "${HOOK_URL}${sep}ref=${GITHUB_SHA}") || code=000
-            if [ "$code" = 200 ]; then cat response.json; echo; exit 0; fi
-            if [ "$code" != 202 ]; then echo "::error::Render deploy hook 回 HTTP $code"; exit 1; fi
-            echo "Render 還有別的部署在跑（202），30 秒後重送（$attempt/20）"
-            sleep 30
-          done
-          echo "::error::Render 一直有別的部署在跑，放棄"
-          exit 1
+          # 連線失敗時 curl 非零結束，在 Actions 的 bash -e 下會直接中止、印不出原因；改記成 000
+          code=$(curl -sS -o response.json -w '%{http_code}' -X POST "${HOOK_URL}${sep}ref=${GITHUB_SHA}") || code=000
+          case "$code" in
+            200) cat response.json; echo ;;
+            202) echo "Render 有別的部署在跑，這次已排隊，下一步會等到它上線" ;;
+            *) echo "::error::Render deploy hook 回 HTTP $code"; exit 1 ;;
+          esac
       # 舊版在新版就緒前會繼續服務，所以要等 /healthz 回報的 commit（Render 的 RENDER_GIT_COMMIT）
       # 真的變成這次的 SHA 才算上線；只比對有值的回報，空值或舊 commit 一律繼續等
       - name: Wait for Render to serve this commit
