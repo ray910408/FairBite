@@ -8,7 +8,7 @@
   /* 只有標題用明體（index.html 載 Noto Serif TC）；字型未到時先用系統明體，FOUT 只在標題 */
   --font-serif: "Noto Serif TC", "Songti TC", "PMingLiU", serif;
 
-  /* 菜單本：米紙底、墨字、朱印。深色版（深夜居酒屋）在下方 prefers-color-scheme 覆寫同名 token */
+  /* 菜單本：米紙底、墨字、朱印。深色版（深夜居酒屋）在下方 [data-theme="dark"] 覆寫同名 token */
   --color-canvas: #f4efe4;
   --color-surface: #fbf8f2;
   --color-fg: #1f1a17;
@@ -51,35 +51,35 @@
   --animate-stamp-sm: stamp-sm 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
-/* 深夜居酒屋：炭黑底、米白字。所有組合實測 ≥4.5:1（on-* 對各自實心底、文字對 canvas／surface／soft） */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-canvas: #14110f;
-    --color-surface: #1d1a17;
-    --color-fg: #f2ebe1;
-    --color-fg-muted: #a99f92;
-    --color-border: #3a342d;
-    --color-rule: #a99f92;
-    --color-leader: #4a433a;
-    --color-brand: #e0725a;
-    --color-brand-strong: #f0907a;
-    --color-brand-soft: #3b2420;
-    --color-brand-fill: #8f2a1a;
-    --color-brand-fill-hover: #a3341f;
-    --color-on-brand: #f2ebe1;
-    --color-accent: #7f9fd6;
-    --color-accent-strong: #9db5e0;
-    --color-on-accent: #14110f;
-    --color-ok: #7bd88f;
-    --color-ok-soft: #193524;
-    --color-on-ok: #14110f;
-    --color-warn: #e8b45a;
-    --color-warn-soft: #3a2c12;
-    --color-danger: #f08aa0;
-    --color-danger-soft: #3d1a24;
-    --color-on-danger: #14110f;
-    --color-ring: #e0725a;
-  }
+/* 深夜居酒屋：炭黑底、米白字。所有組合實測 ≥4.5:1（on-* 對各自實心底、文字對 canvas／surface／soft）
+   data-theme 由 lib/theme.ts 依使用者選擇（跟隨系統／淺／深）設定，這裡不直接看 prefers-color-scheme */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-canvas: #14110f;
+  --color-surface: #1d1a17;
+  --color-fg: #f2ebe1;
+  --color-fg-muted: #a99f92;
+  --color-border: #3a342d;
+  --color-rule: #a99f92;
+  --color-leader: #4a433a;
+  --color-brand: #e0725a;
+  --color-brand-strong: #f0907a;
+  --color-brand-soft: #3b2420;
+  --color-brand-fill: #8f2a1a;
+  --color-brand-fill-hover: #a3341f;
+  --color-on-brand: #f2ebe1;
+  --color-accent: #7f9fd6;
+  --color-accent-strong: #9db5e0;
+  --color-on-accent: #14110f;
+  --color-ok: #7bd88f;
+  --color-ok-soft: #193524;
+  --color-on-ok: #14110f;
+  --color-warn: #e8b45a;
+  --color-warn-soft: #3a2c12;
+  --color-danger: #f08aa0;
+  --color-danger-soft: #3d1a24;
+  --color-on-danger: #14110f;
+  --color-ring: #e0725a;
 }
 
 /* 轉盤 20 色：依排名取色；淺色版深淺交錯（相鄰必有明暗差），深色版相鄰只靠色相與 surface 描邊分隔；ink 是扇形上編號的字色。
@@ -105,22 +105,20 @@
   --wheel-18: #e3d06a; --wheel-ink-18: #1f1a17;
   --wheel-19: #5a5550; --wheel-ink-19: #ffffff;
   --wheel-20: #d8c8a8; --wheel-ink-20: #1f1a17;
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --wheel-1: #e0725a;  --wheel-2: #8fbcd4;  --wheel-3: #7a9a45;  --wheel-4: #e8a9a0;
-    --wheel-5: #7f9fd6;  --wheel-6: #d9a441;  --wheel-7: #d9708f;  --wheel-8: #7fc3b3;
-    --wheel-9: #b5713f;  --wheel-10: #b9a3cf; --wheel-11: #3f9a78; --wheel-12: #e8955a;
-    --wheel-13: #a98bd0; --wheel-14: #a9c27a; --wheel-15: #a7adb5; --wheel-16: #d99ab8;
-    --wheel-17: #3a9cb8; --wheel-18: #e3d06a; --wheel-19: #8a8378; --wheel-20: #d8c8a8;
-    --wheel-ink-1: #14110f;  --wheel-ink-2: #14110f;  --wheel-ink-3: #14110f;  --wheel-ink-4: #14110f;
-    --wheel-ink-5: #14110f;  --wheel-ink-6: #14110f;  --wheel-ink-7: #14110f;  --wheel-ink-8: #14110f;
-    --wheel-ink-9: #14110f;  --wheel-ink-10: #14110f; --wheel-ink-11: #14110f; --wheel-ink-12: #14110f;
-    --wheel-ink-13: #14110f; --wheel-ink-14: #14110f; --wheel-ink-15: #14110f; --wheel-ink-16: #14110f;
-    --wheel-ink-17: #14110f; --wheel-ink-18: #14110f; --wheel-ink-19: #14110f; --wheel-ink-20: #14110f;
-  }
+:root[data-theme="dark"] {
+  --wheel-1: #e0725a;  --wheel-2: #8fbcd4;  --wheel-3: #7a9a45;  --wheel-4: #e8a9a0;
+  --wheel-5: #7f9fd6;  --wheel-6: #d9a441;  --wheel-7: #d9708f;  --wheel-8: #7fc3b3;
+  --wheel-9: #b5713f;  --wheel-10: #b9a3cf; --wheel-11: #3f9a78; --wheel-12: #e8955a;
+  --wheel-13: #a98bd0; --wheel-14: #a9c27a; --wheel-15: #a7adb5; --wheel-16: #d99ab8;
+  --wheel-17: #3a9cb8; --wheel-18: #e3d06a; --wheel-19: #8a8378; --wheel-20: #d8c8a8;
+  --wheel-ink-1: #14110f;  --wheel-ink-2: #14110f;  --wheel-ink-3: #14110f;  --wheel-ink-4: #14110f;
+  --wheel-ink-5: #14110f;  --wheel-ink-6: #14110f;  --wheel-ink-7: #14110f;  --wheel-ink-8: #14110f;
+  --wheel-ink-9: #14110f;  --wheel-ink-10: #14110f; --wheel-ink-11: #14110f; --wheel-ink-12: #14110f;
+  --wheel-ink-13: #14110f; --wheel-ink-14: #14110f; --wheel-ink-15: #14110f; --wheel-ink-16: #14110f;
+  --wheel-ink-17: #14110f; --wheel-ink-18: #14110f; --wheel-ink-19: #14110f; --wheel-ink-20: #14110f;
 }
 
 @keyframes rise {

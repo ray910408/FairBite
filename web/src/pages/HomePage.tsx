@@ -12,6 +12,7 @@ import { getUid } from '../lib/uid'
 import { applyDefaultPrefs } from '../lib/defaultPrefs'
 import { Alert, Logo, LogOut, Spinner } from '../components/icons'
 import { LeaveConfirm } from '../components/LeaveConfirm'
+import { ThemeMenu } from '../components/ThemeMenu'
 import LocationPicker from '../components/LocationPicker'
 import { RecentRatingPrompt } from '../components/RatingPrompt'
 import CustomWheel from '../components/CustomWheel'
@@ -236,17 +237,19 @@ export default function HomePage() {
             <span className="font-serif text-lg font-black tracking-[0.12em] whitespace-nowrap sm:text-xl">今天吃什麼</span>
           </div>
           <div className="flex flex-col items-end gap-1">
-            <div className="flex items-center gap-1.5">
-              <Link to="/history" className="btn btn-quiet min-h-11 px-3 text-sm">足跡</Link>
+            <div className="flex items-center gap-1 sm:gap-1.5">
+              <ThemeMenu />
+              <Link to="/history" className="btn btn-quiet min-h-11 px-2 text-sm sm:px-3">足跡</Link>
               {/* 登出走同一道 leavePending 閘門（比照建房/加入）：查房籍還在飛、或確認 dialog
                   開著時登出，App.tsx 的 auth listener 會卸載本頁，doLeave() 永遠不會執行，
                   伺服器端房籍留著——該使用者變成幽靈成員，條件與票繼續約束房間盤面。
                   閘門不會鎖死：fetchLeaveRooms 有逾時（查詢 5 秒、等飛行中退房另限 60 秒），逾時也會開出 dialog，
                   兩顆按鈕都會讓 leavePending settle（roomMembership.test.ts 釘住那條出口） */}
-              <button className="btn btn-quiet min-h-11 px-3 text-sm" disabled={leavePending}
+              {/* 320px 要塞外觀鈕＋足跡＋登出：手機只留圖示，「登出」仍是按鈕的可及名稱 */}
+              <button className="btn btn-quiet min-h-11 min-w-11 px-3 text-sm" disabled={leavePending}
                 onClick={() => supabase.auth.signOut()}>
                 <LogOut className="h-4 w-4" />
-                登出
+                <span className="sr-only sm:not-sr-only">登出</span>
               </button>
             </div>
             {leavePending && (
