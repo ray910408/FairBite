@@ -52,7 +52,7 @@
 已完成（PR #3，2026-08-10）：`web/e2e/full-loop.spec.ts` 走完雙 browser context 的
 註冊 → 建房/加入 → 探索檔位 → 條件 → 搜尋 → 投票（贊成/否決/收回/額度/全否決防線）
 → 抽選 → 結果同步 → Maps 導航，執行方式見 `README.md` 的「E2E 測試」。
-殘留：尚未接 CI（需編排整套 local stack），與下方「E2E 降級快取情境」合併評估。原始評估：
+殘留：尚未接 CI（需編排整套 local stack），與下方「E2E 降級快取情境」合併評估。（2026-10-11 已接 CI：`ci.yml` 的 `e2e` job。）原始評估：
 
 - **What:** 自動化雙瀏覽器完整閉環測試：建房 → 邀請碼加入 → 雙人條件 → 搜尋 → 候選同步 → 抽選 → 結果同步 → Maps 連結。
 - **Why:** P1 閉環驗證只有手動 demo script（spec §9 明定 P1 手動）。每次改動手動跑 3 分鐘 × N 次的隱性成本，長期會超過寫一次 E2E 的成本。auth + realtime + 多客戶端同步正是 E2E 決策矩陣建議自動化的類型。
@@ -77,3 +77,11 @@
 - ~~**ISSUE-006（Low，間歇）冷啟動首次登入 `dining_history?rating=lte.2` 回 401** — 全新瀏覽器 process 首次登入時觀察到一次（該次首頁 HTML 載入 7489ms），相鄰的同表查詢是 200。像是這支請求在 token 掛上去前就送出的競態；畫面無提示，只有 console 一行 401，影響是「避開不喜歡的菜系」訊號被靜默丟掉。清 localStorage 重登／登出重登／重整各測一次都無法重現。~~ — 已修（2026-10-10）：不是前端競態，token 有掛上。本機重現的 401 body 是 PostgREST 的 `PGRST303 JWT issued at future`：v14.15 閒置後快取時鐘停在舊值，剛簽發的 JWT 被判 iat 超前 30 秒以上（上游 PostgREST#5196，PR #5208 拿掉快取時鐘，v14.18／v16.3 起修正）。本機 Kong log 的 401 全在 PostgREST 閒置之後（6.4 小時、40 秒），且同一秒同 token 的後續請求就回 200；同一刻打到房籍查詢時，新帳號首頁會跳「你還在房間裡」。正式站那次沒抓到 body，推定同因：`supabase link` 寫入的 `supabase/.temp/rest-version`（本機檔、不入版控）是 v14.15。`web/src/lib/supabase.ts` 的 client fetch 遇到這個錯誤會隔 1 秒原樣重送一次。
 
 - ~~**ISSUE-008（Low）邀請碼欄位無長度／格式驗證** — 實際碼是 12 碼，輸入 6 碼仍會送出 `rpc/join_room`。前端可先擋掉省一次往返。~~ — 已修（d217f63，2026-08-22）：邀請碼欄位在 `<form>` 內用原生 `minLength`／`maxLength` 12 與 hex `pattern` 驗證，不足 12 碼不會送出；2026-10-08 查證。
+
+### PR #17 明確延後的項目
+
+- **E2E 已在 main 實跑（2026-08-16），殘留兩點** — PR #17 動過 `full-loop.spec.ts` 四處以上（`leaveViaHome` helper、RoomPage dialog 改非同步開啟需等 visible、`inert` 焦點斷言），而 `inert` 只有真瀏覽器有實作。merge（e850ddf）後補跑 `npm --prefix web run e2e`：`雙使用者完整閉環（投票版）`與`房主繼任（lobby 中房主回首頁）`通過，PR #17 動過的四處在真瀏覽器下綠燈。殘留：
+  - `全否決擋抽選（嚴格條件房）` 本次未取得有效結果——該案有時段守門（search 回 422 `no_candidates` 就自我 skip：「嚴格條件房在目前時段沒有營業中的平價候選」），執行時段剛好落在守門內。需挑有平價候選的時段補跑一次才算覆蓋。
+  - 冷啟動首跑會 flake：`supabase start` 後第一次執行，`waitForRoomRealtime`（`full-loop.spec.ts:9`）的 10 秒逾時撐不過 Realtime 首次訂閱，三條中兩條掛在 Realtime；同一組服務暖機後原樣重跑即通過。修法：拉大該逾時，或在 e2e 前置先打一次暖身訂閱。
+
+  2026-10-11 結案：嚴格條件房的時段 skip 已在 a1b6fc1（2026-08-20）移除，422 直接 fail，2026-10-11 在 CI 等價 stack 實跑通過；冷啟動 Realtime 改由 CI 的暖身步驟處理，後續觀察移到 `TODOS.md`「E2E 進 CI 後待觀察」。

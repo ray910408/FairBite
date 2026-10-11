@@ -64,3 +64,82 @@ jobs:
         working-directory: server
         env:
           TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+
+  # Playwright 跑在整套 local stack 上：Supabase + Go API（mock provider）+ Vite dev server。
+  # 全新 supabase start 套用 checked-in config.toml：Email 驗證走 Mailpit、匿名登入開啟。
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # 背景服務卡住時別空轉到預設的 6 小時
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1
+        with:
+          version: 2.113.0
+      - run: supabase start
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      # anon key 屬於這次啟動的 stack，執行期讀出，不寫進 repo
+      - run: eval "$(supabase status -o env)" && echo "VITE_SUPABASE_ANON_KEY=$ANON_KEY" >> "$GITHUB_ENV"
+      # 刻意不設 GOOGLE_PLACES_API_KEY：走 14 家 mock 餐廳，不打付費 API、結果可重現。
+      # 背景程序會留到 job 結束；env 只給這一步，SUPABASE_* 前綴會被 supabase CLI 當成設定覆寫。
+      - name: Start Go API
+        working-directory: server
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          SUPABASE_JWKS_URL: http://127.0.0.1:54321/auth/v1/.well-known/jwks.json
+        run: go run . > "$RUNNER_TEMP/api.log" 2>&1 &
+      - run: npm ci
+        working-directory: web
+      - name: Start Vite
+        working-directory: web
+        env:
+          BROWSER: none # vite.config 的 open: true 在 runner 上沒有瀏覽器可開
+          VITE_SUPABASE_URL: /supabase
+        run: npx vite --strictPort > "$RUNNER_TEMP/vite.log" 2>&1 &
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      # /healthz 經 Vite proxy 轉到 Go API，通了就代表兩個服務都就緒
+      - run: timeout 120 bash -c 'until curl -fsk https://localhost:5173/healthz; do sleep 2; done'
+      # 冷啟動後第一個 postgres_changes 訂閱要等 Realtime 建好複寫連線，常超過 spec 裡
+      # waitForRoomRealtime 的 10 秒；先在這裡等到一次 system ok，測試就只會遇到熱的 Realtime。
+      - name: Warm up Realtime
+        working-directory: web
+        run: |
+          node - <<'EOF'
+          const { createClient } = require('@supabase/supabase-js')
+          const t0 = Date.now()
+          setTimeout(() => { console.error('Realtime warm-up timed out'); process.exit(1) }, 120_000)
+          createClient('http://127.0.0.1:54321', process.env.VITE_SUPABASE_ANON_KEY).channel('warmup')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, () => {})
+            .on('system', {}, p => {
+              // status error 時 Realtime 伺服器會自己退避重試，照樣等下一則
+              if (p.extension !== 'postgres_changes' || p.status !== 'ok') return console.log(p)
+              console.log(`Realtime ready after ${Date.now() - t0} ms`)
+              process.exit(0)
+            })
+            .subscribe()
+          EOF
+      - run: npm run e2e -- --reporter=list,html --trace=retain-on-failure
+        working-directory: web
+        env:
+          TEST_MAILPIT_URL: http://127.0.0.1:54324
+          # mealTimeForE2E 的 20:00 上限與 mock 營業時間都以台北時間設計；runner 是 UTC，
+          # 上限會變成台北 04:00，台北晚間跑就選到深夜時段、mock 營業池縮水。比照本機 +08。
+          TZ: Asia/Taipei
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-report
+          path: |
+            web/playwright-report/
+            web/test-results/
+            ${{ runner.temp }}/api.log
+            ${{ runner.temp }}/vite.log
+          retention-days: 7

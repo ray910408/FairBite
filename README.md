@@ -157,6 +157,6 @@ npm run e2e
 
 若使用隔離 stack 或其他連接埠，請同步調整 Auth redirect、`TEST_MAILPIT_URL` 與 `PLAYWRIGHT_BASE_URL`（預設 `https://localhost:5173`）。
 
-E2E 尚未接入 CI，因為 CI 需額外編排整套 local stack；`TODOS.md` 保留後續 CI 編排評估。
+CI 的 `e2e` job（`.github/workflows/ci.yml`）在每個 PR 與 push 到 `main` 時跑同一套 spec：全新 `supabase start`（套用 checked-in `config.toml`，驗證信走 Mailpit、訪客匿名登入開啟）、不設 `GOOGLE_PLACES_API_KEY` 的 Go API（mock provider）與 Vite dev server；anon key 於執行期從 `supabase status -o env` 讀出，不寫進 repo。測試前先等到一次 Realtime 訂閱成功（冷啟動暖身），並以 `TZ=Asia/Taipei` 執行，讓用餐時間與 mock 營業時段對齊。失敗時 Playwright HTML report、trace 與兩個服務的 log 會上傳成 `e2e-report` artifact。
 
 未設定 `GOOGLE_PLACES_API_KEY` 時使用台北車站周邊 14 家 mock 餐廳；設定後即切換至 Google Places provider。

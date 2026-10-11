@@ -50,7 +50,7 @@
 - **Pros:** 降級鏈全程進回歸網。
 - **Cons:** 需讓 Go server 的 provider 中途失效——測試旗標（如 `PLACES_FORCE_FAIL=1`）或雙 server 編排，基建成本高。
 - **Context:** 起點：`server/main.go` provider 切換處加測試旗標；E2E 前置腳本以該旗標啟動第二個 port。
-- **Depends on:** P2 Task 13 完成；與既有「E2E 接 CI」註記可合併評估。
+- **Depends on:** P2 Task 13 完成；CI 已有 `e2e` job（2026-10-11），情境寫好可直接掛上。
 
 ### Places 花費防線：budget alert + cache-first 評估（hosted 前）
 
@@ -65,6 +65,10 @@
 
 - **What:** 審查建議讓 web 消費 vote 回應的 `vetoes_remaining`，取代目前由票列本地推導剩餘否決額度。
 - **Why:** 多分頁或 Realtime 中斷時，本地推導的剩餘額度會落後真實值。現況依 ADR-0003（`docs/adr/0003-centralized-vote-write-command.md`）：payload 仍是 API contract 的一部分，但 web 不消費，成功後靠 Realtime + debounce refetch 對齊。若日後出現實際回報再改。
+
+## 工具鏈（2026-10-11）
+
+- **升級 Supabase CLI 前先處理 `20260905000300_private_scoring_snapshots.sql`** — 第 7 行的 `lock table` 不在交易區塊內。CI 與 Deploy web 釘的 CLI 2.113.0 照常套用，但 2026-10-11 用本機 CLI 2.119 從頭套 migrations 時報 `LOCK TABLE can only be used in transaction blocks`。改 `ci.yml`／`deploy-pages.yml` 的 `version: 2.113.0` 之前要先決定怎麼修（這支已套用到正式站，改既有 migration 前先確認 CLI 不會因此重套）。
 
 ## Round 1 final review 遞延（2026-08-13）
 
@@ -110,9 +114,9 @@ QA 對象 https://ray910408.github.io/FairBite/#/auth（headless，test 帳號�
 
 - **`leaveConfirmed` 旗標路徑無 E2E** — 單元測試已覆蓋「消耗旗標」與「回到同一筆 entry 不重用」，但沒有真瀏覽器走查（需新增一條「房內按確認→首頁」）。
 
-- **E2E 已在 main 實跑（2026-08-16），殘留兩點** — PR #17 動過 `full-loop.spec.ts` 四處以上（`leaveViaHome` helper、RoomPage dialog 改非同步開啟需等 visible、`inert` 焦點斷言），而 `inert` 只有真瀏覽器有實作。merge（e850ddf）後補跑 `npm --prefix web run e2e`：`雙使用者完整閉環（投票版）`與`房主繼任（lobby 中房主回首頁）`通過，PR #17 動過的四處在真瀏覽器下綠燈。殘留：
-  - `全否決擋抽選（嚴格條件房）` 本次未取得有效結果——該案有時段守門（search 回 422 `no_candidates` 就自我 skip：「嚴格條件房在目前時段沒有營業中的平價候選」），執行時段剛好落在守門內。需挑有平價候選的時段補跑一次才算覆蓋。
-  - 冷啟動首跑會 flake：`supabase start` 後第一次執行，`waitForRoomRealtime`（`full-loop.spec.ts:9`）的 10 秒逾時撐不過 Realtime 首次訂閱，三條中兩條掛在 Realtime；同一組服務暖機後原樣重跑即通過。修法：拉大該逾時，或在 e2e 前置先打一次暖身訂閱。
+- **E2E 進 CI 後待觀察（2026-10-11，`ci.yml` 的 `e2e` job）** — 接 CI 時在全新 stack 實跑 11/11 通過，但只在白天跑過。
+  - **台北深夜執行大概會紅**：`mealTimeForE2E` 取 min(現在＋2 小時, 今天 20:00)，過 20:00 改「馬上出發」，所以約 00:00–07:00 執行時用餐時刻落在凌晨。mock 那時只剩 24 小時的一蘭（價位 2）、復興清粥（價位 1）和營業到 02:00／03:00 的兩家，預算過濾後候選可能只剩一兩家，投票與否決情境撐不住。修法：e2e 一律選固定白天時段（已過就滾到明天，`buildMealTimeISO` 已支援），並調整綁定「今天」的斷言（`今天 ${hhmm}` 等）。在那之前，夜間 CI 紅了先看是不是這個，白天 rerun。
+  - **冷啟動 Realtime**：2026-08-16 觀察到 `supabase start` 後首跑 `waitForRoomRealtime` 的 10 秒逾時撐不過 Realtime 首次訂閱。CI 在測試前先等一次訂閱成功並印出耗時（本機冷啟動 1.6 秒、未重現）。看前幾次 CI 的暖身耗時，穩定就結案。
 
 - **離席 dialog 的房籍清單在跨分頁競態下會過期**（PR #17 Codex review 2026-08-16，評估後不修）— dialog 開著時另一個分頁建房／加入，清單不會包含新房籍，但按下確認送出的 `/api/leave` 是以執行當下的房籍為準、全退，於是新房被靜默退掉且後果從沒顯示過。修法是「破壞性點擊當下重查，集合有變就要求再確認一次」。
   不修的理由：ADR-0007 Consequences 已裁定「多分頁開首頁會跳出離席確認；個人規模接受，不另做分頁互斥」，這條要求的正是分頁互斥。且它不是本 PR 造成的回歸——改動前是 mount 直接靜默全退、連 dialog 都沒有，現在只是清單可能過期，嚴格來說是變好而非變差。
