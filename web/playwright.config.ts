@@ -5,7 +5,10 @@ export default defineConfig({
   testDir: './e2e',
   timeout: 90_000,
   expect: { timeout: 10_000 },
-  workers: 1, // 兩個 context 共享一個測試房間，不平行
+  // 每個 test 自己註冊帳號、自己開房，彼此不共用狀態，可以拆到不同 worker 平行跑。
+  // 上限 3：全域同時搜尋上限是 4（concurrent_search_limit），CI runner 也只有 4 vCPU 還要跑整套 stack
+  fullyParallel: true,
+  workers: 3,
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'https://localhost:5173',
     ignoreHTTPSErrors: true, // 本地 Vite 使用 @vitejs/plugin-basic-ssl 的自簽憑證

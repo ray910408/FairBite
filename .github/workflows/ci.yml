@@ -54,7 +54,7 @@ jobs:
       - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1
         with:
           version: 2.113.0
-      - run: supabase start
+      - run: supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector
       - run: supabase test db
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
@@ -75,7 +75,13 @@ jobs:
       - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1
         with:
           version: 2.113.0
-      - run: supabase start
+      # supabase start 要 1.5 分鐘，丟背景跟下面的安裝步驟重疊，到「Wait for Supabase」再收結果。
+      # 背景 shell 繼承 bash -e，所以用 && || 收 exit code，不然失敗時連 fail 都寫不出來。
+      # 不起 E2E 用不到的服務（Studio、Storage、Edge Functions、log 收集）
+      - name: Start Supabase (background)
+        run: |
+          (supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector \
+            > "$RUNNER_TEMP/supabase.log" 2>&1 && echo ok || echo fail) > "$RUNNER_TEMP/supabase.status" &
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: server/go.mod
@@ -85,6 +91,15 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - name: Wait for Supabase
+        run: |
+          timeout 300 bash -c 'until [ -s "$RUNNER_TEMP/supabase.status" ]; do sleep 2; done'
+          cat "$RUNNER_TEMP/supabase.log"
+          grep -qx ok "$RUNNER_TEMP/supabase.status"
       # anon key 屬於這次啟動的 stack，執行期讀出，不寫進 repo
       - run: eval "$(supabase status -o env)" && echo "VITE_SUPABASE_ANON_KEY=$ANON_KEY" >> "$GITHUB_ENV"
       # 刻意不設 GOOGLE_PLACES_API_KEY：走 14 家 mock 餐廳，不打付費 API、結果可重現。
@@ -95,16 +110,12 @@ jobs:
           SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
           SUPABASE_JWKS_URL: http://127.0.0.1:54321/auth/v1/.well-known/jwks.json
         run: go run . > "$RUNNER_TEMP/api.log" 2>&1 &
-      - run: npm ci
-        working-directory: web
       - name: Start Vite
         working-directory: web
         env:
           BROWSER: none # vite.config 的 open: true 在 runner 上沒有瀏覽器可開
           VITE_SUPABASE_URL: /supabase
         run: npx vite --strictPort > "$RUNNER_TEMP/vite.log" 2>&1 &
-      - run: npx playwright install --with-deps chromium
-        working-directory: web
       # /healthz 經 Vite proxy 轉到 Go API，通了就代表兩個服務都就緒
       - run: timeout 120 bash -c 'until curl -fsk https://localhost:5173/healthz; do sleep 2; done'
       # 冷啟動後第一個 postgres_changes 訂閱要等 Realtime 建好複寫連線，常超過 spec 裡
@@ -142,4 +153,5 @@ jobs:
             web/test-results/
             ${{ runner.temp }}/api.log
             ${{ runner.temp }}/vite.log
+            ${{ runner.temp }}/supabase.log
           retention-days: 7
