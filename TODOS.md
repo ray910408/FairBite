@@ -34,7 +34,7 @@
 
 - **上線 checklist：先 Render 後 0023／0024**
   - **What:** merge 後先確認 Render 已部署新 server binary，再讓 `deploy-pages.yml` 的 migrate job 跑 `0023_purge_svf_vegetarian_tags.sql` 與 `0024_remap_cuisine_tags_after_type_census.sql`。順序反了＝舊 binary 用 `servesVegetarianFood`／`chinese_restaurant → taiwanese` 把 tag 寫回快取（無告警、0023 那條方向是誤放行）。
-  - **Why:** `deploy: needs: migrate` 只排序 migration → GitHub Pages；Go server 在 Render 獨立部署，兩者先後無機制保證。
+  - **Why:** 這兩支要的是「Render 先、migration 後」。2026-10-11 起 `deploy-pages.yml` 固定 DB → API → Web，方向剛好相反；同型 migration 之後一律拆兩個 PR（先合程式、等 `deploy-api` 綠，再合 migration），見 `docs/deploy.md`。
   - **補救:** 兩支都冪等——順序反了就在 Render 部署完成後各重跑一次（migration 檔頭有註記）。
 
 ### Google Places attribution logo 確認（正式上線前）

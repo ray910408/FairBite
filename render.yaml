@@ -11,6 +11,10 @@ services:
     buildCommand: go build -o app .
     startCommand: ./app
     healthCheckPath: /healthz
+    # 不讓 Render 自己監看 main：部署由 deploy-pages.yml 的 deploy-api job 在 migrate 之後
+    # 透過 Deploy Hook 觸發（DB → API → Web）。正式服務是 Dashboard 建的，這行只是備份，
+    # 實際設定在 Settings → Auto-Deploy: Off
+    autoDeployTrigger: "off" # 加引號：YAML 1.1 會把裸 off 解析成布林 false
     envVars:
       # go.mod 是 1.25，Render 原生 builder 的預設版本可能較舊
       - key: GO_VERSION

@@ -48,6 +48,11 @@
    curl https://fairbite.onrender.com/healthz
    ```
 
+   回應的 `commit` 是 Render 注入的 `RENDER_GIT_COMMIT`，`deploy-pages.yml` 靠它確認新版已上線。
+4. Settings → **Auto-Deploy** 設為 **Off**，再到 Settings → **Deploy Hook** 複製 URL，
+   存成 GitHub repo secret `RENDER_DEPLOY_HOOK_URL`。部署改由 `deploy-pages.yml` 在 migrate
+   之後觸發（見下方「日常 release 的 DB migration」）；Auto-Deploy 沒關的話 Render 仍會搶先部署。
+
 服務名若改過，`WEB_ORIGIN` 不用動，但下一步的 `VITE_API_URL` 要跟著改。
 
 **Free plan 會在閒置 15 分鐘後休眠**，之後第一個請求要等約 50 秒冷啟動。
@@ -140,13 +145,20 @@ DB 連線字串與 Places key 只存在 Render，永遠不進前端。
 
 ## 日常 release 的 DB migration
 
-push 到 `main` 時 `deploy-pages.yml` 的 `migrate` job 會自動 `supabase db push`，
-前端部署被 `needs: migrate` 擋在後面——**DB 永遠先於前端**。需要兩個 repo secrets：
-`SUPABASE_ACCESS_TOKEN`（Account → Access Tokens）與 `SUPABASE_DB_PASSWORD`。
+push 到 `main` 時 `deploy-pages.yml` 依序跑三個 job，**DB → API → Web**：
 
-已知限制：Render 的 Go 部署獨立監看 `main`，可能早於 migrate job 完成幾分鐘。
-靠「migrations 只增不改（additive）」維持新舊相容；若未來出現非相容 migration，
-先拆兩個 PR（先 DB 後程式）。
+1. `migrate`：runner 上重放 migrations＋pgTAP＋DB-backed Go 測試，綠了才 `supabase db push`。
+2. `deploy-api`：用 Deploy Hook 叫 Render 部署同一個 commit（`ref=<sha>`），輪詢 `/healthz`
+   直到回報的 `commit` 等於這次的 SHA。
+3. `deploy`：build 並部署 GitHub Pages。
+
+需要三個 repo secrets：`SUPABASE_ACCESS_TOKEN`（Account → Access Tokens）、`SUPABASE_DB_PASSWORD`、
+`RENDER_DEPLOY_HOOK_URL`（Render → Settings → Deploy Hook），且 Render 的 Auto-Deploy 必須是 Off。
+任一步紅燈，後面的都不會跑；修好後在 Actions 對該 run 按 Re-run failed jobs。
+
+這個順序保護的是「新程式對舊 schema」（下面三則教訓都是這型）。反方向——**新 schema 會讓
+舊程式出錯**，或要等新程式上線才能清的資料（例如 0023／0024 怕舊 binary 把 tag 寫回）——
+仍要拆兩個 PR：先合程式、等 `deploy-api` 綠，再合 migration。
 
 手動 fallback（Actions 壞掉時）：`supabase link --project-ref zltocdydngmdnutzarlq`
 後 `supabase db push`。

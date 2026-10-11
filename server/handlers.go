@@ -82,8 +82,10 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, weather
 	mux := http.NewServeMux()
 	// Supabase signs this hook before a user/session exists; do not put it behind JWT middleware.
 	mux.Handle("POST /api/auth/before-user-created", newSignupHook(os.Getenv("SIGNUP_HOOK_SECRET"), net.DefaultResolver.LookupMX))
+	// commit 是 Render 注入的 RENDER_GIT_COMMIT（本機為空字串）：deploy-pages.yml 的 deploy-api
+	// 輪詢到它等於這次的 SHA，才放行前端部署
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		jsonOK(w, map[string]bool{"ok": true})
+		jsonOK(w, map[string]any{"ok": true, "commit": os.Getenv("RENDER_GIT_COMMIT")})
 	})
 	api := http.NewServeMux()
 	api.HandleFunc("POST /api/auth/validate-upgrade-email", func(w http.ResponseWriter, r *http.Request) {
