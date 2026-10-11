@@ -615,6 +615,39 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	// wx 用 pre-tx 的 roomEvalTime(room) 取（凍結重讀前）；host 在按鈕與凍結之間改時間的競態
 	// 只影響天氣取樣的小時，屬可接受誤差（exploration 的 pre-tx 讀取同款先例）。
 	wx := loadWeather(ctx, weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
+	fetched, ok := fetchSearchRestaurants(w, ctx, pool, places, room, fetchedRadius, fetchedCuisines)
+	if !ok {
+		return
+	}
+	if !cacheSearchRestaurants(w, ctx, pool, places, fetched) {
+		return
+	}
+	// 「附近根本沒資料」和「有資料但全被條件排除」是兩種不同的死路，
+	// 混成同一個 422 會叫使用者去放寬條件卻永遠沒用 — 分流才誠實
+	if len(fetched.found) == 0 {
+		respondNoRestaurants(w, ctx, pool, room, fetchedRadius, fetchedCuisines, fetched)
+		return
+	}
+	result, ok := freezeSearchCandidates(w, r, pool, room, fetchedRadius, fetchedCuisines, fetched, wx)
+	if !ok {
+		return
+	}
+	resp := resultJSON(result)
+	resp["degraded"] = fetched.degraded
+	jsonOK(w, resp)
+}
+
+// searchFetch 是 provider（或 30 天快取 fallback）取回並濾過的搜尋結果，供 handleSearch 後段共用。
+type searchFetch struct {
+	found              []Restaurant
+	degraded           bool
+	closedIDs          []string
+	rejectedIDs        []string
+	unfulfilledDietary []string
+}
+
+// fetchSearchRestaurants 呼叫 provider；失敗時退回 30 天快取，成功時濾掉歇業並去重。ok=false 表示已回應。
+func fetchSearchRestaurants(w http.ResponseWriter, ctx context.Context, pool *pgxpool.Pool, places PlacesProvider, room RoomRow, fetchedRadius int, fetchedCuisines []string) (searchFetch, bool) {
 	// Provider fetch envelope 採 call-time 成員平均距離；tx 內重讀若縮小，會在 Evaluate 前重濾。
 	// 若期間放寬，既有 fetch envelope 只會 under-fetch，不會錯誤納入更遠餐廳（freeze.go 回 409）。
 	searchResult, err := places.SearchNearby(ctx, room.CenterLat, room.CenterLng, fetchedRadius, fetchedCuisines)
@@ -641,13 +674,13 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 				log.Printf("member radius growth check failed: %v", radiusErr)
 			} else if grew {
 				jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
-				return
+				return searchFetch{}, false
 			}
 			if rejectChangedSearchSnapshot(w, ctx, pool, room) {
-				return
+				return searchFetch{}, false
 			}
 			jsonError(w, http.StatusBadGateway, "餐廳搜尋失敗，且沒有可用的快取資料，請稍後再試")
-			return
+			return searchFetch{}, false
 		}
 		degraded = true
 	} else {
@@ -671,79 +704,96 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		found = deduped
 	}
 	closedIDs = append(closedIDs, searchResult.DiscardedClosedPlaceIDs...)
+	return searchFetch{
+		found:              found,
+		degraded:           degraded,
+		closedIDs:          closedIDs,
+		rejectedIDs:        rejectedIDs,
+		unfulfilledDietary: unfulfilledDietary,
+	}, true
+}
+
+// cacheSearchRestaurants 以獨立交易寫入餐廳快取並 commit。回 false 表示已回應。
+func cacheSearchRestaurants(w http.ResponseWriter, ctx context.Context, pool *pgxpool.Pool, places PlacesProvider, fetched searchFetch) bool {
 	// 快取寫入獨立交易先 commit：即使零候選 rollback，真 API 的呼叫成果仍留作快取。
 	// fallback 的 found 已含 DB uuid 且本來就出自快取，因此跳過重寫。
-	if !degraded && (len(found) > 0 || len(closedIDs) > 0 || len(rejectedIDs) > 0) {
+	if !fetched.degraded && (len(fetched.found) > 0 || len(fetched.closedIDs) > 0 || len(fetched.rejectedIDs) > 0) {
 		txCache, err := pool.Begin(ctx)
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-			return
+			return false
 		}
 		defer txCache.Rollback(ctx)
-		staleIDs := append(closedIDs, rejectedIDs...)
+		staleIDs := append(fetched.closedIDs, fetched.rejectedIDs...)
 		if err := StaleOutRestaurants(ctx, txCache, staleIDs); err != nil {
 			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
-			return
+			return false
 		}
-		if err := UpsertRestaurants(ctx, txCache, found, places.Source()); err != nil {
+		if err := UpsertRestaurants(ctx, txCache, fetched.found, places.Source()); err != nil {
 			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
-			return
+			return false
 		}
 		if err := txCache.Commit(ctx); err != nil {
 			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-			return
+			return false
 		}
 	}
-	// 「附近根本沒資料」和「有資料但全被條件排除」是兩種不同的死路，
-	// 混成同一個 422 會叫使用者去放寬條件卻永遠沒用 — 分流才誠實
-	if len(found) == 0 {
-		// 零筆也可能只是因為搜尋繞的是舊的、更小的半徑（成員在 SearchNearby 期間加入把平均推大）。
-		// 菜系聯集在 fan-out 期間漂移也有同型窗口：過濾開啟時，舊聯集的空結果不能當成權威結果。
-		// 這條檢查必須自己做一次，不能與 502 那條合併成 SearchNearby 之後的單一檢查：
-		// 那樣從檢查點到這裡之間仍有殘留窗口，422 又會回到叫使用者「縮小距離」的反方向建議。
-		if grew, radiusErr := memberRadiusGrew(ctx, pool, room.ID, fetchedRadius); radiusErr != nil {
-			// 檢查本身失敗不遮蔽原本的結果，照常回 422。
-			log.Printf("member radius growth check failed: %v", radiusErr)
-		} else if grew {
-			jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
-			return
-		}
-		if drifted, cuisineErr := memberCuisinesDrifted(ctx, pool, room.ID, fetchedCuisines); cuisineErr != nil {
-			// 檢查本身失敗不遮蔽原本的結果，照常回 422。
-			log.Printf("member cuisine drift check failed: %v", cuisineErr)
-		} else if drifted {
-			jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
-			return
-		}
-		if rejectChangedSearchSnapshot(w, ctx, pool, room) {
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		jsonOK(w, map[string]any{
-			"error":                     "no_restaurants_in_range",
-			"message":                   "此位置附近沒有餐廳資料，請調整位置或縮小距離再試",
-			"degraded":                  degraded,
-			"unfulfilled_dietary_terms": unfulfilledDietary,
-		})
+	return true
+}
+
+// respondNoRestaurants 回應零餐廳：先排除搜尋期間條件或位置已變更的 409，才回 no_restaurants_in_range 422。
+func respondNoRestaurants(w http.ResponseWriter, ctx context.Context, pool *pgxpool.Pool, room RoomRow, fetchedRadius int, fetchedCuisines []string, fetched searchFetch) {
+	// 零筆也可能只是因為搜尋繞的是舊的、更小的半徑（成員在 SearchNearby 期間加入把平均推大）。
+	// 菜系聯集在 fan-out 期間漂移也有同型窗口：過濾開啟時，舊聯集的空結果不能當成權威結果。
+	// 這條檢查必須自己做一次，不能與 502 那條合併成 SearchNearby 之後的單一檢查：
+	// 那樣從檢查點到這裡之間仍有殘留窗口，422 又會回到叫使用者「縮小距離」的反方向建議。
+	if grew, radiusErr := memberRadiusGrew(ctx, pool, room.ID, fetchedRadius); radiusErr != nil {
+		// 檢查本身失敗不遮蔽原本的結果，照常回 422。
+		log.Printf("member radius growth check failed: %v", radiusErr)
+	} else if grew {
+		jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
 		return
 	}
+	if drifted, cuisineErr := memberCuisinesDrifted(ctx, pool, room.ID, fetchedCuisines); cuisineErr != nil {
+		// 檢查本身失敗不遮蔽原本的結果，照常回 422。
+		log.Printf("member cuisine drift check failed: %v", cuisineErr)
+	} else if drifted {
+		jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
+		return
+	}
+	if rejectChangedSearchSnapshot(w, ctx, pool, room) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	jsonOK(w, map[string]any{
+		"error":                     "no_restaurants_in_range",
+		"message":                   "此位置附近沒有餐廳資料，請調整位置或縮小距離再試",
+		"degraded":                  fetched.degraded,
+		"unfulfilled_dietary_terms": fetched.unfulfilledDietary,
+	})
+}
+
+// freezeSearchCandidates 在凍結交易內重驗房主、重讀成員、評分並寫入候選與曝光後 commit。
+// ok=false 表示已回應（含 no_candidates 422）。
+func freezeSearchCandidates(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, room RoomRow, fetchedRadius int, fetchedCuisines []string, fetched searchFetch, wx *Weather) (EngineResult, bool) {
+	ctx := r.Context()
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-		return
+		return EngineResult{}, false
 	}
 	defer tx.Rollback(ctx)
 	// Provider call 期間可能發生房主繼任；先在 room lock 下重驗權限，避免向前房主洩漏 readiness。
 	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
 		if errors.Is(err, ErrNotHost) {
 			jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
-			return
+			return EngineResult{}, false
 		}
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-		return
+		return EngineResult{}, false
 	}
-	members, found, err = freezeAndLoadMembers(ctx, tx, &room, fetchedRadius, fetchedCuisines, found)
+	members, found, err := freezeAndLoadMembers(ctx, tx, &room, fetchedRadius, fetchedCuisines, fetched.found)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrConflict):
@@ -758,22 +808,22 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 			log.Printf("search freeze failed: %v", err)
 			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 		}
-		return
+		return EngineResult{}, false
 	}
 	recency, err := LoadRecency(ctx, tx, memberIDs(members), restaurantIDs(found))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "讀取同席紀錄失敗")
-		return
+		return EngineResult{}, false
 	}
 	exposure, err := LoadExposure(ctx, tx, memberIDs(members), restaurantIDs(found))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "讀取曝光統計失敗")
-		return
+		return EngineResult{}, false
 	}
 	satisfaction, err := LoadSatisfaction(ctx, tx, memberIDs(members))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "讀取滿足度失敗")
-		return
+		return EngineResult{}, false
 	}
 	evalAt, departNow := roomEvalMoment(room)
 	result := Evaluate(EngineInput{Restaurants: found, Members: members,
@@ -793,10 +843,10 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		jsonOK(w, map[string]any{
-			"error": "no_candidates", "excluded": ex, "excluded_by": byKind, "degraded": degraded,
-			"unfulfilled_dietary_terms": unfulfilledDietary,
+			"error": "no_candidates", "excluded": ex, "excluded_by": byKind, "degraded": fetched.degraded,
+			"unfulfilled_dietary_terms": fetched.unfulfilledDietary,
 		})
-		return
+		return EngineResult{}, false
 	}
 	keptIDs := make([]string, len(result.Kept))
 	exposureCounted := make(map[string]bool, len(result.Kept))
@@ -806,20 +856,18 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	}
 	if err := ReplaceCandidates(ctx, tx, room.ID, result, exposureCounted); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
-		return
+		return EngineResult{}, false
 	}
 	// 順序不變式：LoadExposure → Evaluate → RecordExposure，避免本次 +1 汙染新店判定。
 	if err := RecordExposure(ctx, tx, memberIDs(members), keptIDs); err != nil {
 		jsonError(w, http.StatusInternalServerError, "寫入曝光統計失敗")
-		return
+		return EngineResult{}, false
 	}
 	if err := tx.Commit(ctx); err != nil {
 		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-		return
+		return EngineResult{}, false
 	}
-	resp := resultJSON(result)
-	resp["degraded"] = degraded
-	jsonOK(w, resp)
+	return result, true
 }
 
 func rejectChangedSearchSnapshot(w http.ResponseWriter, ctx context.Context, q querier, room RoomRow) bool {
