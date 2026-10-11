@@ -33,10 +33,16 @@ function waitForRoomRealtime(page: Page) {
   })
 }
 
-// e2e 一律選固定的 15:00，結果不隨執行時刻變動：凌晨跑 CI 也是午後的 mock 營業池，不會夜間假紅。
-// 已過 15:00 就是明天 15:00（buildMealTimeISO 的規則），所以畫面上的標籤是「今天」或「明天」
-const E2E_MEAL_HH = '15'
-const E2E_MEAL_MM = '00'
+// e2e 一律選午後的固定時段，結果不隨執行時刻變動：凌晨跑 CI 也是午後的 mock 營業池，不會夜間假紅。
+// 已過所選時刻就是明天（buildMealTimeISO 的規則），所以畫面上的標籤是「今天」或「明天」。
+// 選好到按「建立房間」之間若跨過所選時刻，HomePage 會擋下要求再按一次（預告是今天、送出變明天）；
+// 15:00 前 5 分鐘內改選 15:30 避開這個邊界——兩個時段 mock 營業中的店完全相同
+function mealTimeForE2E(now = new Date()): string {
+  const at1500 = new Date(now)
+  at1500.setHours(15, 0, 0, 0)
+  const msLeft = at1500.getTime() - now.getTime()
+  return msLeft > 0 && msLeft <= 5 * 60_000 ? '15:30' : '15:00'
+}
 
 async function signup(page: Page, name: string, verifyTouch = false) {
   await page.goto('/')
@@ -81,20 +87,22 @@ async function createRoom(a: Page, verifyTouch = false) {
   await expect(a.getByText('目前位置', { exact: true })).toBeVisible()
   await expect(a.locator('.leaflet-container')).toBeVisible()
   await a.getByRole('button', { name: '完成' }).click()
+  const meal = mealTimeForE2E()
+  const [hh, mm] = meal.split(':')
   await a.getByRole('button', { name: '自訂時間' }).click()
-  await a.getByLabel('用餐時間（時）').selectOption(E2E_MEAL_HH)
-  await a.getByLabel('用餐時間（分）').selectOption(E2E_MEAL_MM)
+  await a.getByLabel('用餐時間（時）').selectOption(hh)
+  await a.getByLabel('用餐時間（分）').selectOption(mm)
   const aRealtimeReady = waitForRoomRealtime(a)
   await a.getByRole('button', { name: '建立房間' }).click()
   await expect(a.getByText('成員（1）')).toBeVisible()
   await aRealtimeReady
   const code = (await a.locator('header button.font-mono').innerText()).trim()
   expect(code).toMatch(/^[A-Z0-9]{12}$/)
-  return { code }
+  return { code, meal }
 }
 
 async function createAndJoinRoom(a: Page, b: Page, verifyTouch = false) {
-  const { code } = await createRoom(a, verifyTouch)
+  const { code, meal } = await createRoom(a, verifyTouch)
   const bRealtimeReady = waitForRoomRealtime(b)
   await b.getByLabel('邀請碼').fill(code)
   await b.getByRole('button', { name: '加入', exact: true }).click()
@@ -109,7 +117,7 @@ async function createAndJoinRoom(a: Page, b: Page, verifyTouch = false) {
     ])
   }
   // meal_time 經 Realtime 同步到加入方；跨午夜時「今天／明天」會翻面，只認時刻
-  await expect(b.getByText(new RegExp(`(今天|明天) ${E2E_MEAL_HH}:${E2E_MEAL_MM}`))).toBeVisible()
+  await expect(b.getByText(new RegExp(`(今天|明天) ${meal}`))).toBeVisible()
 }
 
 async function expectButtonsAtLeast44px(page: Page, labels: string[]) {
