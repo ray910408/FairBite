@@ -294,7 +294,7 @@ func (g *googleProvider) fetchPlaces(ctx context.Context, endpoint string, body 
 		// 別為了第二個訊號再呼叫一次 gTags：它每次都配置 map＋slice，而這是搜尋熱路徑
 		// （K+1 支並行呼叫 × 每支最多 20 筆）。
 		// (1) 未分類的 type：警報。穩態靜音，一出現就代表 tags_test.go 的 census 過期了——
-		//     census 是手抄快照，擋不到 Google 之後新增的 type，那正是 TODOS.md:22 假結案的形狀。
+		//     census 是手抄快照，擋不到 Google 之後新增的 type，那正是 docs/todos-archive.md「CUISINE 選項的 Google 缺口」假結案的形狀。
 		// (2) 零 tag 家數：健康度。含刻意不對映的類型（麵店等），所以每次都會有數字——
 		//     它量的是「刻意不對映的實際代價」，將來要不要把 noodle_shop 拉進來有數據可講。
 		tagged := false
