@@ -126,6 +126,8 @@ export default function RoomPage() {
         <Logo className="h-12 w-12 opacity-60" />
         <p className="text-fg-muted">找不到房間，或你不是成員</p>
         <Link to="/" className="btn btn-primary px-6">回首頁</Link>
+        {/* 背景分頁 token 過期且刷新失敗時，查詢會以 anon 身分送出而查無列；給一條不必離房的復原路 */}
+        <button type="button" className="btn btn-quiet px-6" onClick={() => { void refetch() }}>重試</button>
       </main>
     ) : (
       <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-fg-muted">

@@ -5,6 +5,7 @@ import { useRoom } from './useRoom'
 const mocks = vi.hoisted(() => ({
   room: null as Room | null,
   stateIndex: 0,
+  setters: [] as ReturnType<typeof vi.fn>[],
   effects: [] as Array<() => void | (() => void)>,
   from: vi.fn(),
   gates: [] as Promise<void>[],
@@ -16,7 +17,9 @@ vi.mock('react', async importOriginal => {
     ...actual,
     useState: (initial: unknown) => {
       const index = mocks.stateIndex++
-      return [index === 0 ? mocks.room : initial, vi.fn()]
+      const setter = vi.fn()
+      mocks.setters[index] = setter
+      return [index === 0 ? mocks.room : initial, setter]
     },
     useRef: (initial: unknown) => ({ current: initial }),
     useCallback: (fn: unknown) => fn,
@@ -118,5 +121,32 @@ describe('useRoom lobby Realtime fallback', () => {
     expect(mocks.effects).toHaveLength(2)
     expect(mocks.effects[1]?.()).toBeUndefined()
     expect(setTimeoutSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('useRoom refetch 房間消失', () => {
+  beforeEach(() => {
+    mocks.stateIndex = 0
+    mocks.setters = []
+    mocks.effects = []
+    mocks.gates = []
+  })
+
+  function RefetchHarness(result: { data: Room | null; error: unknown }) {
+    mocks.room = room('lobby')
+    mocks.from.mockReset().mockImplementation((table: string) => table === 'rooms'
+      ? { select: () => ({ eq: () => ({ single: async () => result }) }) }
+      : query(table))
+    return useRoom('room-1').refetch()
+  }
+
+  it('查無列（房間已刪）清掉舊 room，頁面才會顯示找不到房間', async () => {
+    await RefetchHarness({ data: null, error: { code: 'PGRST116' } })
+    expect(mocks.setters[0]).toHaveBeenCalledWith(null)
+  })
+
+  it('暫時性錯誤保留舊 room（只亮 loadError）', async () => {
+    await RefetchHarness({ data: null, error: { code: '57014' } })
+    expect(mocks.setters[0]).not.toHaveBeenCalled()
   })
 })

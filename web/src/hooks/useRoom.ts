@@ -49,7 +49,10 @@ export function useRoom(roomId: string) {
     const siblingError = [m, c, d, v, lv, sv, sp].some(x => x.error)
     setNotFound(state === 'not-found')
     setLoadError(state === 'error' || siblingError)
+    // 查無列是權威結果（房間已刪或已非成員）：清掉舊快照，頁面才會顯示「找不到房間」而不是
+    // 停在舊房、按鈕按了沒反應；暫時性錯誤仍保留舊值（TODOS「useRoom room 過期快照」）
     if (r.data) setRoom(r.data as Room)
+    else if (state === 'not-found') setRoom(null)
     if (!m.error) setMembers((m.data ?? []) as MemberRow[])
     if (!c.error) setCandidates((c.data ?? []) as CandidateRow[])
     if (!d.error) setDraw((d.data ?? null) as DrawRow | null)
