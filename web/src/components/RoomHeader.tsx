@@ -1,4 +1,4 @@
-import type { MouseEvent, Ref } from 'react'
+import type { MouseEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { ROOM_STATUS_LABEL } from '../lib/labels'
 import type { Room } from '../lib/types'
@@ -38,20 +38,19 @@ function Stepper({ status }: { status: Room['status'] }) {
 }
 
 // 房間頁頂部：回首頁（＝離席）、邀請碼、足跡、狀態印章與步驟列。
-export function RoomHeader({ room, copied, onCopy, leaveChecking, onLeave, leaveTriggerRef }: {
+export function RoomHeader({ room, copied, onCopy, leaveChecking, onLeave }: {
   room: Room
   copied: boolean
   onCopy: () => void
   leaveChecking: boolean
   onLeave: (e: MouseEvent<HTMLAnchorElement>) => void
-  leaveTriggerRef: Ref<HTMLAnchorElement>
 }) {
   return (
     <header className="sticky top-0 z-20 bg-canvas/85 backdrop-blur">
       {/* 320px 放不下最長的印章（等待選新地點）時讓印章換行，不撐出水平捲動 */}
       <div className="mx-auto flex w-full max-w-lg flex-wrap items-center gap-x-2 gap-y-1 p-3 pb-2 sm:gap-x-3">
         {/* 回首頁＝離席（ADR-0007），代價不可逆——攔下導覽先查再確認 */}
-        <Link to="/" aria-label="回首頁" ref={leaveTriggerRef}
+        <Link to="/" aria-label="回首頁"
           aria-busy={leaveChecking} onClick={onLeave}
           className="-ml-1.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl">
           <Logo className="h-8 w-8" />

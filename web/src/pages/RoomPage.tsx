@@ -128,8 +128,7 @@ export default function RoomPage() {
   useMidnightRerender()
   const [confirmAsk, setConfirmAsk] = useState<ConfirmAsk | null>(null)
   // 退房確認（ADR-0007：回首頁＝離席）
-  const { leaveDialog, leaveChecking, leaveTriggerRef, askLeave, closeLeave } =
-    useLeaveDialog({ onOpen: () => setConfirmAsk(null) })
+  const { leaveDialog, leaveChecking, askLeave, closeLeave } = useLeaveDialog({ onOpen: () => setConfirmAsk(null) })
   const confirmTriggerRef = useRef<HTMLElement | null>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const stageHeadingRef = useRef<HTMLHeadingElement>(null)
@@ -408,8 +407,7 @@ export default function RoomPage() {
       {/* dialog 開著時整塊背景 inert：fixed 遮罩擋得住指標（elementFromPoint 實測），
           對 tab 順序毫無作用——沒有它鍵盤使用者可以 tab 到「開始搜尋餐廳」按 Enter（Codex P2） */}
       <div className="min-h-screen" inert={!!leaveDialog || !!confirmAsk}>
-      <RoomHeader room={room} copied={copied} onCopy={copyInvite} leaveChecking={leaveChecking} onLeave={askLeave}
-        leaveTriggerRef={leaveTriggerRef} />
+      <RoomHeader room={room} copied={copied} onCopy={copyInvite} leaveChecking={leaveChecking} onLeave={askLeave} />
 
       <main className="mx-auto w-full max-w-lg space-y-4 p-4">
         {!connected && (
@@ -613,7 +611,7 @@ export default function RoomPage() {
               className="btn w-full bg-danger text-on-danger sm:flex-1">離開房間</Link>
           </>
         ),
-        children: LeaveRoomsBody({ target: leaveDialog }),
+        children: <LeaveRoomsBody target={leaveDialog} />,
       })}
       {confirmAsk && LeaveConfirm({
         title: confirmAsk.title,

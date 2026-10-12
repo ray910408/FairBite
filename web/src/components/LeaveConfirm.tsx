@@ -54,9 +54,7 @@ export function LeaveConfirm({ title, onClose, actions, actionsClassName, childr
 // HomePage 的 mount 攔截不共用這段：它已經在首頁（時態不同），而且回房入口必須是
 // <button>——React 的 autoFocus 只對表單控制項生效，焦點要落在安全那顆。
 //
-// RoomPage、HistoryPage 同 LeaveConfirm 以函式呼叫（LeaveRoomsBody({...})）渲染（JoinPage 已用
-// <LeaveRoomsBody />），所以禁止用 hook：dialog 開著才呼叫，hook 數量一變整頁崩潰，oxlint 抓不到。
-// 這兩頁的測試已改成行為導向，改回 <LeaveRoomsBody /> 已經沒有阻礙（TODOS #14）。
+// 不同於上面的外殼，各頁（RoomPage、HistoryPage、JoinPage）都以 <LeaveRoomsBody /> 渲染：它是真元件，可以用 hook。
 export function LeaveRoomsBody({ target }: { target: LeaveTarget }) {
   const rooms = target.kind === 'rooms' ? target.rooms : []
   const multi = rooms.length > 1

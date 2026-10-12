@@ -9,7 +9,9 @@ export type RoomSettingsWrites = ReturnType<typeof useRoomSettingsWrites>
 
 // 房主在 lobby 改的房間層設定（探索檔位／用餐時間／菜系過濾）的寫入佇列：全部排進同一條
 // chain 依序寫入、用餐時間 debounce 400ms，任一欄位寫入失敗就關住搜尋閘門，直到該欄位重試成功。
-// 只開 ref 不開 state：錯誤訊息、閘門與用餐時間草稿都是 RoomPage 的 state，由呼叫端傳 setter 進來。
+// 錯誤訊息、閘門與用餐時間草稿都是 RoomPage 的 state，由呼叫端傳 setter 進來，本 hook 只開 ref。
+// 這原本是為了依呼叫順序 mock useState 的舊 RoomPage 測試（hook 多開一個 state 就擠動索引）；那支測試已改成
+// 行為導向，這個限制已經沒有理由，閘門與草稿可以收進本 hook（錯誤訊息是頁首各動作共用的橫幅，仍留在頁面）。
 export function useRoomSettingsWrites(room: Room | null, { setActionError, setRoomSettingsBlocked, showMealTime }: {
   setActionError: (message: string) => void
   setRoomSettingsBlocked: (blocked: boolean) => void
