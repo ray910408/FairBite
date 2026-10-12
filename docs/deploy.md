@@ -38,10 +38,11 @@
 ## 2. Render
 
 1. Render Dashboard → New → **Blueprint**，選這個 repo，它會讀根目錄 `render.yaml`。
-2. 套用時填三個 `sync: false` 變數：
+2. 套用時填四個 `sync: false` 變數：
    - `SUPABASE_DB_URL` = 上一步的 pooler 連線字串（記得把 `[YOUR-PASSWORD]` 換成真密碼）
    - `SUPABASE_JWKS_URL` = `https://<ref>.supabase.co/auth/v1/.well-known/jwks.json`
    - `GOOGLE_PLACES_API_KEY` = GCP 的 Places API (New) key；留空則跑 14 家 mock
+   - `SIGNUP_HOOK_SECRET` 先留空；依下方「註冊 Email」一節建立 hook 後填入並重新部署
 3. 部署完成後確認健康檢查：
 
    ```bash
