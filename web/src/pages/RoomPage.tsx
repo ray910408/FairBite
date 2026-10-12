@@ -596,12 +596,10 @@ export default function RoomPage() {
       </main>
       </div>
 
-      {leaveDialog && LeaveConfirm({
-        title: '離開房間？',
-        onClose: closeLeave,
-        actionsClassName: 'sm:flex-row', // 320px 直排、sm 以上並排——按鈕不壓縮成兩行字
-        actions: (
-          <>
+      {leaveDialog && (
+        // 320px 直排、sm 以上並排——按鈕不壓縮成兩行字
+        <LeaveConfirm title="離開房間？" onClose={closeLeave} actionsClassName="sm:flex-row"
+          actions={<>
             <button type="button" autoFocus className="btn btn-quiet w-full sm:flex-1"
               onClick={closeLeave}>
               取消
@@ -609,16 +607,13 @@ export default function RoomPage() {
             {/* 使用者在這裡已經看過後果：帶旗標過去讓 HomePage mount 直接退房，不再問第二次 */}
             <Link to="/" state={{ leaveConfirmed: true }}
               className="btn w-full bg-danger text-on-danger sm:flex-1">離開房間</Link>
-          </>
-        ),
-        children: <LeaveRoomsBody target={leaveDialog} />,
-      })}
-      {confirmAsk && LeaveConfirm({
-        title: confirmAsk.title,
-        onClose: closeConfirm,
-        actionsClassName: 'sm:flex-row',
-        actions: (
-          <>
+          </>}>
+          <LeaveRoomsBody target={leaveDialog} />
+        </LeaveConfirm>
+      )}
+      {confirmAsk && (
+        <LeaveConfirm title={confirmAsk.title} onClose={closeConfirm} actionsClassName="sm:flex-row"
+          actions={<>
             <button type="button" autoFocus className="btn btn-quiet w-full sm:flex-1" onClick={closeConfirm}>
               取消
             </button>
@@ -626,10 +621,10 @@ export default function RoomPage() {
               onClick={() => { closeConfirm(); void confirmAsk.onConfirm() }}>
               {confirmAsk.confirmLabel}
             </button>
-          </>
-        ),
-        children: <p className="text-sm text-fg-muted">{confirmAsk.body}</p>,
-      })}
+          </>}>
+          <p className="text-sm text-fg-muted">{confirmAsk.body}</p>
+        </LeaveConfirm>
+      )}
     </>
   )
 }

@@ -231,26 +231,22 @@ export default function AuthPage() {
       </div>
 
     </main>
-      {confirmExistingLogin && LeaveConfirm({
-        title: '切換到既有帳號？',
-        onClose: () => setConfirmExistingLogin(false),
-        actionsClassName: 'sm:flex-row',
-        actions: (
-          <>
+      {confirmExistingLogin && (
+        <LeaveConfirm title="切換到既有帳號？" onClose={() => setConfirmExistingLogin(false)}
+          actionsClassName="sm:flex-row"
+          actions={<>
             <button autoFocus className="btn btn-quiet flex-1" type="button"
               onClick={() => setConfirmExistingLogin(false)}>取消</button>
             <button className="btn btn-primary flex-1" type="button" disabled={busy}
               onClick={switchToExistingAccount}>離房並登入</button>
-          </>
-        ),
-        children: <>
+          </>}>
           <p className="text-sm text-fg-muted">必須先離開目前房間。訪客紀錄不會合併到既有帳號；離席或登入失敗時不會切換身分。</p>
           {error && <p role="alert" className="banner bg-danger-soft text-danger">
             <Alert className="h-5 w-5 shrink-0" />
             <span>{error}</span>
           </p>}
-        </>,
-      })}
+        </LeaveConfirm>
+      )}
     </>
   )
 }

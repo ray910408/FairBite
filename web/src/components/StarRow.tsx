@@ -9,9 +9,8 @@ export default function StarRow({ historyId, onRated }: { historyId: string; onR
   const [saveError, setSaveError] = useState('')
   const [busy, setBusy] = useState(false)
   // 累計預覽：滑過／focus 第 N 顆時 1..N 一起亮（評分語意是 1..N，不是單選）。
-  // 必須宣告在上面兩個 useState 之後：測試用呼叫順序取 setSaveError / setBusy。
   const [preview, setPreview] = useState(0)
-  // 選了幾顆（尚未寫入）；第四個 useState，前三個的順序測試在用
+  // 選了幾顆（尚未寫入）
   const [selected, setSelected] = useState(0)
   const lit = preview || selected
   async function submit() {

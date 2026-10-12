@@ -15,13 +15,6 @@ import type { LeaveTarget } from '../lib/roomMembership'
 // 按鈕組由呼叫端帶入：各處的鈕數、順序與 320px 排法都不同（RoomPage、JoinPage、AuthPage
 // 在 sm 以上並排，HistoryPage、HomePage 一律直排）。autoFocus 與關閉後的焦點還原也留在呼叫端
 // ——觸發元素只有呼叫端知道，HomePage 的 mount 攔截根本沒有觸發元素。
-//
-// 以函式呼叫（LeaveConfirm({...})）而非 <LeaveConfirm />：本外殼沒有自己的狀態，直接回傳元素樹。
-// HomePage、JoinPage、AuthPage 的測試仍把頁面當純函式呼叫、依呼叫順序 mock hook，要在回傳的
-// 元素樹裡摸到框內的按鈕（RoomPage、HistoryPage 的測試已改成行為導向，不受這個限制）。
-// 所以這裡禁止用 hook：hook 會記在呼叫端頁面上，而各頁都是 dialog 開著才呼叫，開關一次 hook 數量
-// 就變、整頁崩潰，oxlint 的 rules-of-hooks 抓不到這種寫法。完整修法是改回 <LeaveConfirm />，
-// 要等那三頁的測試也改成行為導向（TODOS #14）。
 export function LeaveConfirm({ title, onClose, actions, actionsClassName, children }: {
   title: string
   // Esc 關閉；HomePage 的 mount 攔截沒有「留在首頁但不決定」的合法終態，故不給
