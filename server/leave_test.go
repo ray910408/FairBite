@@ -657,3 +657,34 @@ func TestSearchHostValidationHoldsRoomLockThroughTransition(t *testing.T) {
 		t.Fatalf("former host 不得轉場：status=%s host_id=%s", status, hostID)
 	}
 }
+
+// 末位退房刪房後，舊分頁送來的動作要回 404「房間不存在」，不是叫人「重新整理」的 409
+// ——重新整理後看到的也只會是找不到房間。
+func TestActionsOnRoomDeletedByLastLeaveReturn404(t *testing.T) {
+	pool, roomID, users, rs := seedShortlistRoom(t, "candidates", 1, 4)
+	h := newTestApp(t, pool)
+	if w := pendingPost(t, h, users[0], "/api/leave", ""); w.Code != http.StatusOK {
+		t.Fatalf("leave=%d %s", w.Code, w.Body.String())
+	}
+	var exists bool
+	if err := pool.QueryRow(context.Background(), `select exists(select 1 from rooms where id=$1)`, roomID).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("末位退房應刪房")
+	}
+	for _, tc := range []struct{ path, body string }{
+		{"redraw", `{"version":1}`},
+		{"confirm", `{"version":1}`},
+		{"location-vote", `{"want":true,"version":0}`},
+		{"location", `{"lat":25.1,"lng":121.6,"version":0}`},
+		{"shortlist-vote", `{"want":true,"version":0}`},
+		{"pick", `{"restaurant_id":"` + rs[0] + `","op":"cast","version":0}`},
+		{"cancel-shortlist", ""},
+	} {
+		w := pendingPost(t, h, users[0], "/api/rooms/"+roomID+"/"+tc.path, tc.body)
+		if w.Code != http.StatusNotFound || strings.TrimSpace(w.Body.String()) != `{"error":"房間不存在"}` {
+			t.Errorf("%s on deleted room = %d %s, want 404 房間不存在", tc.path, w.Code, w.Body.String())
+		}
+	}
+}

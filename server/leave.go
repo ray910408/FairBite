@@ -7,7 +7,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -21,7 +21,7 @@ func handleLeave(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, wea
 	uid := UserID(r)
 	rows, err := pool.Query(ctx, `select room_id from room_members where user_id = $1`, uid)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		serverError(w, err, "資料庫錯誤，請稍後再試")
 		return
 	}
 	var roomIDs []string
@@ -29,20 +29,19 @@ func handleLeave(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, wea
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+			serverError(w, err, "資料庫錯誤，請稍後再試")
 			return
 		}
 		roomIDs = append(roomIDs, id)
 	}
 	rows.Close()
-	if rows.Err() != nil {
-		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+	if err := rows.Err(); err != nil {
+		serverError(w, err, "資料庫錯誤，請稍後再試")
 		return
 	}
 	for _, roomID := range roomIDs {
 		if err := leaveOneRoom(ctx, pool, weather, roomID, uid); err != nil {
-			log.Printf("leave room %s failed: %v", roomID, err)
-			jsonError(w, http.StatusInternalServerError, "退出房間失敗，請稍後再試")
+			serverError(w, fmt.Errorf("leave room %s: %w", roomID, err), "退出房間失敗，請稍後再試")
 			return
 		}
 	}
@@ -77,13 +76,7 @@ func leaveOneRoom(ctx context.Context, pool *pgxpool.Pool, weather WeatherProvid
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var room RoomRow
-	err = tx.QueryRow(ctx, `
-		select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0),
-		       exploration, meal_time, cuisine_filter, draw_version, search_version
-		from rooms where id = $1 for update`, roomID).
-		Scan(&room.ID, &room.HostID, &room.Status, &room.CenterLat, &room.CenterLng,
-			&room.Exploration, &room.MealTime, &room.CuisineFilter, &room.DrawVersion, &room.SearchVersion)
+	room, err := scanRoom(tx.QueryRow(ctx, `select `+roomColumns+` from rooms where id = $1 for update`, roomID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // 並發退房已刪房：冪等
 	}

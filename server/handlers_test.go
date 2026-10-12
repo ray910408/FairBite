@@ -414,7 +414,8 @@ func TestQueryMatchesSurviveRescoreRoundTrip(t *testing.T) {
 			Lat: 25.0478, Lng: 121.5171, Hours: daily([2]int{0, 1440}),
 		},
 	}
-	if err := UpsertRestaurants(ctx, tx, restaurants, "google"); err != nil {
+	restaurants, err = UpsertRestaurants(ctx, tx, restaurants, "google")
+	if err != nil {
 		t.Fatal(err)
 	}
 	result := EngineResult{
@@ -576,10 +577,7 @@ func TestSearchReloadsMemberConditionsAfterProviderCall(t *testing.T) {
 		placeID    = "member-condition-race"
 		farPlaceID = "member-distance-race-far"
 	)
-	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
-		values ($1, 'member-race@test.dev') on conflict do nothing`, hostID); err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "member-race@test.dev")
 	if _, err := pool.Exec(ctx, `insert into public.rooms
 		(id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 25.0478, 121.5170)
@@ -645,10 +643,7 @@ func TestSearchCuisineUnionDriftOnlyBouncesWithFilterEnabled(t *testing.T) {
 	const hostID = "c1414141-4141-4141-8141-414141414141"
 	const roomID = "c2424242-4242-4242-8242-424242424242"
 	const placeID = "cuisine-union-drift"
-	if _, err := pool.Exec(ctx,
-		`insert into auth.users (id, email) values ($1, 'cuisine-union-drift@test.dev') on conflict do nothing`, hostID); err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "cuisine-union-drift@test.dev")
 	if _, err := pool.Exec(ctx, `insert into public.rooms
 		(id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 25.0478, 121.5170)
@@ -744,10 +739,7 @@ func TestSearchBouncesWhenRadiusGrowsDuringProviderCall(t *testing.T) {
 		placeID = "radius-growth-race"
 		message = "成員條件已於搜尋期間變更，請再按一次開始搜尋"
 	)
-	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
-		values ($1, 'radius-growth@test.dev') on conflict do nothing`, hostID); err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "radius-growth@test.dev")
 	if _, err := pool.Exec(ctx, `insert into public.rooms
 		(id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 25.0478, 121.5170)
@@ -803,10 +795,7 @@ func TestSearchBouncesWhenMemberJoins(t *testing.T) {
 
 			hostID, roomID, joinerID := tc.hostID, tc.roomID, tc.joinerID
 			for id, email := range map[string]string{hostID: tc.email + "-host@test.dev", joinerID: tc.email + "-guest@test.dev"} {
-				if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
-			values ($1, $2) on conflict do nothing`, id, email); err != nil {
-					t.Fatal(err)
-				}
+				insertTestUser(t, ctx, pool, id, email)
 			}
 			if _, err := pool.Exec(ctx, `insert into public.rooms
 		(id, host_id, status, center_lat, center_lng)
@@ -859,10 +848,7 @@ func TestSearchSingleFlightPerRoom(t *testing.T) {
 		roomID  = "54545454-5454-5454-5454-545454545454"
 		placeID = "single-flight-search"
 	)
-	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
-		values ($1, 'single-flight@test.dev') on conflict do nothing`, hostID); err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "single-flight@test.dev")
 	if _, err := pool.Exec(ctx, `insert into public.rooms
 		(id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 25.0478, 121.5170)
@@ -948,12 +934,7 @@ func TestSearchAndDrawHappyPathExposureBaseline(t *testing.T) {
 
 	hostID := "11111111-1111-1111-1111-111111111111"
 	roomID := "25252525-2525-2525-2525-252525252525"
-	_, err := pool.Exec(ctx, `
-		insert into auth.users (id, email) values ($1, 'host@test.dev') on conflict do nothing;
-		`, hostID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "host@test.dev")
 	if _, err := pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID); err != nil {
 		t.Fatal(err)
 	}
@@ -1223,11 +1204,7 @@ func TestSearchEdgeCases(t *testing.T) {
 			hostID := "33333333-3333-3333-3333-333333333333"
 			strangerID := "44444444-4444-4444-4444-444444444444"
 			roomID := "55555555-5555-5555-5555-555555555555"
-			if _, err := pool.Exec(ctx,
-				`insert into auth.users (id, email) values ($1, 'host2@test.dev') on conflict do nothing`,
-				hostID); err != nil {
-				t.Fatal(err)
-			}
+			insertTestUser(t, ctx, pool, hostID, "host2@test.dev")
 			if _, err := pool.Exec(ctx,
 				`insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		 values ($1, $2, 'lobby', 25.0478, 121.5170)
@@ -1331,11 +1308,7 @@ func TestSearchFallsBackToCache(t *testing.T) {
 
 	hostID := "21212121-2121-2121-2121-212121212121"
 	roomID := "22222222-2222-2222-2222-222222222222"
-	if _, err := pool.Exec(ctx,
-		`insert into auth.users (id, email) values ($1, 'fb@test.dev') on conflict do nothing`,
-		hostID); err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "fb@test.dev")
 	if _, err := pool.Exec(ctx,
 		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		 values ($1, $2, 'lobby', 25.0478, 121.5170)
@@ -1394,10 +1367,7 @@ func TestSearchRejectedAndClosedPlacesTombstoneCache(t *testing.T) {
 		rejectedPlaceID = "round7-rejected-place"
 		openPlaceID     = "round12-open-place"
 	)
-	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
-		values ($1, 'closed-cache@test.dev') on conflict do nothing`, hostID); err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "closed-cache@test.dev")
 	if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		values ($1, $3, 'lobby', 24.1988, 121.6543), ($2, $3, 'lobby', 24.1988, 121.6543)
 		on conflict (id) do update set status = 'lobby', center_lat = excluded.center_lat,
@@ -1508,10 +1478,7 @@ func TestSearchDiscardedClosedPlaceTombstonesCache(t *testing.T) {
 		discardedPlaceID = "round14-handler-discarded-closed"
 		openPlaceID      = "round14-handler-open"
 	)
-	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
-		values ($1, 'discarded-closed-handler@test.dev') on conflict do nothing`, hostID); err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "discarded-closed-handler@test.dev")
 	if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 24.1988, 121.6543)
 		on conflict (id) do update set status = 'lobby', center_lat = excluded.center_lat, center_lng = excluded.center_lng`, roomID, hostID); err != nil {
@@ -1539,7 +1506,7 @@ func TestSearchDiscardedClosedPlaceTombstonesCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := UpsertRestaurants(ctx, txCache, discarded, "google"); err != nil {
+	if _, err := UpsertRestaurants(ctx, txCache, discarded, "google"); err != nil {
 		_ = txCache.Rollback(ctx)
 		t.Fatal(err)
 	}
@@ -1579,10 +1546,7 @@ func TestSearchFallbackAllExcludedIncludesDegraded(t *testing.T) {
 		roomID  = "32323232-3232-3232-3232-323232323232"
 		placeID = "cached-degraded-excluded"
 	)
-	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
-		values ($1, 'degraded-422@test.dev') on conflict do nothing`, hostID); err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "degraded-422@test.dev")
 	if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 23.9911, 121.6112)
 		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
@@ -1643,10 +1607,7 @@ func TestSearchUnfulfilledDietaryTermsInBoth422Paths(t *testing.T) {
 				roomID  = "3b3b3b3b-3b3b-3b3b-3b3b-3b3b3b3b3b3b"
 				placeID = "unfulfilled-dietary-excluded"
 			)
-			if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
-		values ($1, 'unfulfilled@test.dev') on conflict do nothing`, hostID); err != nil {
-				t.Fatal(err)
-			}
+			insertTestUser(t, ctx, pool, hostID, "unfulfilled@test.dev")
 			if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 23.9911, 121.6112)
 		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
@@ -1692,11 +1653,7 @@ func TestSearchNoCacheReturns502(t *testing.T) {
 
 	hostID := "23232323-2323-2323-2323-232323232323"
 	roomID := "24242424-2424-2424-2424-242424242424"
-	if _, err := pool.Exec(ctx,
-		`insert into auth.users (id, email) values ($1, 'nc@test.dev') on conflict do nothing`,
-		hostID); err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "nc@test.dev")
 	// 快取圈外的座標（高雄）→ 30 天內快取為空
 	if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 22.6273, 120.3014)
@@ -1734,10 +1691,7 @@ func TestGoogleSearchDoesNotFallbackToMockCache(t *testing.T) {
 		// 交叉案例：place_id 不帶 mock- 前綴，出身只寫在 source 欄。
 		crossPlaceID = "sourced-mock-no-prefix"
 	)
-	if _, err := pool.Exec(ctx, `insert into auth.users (id, email)
-		values ($1, 'google-cache@test.dev') on conflict do nothing`, hostID); err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "google-cache@test.dev")
 	if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		values ($1, $2, 'lobby', 23.5685, 119.5660)
 		on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
@@ -1806,11 +1760,7 @@ func TestSearchDrawRecordsHistory(t *testing.T) {
 
 	hostID := "77777777-7777-7777-7777-777777777777"
 	roomID := "88888888-8888-8888-8888-888888888888"
-	if _, err := pool.Exec(ctx,
-		`insert into auth.users (id, email) values ($1, 'hist@test.dev') on conflict do nothing`,
-		hostID); err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "hist@test.dev")
 	if _, err := pool.Exec(ctx,
 		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		 values ($1, $2, 'lobby', 25.0478, 121.5170)
@@ -2586,11 +2536,7 @@ func TestSearchExposureOrderingNewStoreBonus(t *testing.T) {
 	hostID := "31313131-3131-3131-3131-313131313131"
 	roomA := "32323232-3232-3232-3232-323232323232"
 	roomB := "34343434-3434-3434-3434-343434343434"
-	if _, err := pool.Exec(ctx,
-		`insert into auth.users (id, email) values ($1, 'exposure@test.dev') on conflict do nothing`,
-		hostID); err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "exposure@test.dev")
 	for _, rid := range []string{roomA, roomB} {
 		if _, err := pool.Exec(ctx,
 			`insert into public.rooms (id, host_id, status, center_lat, center_lng)
@@ -2654,11 +2600,7 @@ func TestSearchSurvivesWeatherOutage(t *testing.T) {
 
 	hostID := "35353535-3535-3535-3535-353535353535"
 	roomID := "36363636-3636-3636-3636-363636363636"
-	if _, err := pool.Exec(ctx,
-		`insert into auth.users (id, email) values ($1, 'weather@test.dev') on conflict do nothing`,
-		hostID); err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "weather@test.dev")
 	if _, err := pool.Exec(ctx,
 		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
 		 values ($1, $2, 'lobby', 25.0478, 121.5170)
@@ -2794,11 +2736,7 @@ func TestSearchEvaluatesOpeningHoursAtMealTime(t *testing.T) {
 		closingPlace = "meal-time-closing-place"
 		openPlace    = "meal-time-open-place"
 	)
-	if _, err := pool.Exec(ctx,
-		`insert into auth.users (id, email) values ($1, 'meal-time@test.dev') on conflict do nothing`,
-		hostID); err != nil {
-		t.Fatal(err)
-	}
+	insertTestUser(t, ctx, pool, hostID, "meal-time@test.dev")
 	if _, err := pool.Exec(ctx,
 		`insert into public.rooms (id, host_id, status, center_lat, center_lng, meal_time)
 		 values ($1, $2, 'lobby', 25.0478, 121.5170, now() + interval '6 hours')

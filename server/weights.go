@@ -171,7 +171,7 @@ const (
 	//
 	// 代價一：候選到量化圓心的距離與到真實圓心的距離最多差半個網格對角線（300 公尺網格
 	// 約 212 公尺），距離權重因此可能比舊做法再偏一點。這是軟性偏好權重不是硬性過濾，接受。
-	// 硬性半徑過濾（handlers.go 的 provider fetch envelope、freeze.go 重濾）仍用真實圓心：
+	// 硬性半徑過濾（search.go 的 provider fetch envelope、freeze.go 重濾）仍用真實圓心：
 	// 那條不是數值管道，改用量化圓心會讓候選集合與使用者設定的距離上限對不起來。SQL 端
 	// create_room 寫進 rooms.center_* 的也仍是真實圓心，量化只發生在 Go 引擎計分側。
 	//
