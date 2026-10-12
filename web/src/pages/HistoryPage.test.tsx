@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { StrictMode } from 'react'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -19,11 +20,28 @@ type HistoryResult = SelectResult & { count: number | null }
 const mocks = vi.hoisted(() => {
   const memberRows = vi.fn(async (): Promise<SelectResult> => ({ data: [], error: null }))
   const history = vi.fn(async (): Promise<HistoryResult> => ({ data: [], error: null, count: 0 }))
-  // supabase.from(table) 的最小替身：room_members 的 select 直接回房籍列，dining_history 走 order().limit()
+  const ratingUpdate = vi.fn<(patch: unknown, options: unknown) => void>()
+  const ratingWrite = vi.fn(async (): Promise<{ error: null; count: number }> => ({ error: null, count: 1 }))
+  // 查詢鏈：後面可接任意 eq／is／order／limit，整條鏈被 await 時才取結果
+  function chain(result: () => Promise<unknown>) {
+    const self = {
+      eq: () => self,
+      is: () => self,
+      order: () => self,
+      limit: () => self,
+      then: (resolve: (r: unknown) => unknown, reject?: (e: unknown) => unknown) => result().then(resolve, reject),
+    }
+    return self
+  }
+  // supabase.from(table) 的最小替身：房籍列、足跡清單、補評寫入
   const from = vi.fn((table: string) => ({
-    select: () => table === 'room_members' ? memberRows() : { order: () => ({ limit: () => history() }) },
+    select: () => chain(table === 'room_members' ? memberRows : history),
+    update(patch: unknown, options: unknown) {
+      ratingUpdate(patch, options)
+      return chain(ratingWrite)
+    },
   }))
-  return { from, memberRows, history }
+  return { from, memberRows, history, ratingUpdate, ratingWrite }
 })
 
 vi.mock('../lib/supabase', () => ({ supabase: { from: mocks.from } }))
@@ -45,18 +63,23 @@ async function settle() {
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
 }
 
+const routes = () => (
+  <MemoryRouter initialEntries={['/history']}>
+    <Routes>
+      <Route path="/history" element={<HistoryPage />} />
+      <Route path="/" element={<Home />} />
+    </Routes>
+  </MemoryRouter>
+)
+
 async function renderHistory() {
-  const view = render(
-    <MemoryRouter initialEntries={['/history']}>
-      <Routes>
-        <Route path="/history" element={<HistoryPage />} />
-        <Route path="/" element={<Home />} />
-      </Routes>
-    </MemoryRouter>,
-  )
+  const view = render(routes())
   await settle()
   return view
 }
+
+const historyRow = (id: string, name: string, rating: number | null = null) =>
+  ({ id, rating, decided_at: '2026-08-20T12:00:00Z', restaurants: { name, cuisine_tags: [] } })
 
 const homeLink = () => screen.getByRole('link', { name: '回首頁' })
 const dialog = () => screen.getByRole('dialog')
@@ -85,6 +108,48 @@ describe('足跡評分星形', () => {
     await renderHistory()
     const stars = [...screen.getByRole('img', { name: '已評 3 顆星' }).querySelectorAll('svg')]
     expect(stars.map(star => star.getAttribute('fill'))).toEqual(['currentColor', 'currentColor', 'currentColor', 'none', 'none'])
+  })
+})
+
+describe('足跡清單', () => {
+  // App 跑在 StrictMode 底下（main.tsx）：開發時 mount effect 跑兩次，兩輪載入同時在飛
+  it('StrictMode 雙掛載：晚到的第一輪載入不得蓋掉後一輪的結果', async () => {
+    const first = deferred<HistoryResult>()
+    const second = deferred<HistoryResult>()
+    mocks.history.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    render(<StrictMode>{routes()}</StrictMode>)
+    await settle()
+    expect(mocks.history).toHaveBeenCalledTimes(2)
+
+    await act(async () => second.resolve({ data: [historyRow('h2', '新的那家')], error: null, count: 1 }))
+    await settle()
+    expect(screen.getByText('新的那家')).toBeTruthy()
+
+    await act(async () => first.resolve({ data: [historyRow('h1', '舊的那家')], error: null, count: 1 }))
+    await settle()
+    expect(screen.queryByText('舊的那家')).toBeNull()
+    expect(screen.getByText('新的那家')).toBeTruthy()
+  })
+
+  // 星排卸載後焦點會憑空消失（鍵盤／報讀中斷）：送出後焦點回到那一列（design review S8）
+  it('補評送出後收合星排，下一幀焦點回到那一列', async () => {
+    mocks.history.mockResolvedValue({ data: [historyRow('h1', '未評餐廳')], error: null, count: 1 })
+    const frames = captureFrames()
+    await renderHistory()
+    fireEvent.click(screen.getByRole('button', { name: '尚未評分 · 補評' }))
+    act(() => frames.flush()) // 展開側：焦點移進第一顆星
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '1 顆星' }))
+
+    fireEvent.click(screen.getByRole('button', { name: '4 顆星' }))
+    fireEvent.click(screen.getByRole('button', { name: '送出評分' }))
+    await settle()
+    expect(mocks.ratingUpdate).toHaveBeenCalledWith({ rating: 4 }, { count: 'exact' })
+    expect(screen.getByRole('img', { name: '已評 4 顆星' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '送出評分' })).toBeNull()
+    const row = screen.getByText('未評餐廳').closest('li')!
+    expect(document.activeElement).not.toBe(row)
+    act(() => frames.flush())
+    expect(document.activeElement).toBe(row)
   })
 })
 
@@ -193,13 +258,15 @@ describe('足跡頁回首頁離席確認', () => {
   it('dialog 開著時背景 inert，dialog 本身在 inert 子樹外', async () => {
     rooms(leaveRow('room-1', 'ABC123', 'voting'))
     await renderHistory()
-    const background = homeLink().closest('.min-h-screen')!
-    expect(background.hasAttribute('inert')).toBe(false)
+    expect(homeLink().closest('[inert]')).toBeNull()
 
     const leave = await openLeave()
-    expect(background.hasAttribute('inert')).toBe(true)
+    // 整頁背景（標頭的回首頁連結與主內容）都在同一個 inert 子樹裡
+    const background = homeLink().closest<HTMLElement>('[inert]')!
+    expect(background).not.toBeNull()
+    expect(background.contains(screen.getByRole('main'))).toBe(true)
     expect(background.contains(leave)).toBe(false)
-    expect(within(background as HTMLElement).getAllByRole('link').length).toBeGreaterThan(0) // 背景確實有可聚焦控制項
+    expect(within(background).getAllByRole('link').length).toBeGreaterThan(0) // 背景確實有可聚焦控制項
   })
 
   it('單房 dialog 文案沿用 leaveNotice（voting 兩人）', async () => {

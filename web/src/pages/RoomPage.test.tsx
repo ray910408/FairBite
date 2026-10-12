@@ -41,28 +41,39 @@ const mocks = vi.hoisted(() => {
   const roomsWrite = vi.fn(async (): Promise<WriteResult> => ({ error: null, count: 1 }))
   const memberWrite = vi.fn(async (): Promise<WriteResult> => ({ error: null, count: 1 }))
   const memberRows = vi.fn(async (): Promise<SelectResult> => ({ data: [], error: null }))
-  // supabase.from(table) 的最小替身：update(...).eq(...)[.eq(...)] 可 await，select(...) 回房籍列
+  // decided 房的同席紀錄（RatingPrompt 查自己的那一列）；預設查無列＝不出評分卡
+  const diningRow = vi.fn(async (): Promise<{ data: { id: string; rating: number | null } | null; error: null }> =>
+    ({ data: null, error: null }))
+  // 查詢鏈：後面可接任意 eq／is／order／limit／maybeSingle，整條鏈被 await 時才取結果
+  function chain(table: string, result: () => Promise<unknown>) {
+    let pending: Promise<unknown> | undefined
+    const self = {
+      eq(column: string, value: unknown) {
+        eq(table, column, value)
+        return self
+      },
+      is: () => self,
+      order: () => self,
+      limit: () => self,
+      maybeSingle: () => self,
+      then(resolve: (r: unknown) => unknown, reject?: (e: unknown) => unknown) {
+        pending ??= result()
+        return pending.then(resolve, reject)
+      },
+    }
+    return self
+  }
+  // supabase.from(table) 的最小替身：rooms／room_members 的寫入、房籍列、同席紀錄
   const from = vi.fn((table: string) => ({
     update(patch: Record<string, unknown>, options: unknown) {
       update(table, patch, options)
-      let result: Promise<WriteResult> | undefined
-      const chain = {
-        eq(column: string, value: unknown) {
-          eq(table, column, value)
-          return chain
-        },
-        then(resolve: (r: WriteResult) => unknown, reject?: (e: unknown) => unknown) {
-          result ??= table === 'rooms' ? roomsWrite() : memberWrite()
-          return result.then(resolve, reject)
-        },
-      }
-      return chain
+      return chain(table, table === 'rooms' ? roomsWrite : memberWrite)
     },
-    select: () => memberRows(),
+    select: () => chain(table, table === 'dining_history' ? diningRow : memberRows),
   }))
 
   return {
-    room, from, update, eq, roomsWrite, memberWrite, memberRows,
+    room, from, update, eq, roomsWrite, memberWrite, memberRows, diningRow,
     getSession: vi.fn(async () => ({ data: { session: { access_token: 'token' } } })),
     getUser: vi.fn(async () => ({ data: { user: { is_anonymous: false } } })),
     picked: { lat: 25.05, lng: 121.52, label: '新地點' } as DeparturePoint,
@@ -394,16 +405,20 @@ describe('RoomPage 抽選與待確認', () => {
     expect(localStorage.getItem('wheel-seen:room-1')).toBe('4')
     expect(screen.queryByText('轉盤抽選中…')).toBeNull()
     expect(screen.getByRole('heading', { name: '店r1' })).toBeTruthy() // 結果卡
+
+    // 同一次進房裡重轉出新版本：轉完的狀態要重置，新的抽選照樣會播
+    const redrawn = { ...state, room: makeRoom({ status: 'pending', draw_version: 5 }), draw: { ...DRAW, version: 5 } }
+    push(redrawn)
+    expect(screen.getByText('轉盤抽選中…')).toBeTruthy()
+    await act(() => vi.advanceTimersByTimeAsync(4200))
+    expect(localStorage.getItem('wheel-seen:room-1')).toBe('5')
+    expect(screen.queryByText('轉盤抽選中…')).toBeNull()
     first.unmount()
 
     // 重新進房：直接是結果卡
-    await renderRoom(state)
+    await renderRoom(redrawn)
     expect(screen.queryByText('轉盤抽選中…')).toBeNull()
     expect(screen.getByRole('heading', { name: '店r1' })).toBeTruthy()
-
-    // 重轉是新版本：照樣會播
-    push({ ...state, room: makeRoom({ status: 'pending', draw_version: 5 }), draw: { ...DRAW, version: 5 } })
-    expect(screen.getByText('轉盤抽選中…')).toBeTruthy()
   })
 
   it('標頭的邀請碼鈕複製 /join 連結（訪客點了可直接入房），不是只複製 12 碼', async () => {
@@ -418,6 +433,31 @@ describe('RoomPage 抽選與待確認', () => {
     } finally {
       delete (navigator as { clipboard?: unknown }).clipboard
     }
+  })
+
+  it('複製邀請連結失敗：請使用者手動記下邀請碼', async () => {
+    const writeText = vi.fn(async (_text: string) => { throw new Error('denied') })
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    try {
+      await renderRoom(pending(GUEST))
+      fireEvent.click(button(/邀請碼 ABC123/))
+      await settle()
+      expect(alertText()).toBe('複製失敗，請手動記下邀請碼')
+      expect(screen.queryByText('邀請連結已複製')).toBeNull()
+    } finally {
+      delete (navigator as { clipboard?: unknown }).clipboard
+    }
+  })
+
+  // 訪客（匿名登入）在定案後才看得到「保留這次聚餐紀錄？」；正式帳號不顯示
+  it.each([
+    [true, true],
+    [false, false],
+  ])('定案後的訪客註冊提示：is_anonymous=%s 時顯示=%s', async (anonymous, shown) => {
+    mocks.getUser.mockResolvedValue({ data: { user: { is_anonymous: anonymous } } })
+    await renderRoom(pending(GUEST, { room: makeRoom({ status: 'decided' }) }))
+    expect(screen.getByRole('heading', { name: '店r1' })).toBeTruthy() // 結果卡
+    expect(screen.queryByRole('heading', { name: '保留這次聚餐紀錄？' }) !== null).toBe(shown)
   })
 
   it('只剩抽中的一家：重轉改成「排除並回到準備階段」，先開確認框，確定才送', async () => {
@@ -781,7 +821,17 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
     expect(queryButton('確認用餐地點')).toBeNull() // 現任就是這個點：沒有東西可確認
   })
 
+  // searchRoom 的替身照真的 api.ts 走：送出請求前（讀完 session）才呼叫 onRequestStart
+  function searchCallingRequestStart(beforeRequest: Promise<void> = Promise.resolve()) {
+    vi.mocked(api.searchRoom).mockImplementation(async (_roomId, options) => {
+      await beforeRequest
+      options?.onRequestStart?.()
+      return { error: null, warning: null }
+    })
+  }
+
   it('preflight pending 時 unmount，晚到結果不送 search、不啟動慢搜尋計時', async () => {
+    searchCallingRequestStart()
     const write = deferred<WriteResult>()
     mocks.memberWrite.mockReturnValueOnce(write.promise)
     const view = await renderRoom(lobbyReady())
@@ -795,6 +845,48 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
     await settle()
     expect(api.searchRoom).not.toHaveBeenCalled()
     expect(timers).not.toHaveBeenCalledWith(expect.any(Function), 3000)
+  })
+
+  it('搜尋請求送出前就卸載：晚到的 request-start 不啟動慢搜尋計時', async () => {
+    const session = deferred<void>()
+    searchCallingRequestStart(session.promise)
+    const view = await renderRoom(lobbyReady())
+    fireEvent.click(button('開始搜尋餐廳'))
+    await settle()
+    expect(api.searchRoom).toHaveBeenCalledOnce()
+
+    const timers = vi.spyOn(globalThis, 'setTimeout')
+    view.unmount()
+    await act(async () => session.resolve())
+    await settle()
+    expect(timers).not.toHaveBeenCalledWith(expect.any(Function), 3000)
+  })
+
+  // 只驗使用者看得到的保證（連點只送一次），驗不到 searchInFlight 這把鎖本身：同一瞬間的兩下都停在前置儲存，
+  // 第二下推進搜尋世代、讓第一下作廢，拿掉這把鎖也只送一次；第一下一往下走，React 已在 microtask 裡重繪、
+  // 搜尋鍵 disabled，第二下打不到 onSearch
+  it('搜尋鍵同一瞬間連點只送一次', async () => {
+    const result = deferred<api.SearchOutcome>()
+    vi.mocked(api.searchRoom).mockReturnValue(result.promise)
+    await renderRoom(lobbyReady())
+    const search = button('開始搜尋餐廳')
+    await act(async () => { search.click(); search.click() })
+    await settle()
+    expect(api.searchRoom).toHaveBeenCalledOnce()
+    expect(button('搜尋中…').disabled).toBe(true)
+
+    await act(async () => result.resolve({ error: null, warning: null }))
+    await settle()
+    expect(button('開始搜尋餐廳').disabled).toBe(false)
+  })
+
+  it('搜尋請求連不上伺服器：顯示無法連線，搜尋鍵恢復可按', async () => {
+    vi.mocked(api.searchRoom).mockRejectedValue(new TypeError('Failed to fetch'))
+    await renderRoom(lobbyReady())
+    fireEvent.click(button('開始搜尋餐廳'))
+    await settle()
+    expect(alertText()).toBe('搜尋失敗：無法連線到伺服器')
+    expect(button('開始搜尋餐廳').disabled).toBe(false)
   })
 
   it('request-start callback 精確在 3000ms 顯示 truthful 的慢搜尋狀態，結束後收掉', async () => {
@@ -1020,7 +1112,7 @@ describe('RoomPage 候選出爐：房主動作', () => {
     fireEvent.click(trigger)
     expect(within(dialog()).getByRole('heading', { name: '修改條件？' })).toBeTruthy()
     expect(dialog().textContent).toContain('修改條件會清除目前候選，並請所有成員重新準備。')
-    expect(trigger.closest('.min-h-screen')!.hasAttribute('inert')).toBe(true) // 框開著：背景 inert
+    expect(trigger.closest('[inert]')).not.toBeNull() // 框開著：背景 inert
     expect(api.editConditions).not.toHaveBeenCalled()
 
     fireEvent.click(inDialog('取消'))
@@ -1066,6 +1158,27 @@ describe('RoomPage 候選出爐：房主動作', () => {
 
     expect(alertText()).toBe('房間狀態已變更')
     expect(state.refetch).not.toHaveBeenCalled()
+  })
+
+  // 確定鈕按下到重繪之間還有一拍：這時再按到背景的「修改條件」不能重開確認框。
+  // 依賴 jsdom 沒實作 inert：瀏覽器裡 inert 擋得住這一下，jsdom 照樣把點擊送進背景，這條測試才打得到
+  // askEditConditions 的 ref 守衛。升級 jsdom（若它開始擋 inert 子樹的點擊）後要重跑 R12 mutation 確認這條仍會紅
+  it('修改條件送出中：再按修改條件不會重開確認框', async () => {
+    const sent = deferred<string | null>()
+    vi.mocked(api.editConditions).mockReturnValue(sent.promise)
+    await renderRoom(inStage('candidates'))
+    const edit = button('修改條件')
+    fireEvent.click(edit)
+    const confirm = inDialog('清除候選並修改')
+    await act(async () => { confirm.click(); edit.click() })
+    await settle()
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(button('處理中…').disabled).toBe(true)
+    await act(async () => sent.resolve(null))
+    await settle()
+    expect(api.editConditions).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
 
@@ -1118,10 +1231,12 @@ describe('初選（Shortlist）', () => {
     expect(alertText()).toBe('初選表決成功，但重新載入失敗，請重新整理頁面')
   })
 
+  // 驗到的是 checkbox 的 disabled，不是 runAction 的 ref 鎖：受控 input 的事件一結束 React 就同步重繪，
+  // 第二下打在已停用的 checkbox 上。ref 鎖由按鈕觸發的連點測試把關（開始投票、啟動轉盤、修改條件）
   it.each([
     ['初選表決', 'candidates', '我想先初選', 'voteShortlist'],
     ['改地點表決', 'voting', '我想換地點', 'voteLocation'],
-  ] as const)('%s 同一瞬間連點只送一次', async (_label, status, name, send) => {
+  ] as const)('%s 連點兩下只送一次（第二下時 checkbox 已停用）', async (_label, status, name, send) => {
     await renderRoom(shortlist(status))
     const box = screen.getByRole('checkbox', { name })
     await act(async () => { box.click(); box.click() })
@@ -1197,7 +1312,9 @@ describe('初選（Shortlist）', () => {
     expect(state.refetch).toHaveBeenCalledOnce()
   })
 
-  // 瀏覽器裡背景 inert，但確定鈕按下到重繪之間還有一拍：這時再按到「取消初選」不能重開確認框
+  // 確定鈕按下到重繪之間還有一拍：這時再按到背景的「取消初選」不能重開確認框。
+  // 依賴 jsdom 沒實作 inert：瀏覽器裡 inert 擋得住這一下，jsdom 照樣把點擊送進背景，這條測試才打得到
+  // askCancelShortlist 的 ref 守衛。升級 jsdom（若它開始擋 inert 子樹的點擊）後要重跑 R11 mutation 確認這條仍會紅
   it('取消初選送出中：再按取消初選不會重開確認框', async () => {
     const sent = deferred<string | null>()
     vi.mocked(api.cancelShortlist).mockReturnValue(sent.promise)
@@ -1404,13 +1521,15 @@ describe('回首頁離席確認', () => {
   it('dialog 開著時背景 inert，dialog 本身在 inert 子樹外', async () => {
     inRoom('voting')
     await renderRoom(lobby())
-    const background = homeLink().closest('.min-h-screen')!
-    expect(background.hasAttribute('inert')).toBe(false)
+    expect(homeLink().closest('[inert]')).toBeNull()
 
     const leave = await openLeave()
-    expect(background.hasAttribute('inert')).toBe(true)
+    // 整頁背景（標頭的回首頁連結與主內容）都在同一個 inert 子樹裡
+    const background = homeLink().closest<HTMLElement>('[inert]')!
+    expect(background).not.toBeNull()
+    expect(background.contains(screen.getByRole('main'))).toBe(true)
     expect(background.contains(leave)).toBe(false)
     // 背景真的含著會被鍵盤觸發的控制項——斷言不是空的
-    expect(within(background as HTMLElement).getAllByRole('button').length).toBeGreaterThan(0)
+    expect(within(background).getAllByRole('button').length).toBeGreaterThan(0)
   })
 })
