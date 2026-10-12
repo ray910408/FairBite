@@ -87,7 +87,7 @@ export function useRoom(roomId: string) {
       outcome = Promise.reject(error)
       outcome.catch(() => undefined) // 沒人排隊時不算 unhandled；呼叫端照樣從 return 收到 reject
     }
-    lastDone.current = { gen, outcome }
+    if (gen > lastDone.current.gen) lastDone.current = { gen, outcome } // 不倒退；等待者照樣 settle
     for (const settle of refetchWaiters.current.splice(0)) settle(outcome)
     return outcome
   }, [loadRoom])
