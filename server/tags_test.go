@@ -10,6 +10,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"testing"
 )
@@ -64,12 +65,7 @@ func mockProducibleTags() map[string]bool {
 }
 
 func containsOption(options []string, want string) bool {
-	for _, option := range options {
-		if option == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(options, want)
 }
 
 func TestProductVocabularyIncludesFastFoodAndDessertWithoutHalal(t *testing.T) {

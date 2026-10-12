@@ -136,7 +136,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	if !ok {
 		return
 	}
-	if !cacheSearchRestaurants(w, ctx, pool, places, fetched) {
+	fetched.found, ok = cacheSearchRestaurants(w, ctx, pool, places, fetched)
+	if !ok {
 		return
 	}
 	// 「附近根本沒資料」和「有資料但全被條件排除」是兩種不同的死路，
@@ -230,32 +231,33 @@ func fetchSearchRestaurants(w http.ResponseWriter, ctx context.Context, pool *pg
 	}, true
 }
 
-// cacheSearchRestaurants 以獨立交易寫入餐廳快取並 commit。回 false 表示已回應。
-func cacheSearchRestaurants(w http.ResponseWriter, ctx context.Context, pool *pgxpool.Pool, places PlacesProvider, fetched searchFetch) bool {
+// cacheSearchRestaurants 以獨立交易寫入餐廳快取並 commit，回傳帶 DB uuid 的 found。回 false 表示已回應。
+func cacheSearchRestaurants(w http.ResponseWriter, ctx context.Context, pool *pgxpool.Pool, places PlacesProvider, fetched searchFetch) ([]Restaurant, bool) {
+	found := fetched.found
 	// 快取寫入獨立交易先 commit：即使零候選 rollback，真 API 的呼叫成果仍留作快取。
 	// fallback 的 found 已含 DB uuid 且本來就出自快取，因此跳過重寫。
 	if !fetched.degraded && (len(fetched.found) > 0 || len(fetched.closedIDs) > 0 || len(fetched.rejectedIDs) > 0) {
 		txCache, err := pool.Begin(ctx)
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-			return false
+			return nil, false
 		}
 		defer txCache.Rollback(ctx)
 		staleIDs := append(fetched.closedIDs, fetched.rejectedIDs...)
 		if err := StaleOutRestaurants(ctx, txCache, staleIDs); err != nil {
 			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
-			return false
+			return nil, false
 		}
-		if err := UpsertRestaurants(ctx, txCache, fetched.found, places.Source()); err != nil {
+		if found, err = UpsertRestaurants(ctx, txCache, fetched.found, places.Source()); err != nil {
 			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
-			return false
+			return nil, false
 		}
 		if err := txCache.Commit(ctx); err != nil {
 			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-			return false
+			return nil, false
 		}
 	}
-	return true
+	return found, true
 }
 
 // respondNoRestaurants 回應零餐廳：先排除搜尋期間條件或位置已變更的 409，才回 no_restaurants_in_range 422。
