@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
+import { useLeaveDialog } from '../hooks/useLeaveDialog'
 import { useMidnightRerender } from '../hooks/useMidnightRerender'
 import { useRoom } from '../hooks/useRoom'
 import { useRoomSettingsWrites } from '../hooks/useRoomSettingsWrites'
 import {
-  cancelShortlist, chooseLocation, confirmDraw, drawRoom, editConditions, pendingLeave, redrawRoom, searchRoom,
+  cancelShortlist, chooseLocation, confirmDraw, drawRoom, editConditions, redrawRoom, searchRoom,
   startVoting, voteLocation, voteShortlist,
 } from '../lib/api'
 import { loadRoomDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
@@ -13,7 +14,6 @@ import { buildInviteUrl } from '../lib/invite'
 import { EXPLORATION_OPTIONS, ROOM_STATUS_LABEL } from '../lib/labels'
 import { formatMealTime } from '../lib/mealTime'
 import { loadSeenStage, saveSeenStage } from '../lib/seenStage'
-import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import {
   SHORTLIST_PICK_MIN, hasMyPick, keptPickCounts, membersBelowMin, pickCounts, shortlistOpen,
 } from '../lib/shortlist'
@@ -54,7 +54,6 @@ function revealBanner(el: HTMLElement | null) {
 
 export default function RoomPage() {
   const { id = '' } = useParams()
-  const nav = useNavigate()
   const { room, members, candidates, draw, locationVotes = [], shortlistVotes = [], shortlistPicks = [], myUserId,
     connected, notFound, loadError, refetch, toggleVote, togglePick, hasMyVote, ups, vetoesRemaining } = useRoom(id)
   const [spun, setSpun] = useState(false)
@@ -67,9 +66,6 @@ export default function RoomPage() {
   // ref 管互斥（同步）、state 管 loading 畫面（非同步）——分工見 e2e 快速連點斷言
   const [searching, setSearching] = useState(false)
   const [startingVoting, setStartingVoting] = useState(false)
-  // 退房確認（ADR-0007：回首頁＝離席）
-  const [leaveDialog, setLeaveDialog] = useState<LeaveTarget | null>(null)
-  const [leaveChecking, setLeaveChecking] = useState(false)
   const [roomSettingsBlocked, setRoomSettingsBlocked] = useState(false)
   const [editingConditions, setEditingConditions] = useState(false)
   const [searchSlow, setSearchSlow] = useState(false)
@@ -78,10 +74,6 @@ export default function RoomPage() {
   const [isGuest, setIsGuest] = useState(false)
   // 初選表決／取消初選共用（兩者不會同時出現：表決只在 candidates、取消只在 shortlisting）
   const [shortlistBusy, setShortlistBusy] = useState(false)
-  const leaveTriggerRef = useRef<HTMLAnchorElement>(null)
-  // 房籍查詢自己的世代（比照 HistoryPage）：aria-busy 擋不住點擊，兩次點擊之間房籍
-  // 還可能在別的分頁被改，只有最後一次點擊的回應能生效
-  const leaveGen = useRef(0)
   const conditionsFlush = useRef<() => Promise<boolean>>(async () => true)
   const guestsReadyRef = useRef(true)
   const searchInFlight = useRef(false)
@@ -135,6 +127,9 @@ export default function RoomPage() {
   }, [])
   useMidnightRerender()
   const [confirmAsk, setConfirmAsk] = useState<ConfirmAsk | null>(null)
+  // 退房確認（ADR-0007：回首頁＝離席）
+  const { leaveDialog, leaveChecking, leaveTriggerRef, askLeave, closeLeave } =
+    useLeaveDialog({ onOpen: () => setConfirmAsk(null) })
   const confirmTriggerRef = useRef<HTMLElement | null>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const stageHeadingRef = useRef<HTMLHeadingElement>(null)
@@ -406,42 +401,6 @@ export default function RoomPage() {
   function onConfirmDraw() {
     return runAction(pendingActionInFlight, busy => setPendingAction(busy ? 'confirm' : null), '確認',
       () => confirmDraw(room!.id, currentDraw!.version))
-  }
-
-  function closeLeave() {
-    setLeaveDialog(null)
-    // 觸發元素不隨 dialog 卸載，但背景整塊帶著 inert：setLeaveDialog 不同步 flush，
-    // 同一輪呼叫 focus() 時觸發元素仍在 inert 子樹內，瀏覽器直接忽略、焦點掉回 body。
-    // 排到移除 inert 的那次 commit 之後才還原（比照 HistoryPage 的 onRated）。
-    requestAnimationFrame(() => leaveTriggerRef.current?.focus())
-  }
-
-  // 一律攔下來當場查（比照 HistoryPage），不讀本頁任何本地狀態：
-  // 1. useRoom 的 room 在 rooms 查詢失敗時會停在舊物件（useRoom 的 refetch 只在查到列時更新 room、
-  //    查無列才清成 null，暫時性錯誤只亮 loadError）——lobby→candidates 期間 refresh 失敗或 Realtime
-  //    斷線，拿過期 status 就會承諾「之後可用邀請碼重新加入」，而 join_room 早就不匹配。
-  // 2. POST /api/leave 是全退不挑房，殘留房籍（leave 逾時後又建新房）也會一起退掉，
-  //    只講當前這一間就是漏報。
-  // 代價是多一次查詢與非同步開啟（aria-busy 回饋）；不可逆動作上正確性優先於即時感。
-  async function askLeave(e: React.MouseEvent<HTMLAnchorElement>) {
-    e.preventDefault()
-    const request = ++leaveGen.current
-    // 上一頁回到房內時首頁的退房可能還在飛：這裡等它落地，按鈕會無聲卡到 50 秒（冷啟動）。
-    // 直接回首頁，由首頁 mount 等（比照 HistoryPage）
-    if (pendingLeave()) {
-      nav('/')
-      return
-    }
-    setLeaveChecking(true)
-    const rooms = await fetchLeaveRooms()
-    if (request !== leaveGen.current) return // 更新的一次在跑，checking 由它負責關掉
-    setLeaveChecking(false)
-    if (rooms && rooms.length === 0) { // 房籍已消失（被踢／房已刪）：沒有後果可講
-      nav('/')
-      return
-    }
-    setConfirmAsk(null) // 查房籍期間背景還沒 inert，可能先開了確認框：兩個 dialog 不能疊在一起
-    setLeaveDialog(rooms ? { kind: 'rooms', rooms } : { kind: 'unknown' })
   }
 
   return (
