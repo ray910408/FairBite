@@ -175,6 +175,7 @@ async function renderRoom(state: RoomState) {
       <Routes>
         <Route path="/room/:id" element={<RoomPage />} />
         <Route path="/" element={<Home />} />
+        <Route path="/history" element={<p>足跡頁</p>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -1479,6 +1480,21 @@ describe('回首頁離席確認', () => {
     await act(async () => first.resolve({ data: [], error: null })) // 第一下的「沒房」才回來
     await settle()
     expect(screen.getByText('首頁').dataset.key).toBe(key)
+  })
+
+  // 點了 logo、查房籍還沒回來就改點「足跡」離開房間頁：晚到的「沒房」不能把人從足跡拉回首頁
+  it('查房籍期間已離開房間頁：晚到的「沒房」不再導航', async () => {
+    const rows = deferred<SelectResult>()
+    mocks.memberRows.mockReturnValueOnce(rows.promise)
+    await renderRoom(lobby())
+    fireEvent.click(homeLink())
+    fireEvent.click(screen.getByRole('link', { name: '足跡' }))
+    expect(screen.getByText('足跡頁')).toBeTruthy()
+
+    await act(async () => rows.resolve({ data: [], error: null }))
+    await settle()
+    expect(screen.getByText('足跡頁')).toBeTruthy()
+    expect(screen.queryByText('首頁')).toBeNull()
   })
 
   // PR #17 回歸：背景整塊帶著 inert（fixed 遮罩對 tab 順序沒用，只好整塊 inert），

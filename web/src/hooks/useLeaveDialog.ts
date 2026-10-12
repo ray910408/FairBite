@@ -1,4 +1,4 @@
-import { useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { pendingLeave } from '../lib/api'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
@@ -30,6 +30,11 @@ export function useLeaveDialog({ onOpen }: { onOpen?: () => void } = {}) {
   // 與頁面自己的載入世代（足跡頁的 load）分開：兩者互不作廢，否則按一次「重試」就會讓
   // in-flight 的離席查詢靜默消失，使用者按「回首頁」等於沒反應
   const leaveGen = useRef(0)
+  // 離開頁面也作廢還在查的那次：點了回首頁又馬上改點「足跡」，晚到的「沒房」不能把人從別頁拉回首頁
+  useEffect(() => {
+    const gen = leaveGen
+    return () => { gen.current++ }
+  }, [])
 
   async function askLeave(e: MouseEvent<HTMLAnchorElement>) {
     e.preventDefault()
