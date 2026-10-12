@@ -67,7 +67,7 @@ export default function RoomPage() {
   // ref 管互斥（同步）、state 管 loading 畫面（非同步）——分工見 e2e 快速連點斷言
   const [searching, setSearching] = useState(false)
   const [startingVoting, setStartingVoting] = useState(false)
-  // 退房確認（ADR-0007：回首頁＝離席）——新 state 一律接在最後，RoomPage.test.ts 依呼叫順序 mock useState
+  // 退房確認（ADR-0007：回首頁＝離席）
   const [leaveDialog, setLeaveDialog] = useState<LeaveTarget | null>(null)
   const [leaveChecking, setLeaveChecking] = useState(false)
   const [roomSettingsBlocked, setRoomSettingsBlocked] = useState(false)
@@ -101,7 +101,6 @@ export default function RoomPage() {
     setDraftHH(d ? String(d.getHours()).padStart(2, '0') : '')
     setDraftMM(d ? String(d.getMinutes()).padStart(2, '0') : '')
   }, [room?.meal_time])
-  // 本 hook 的 effect 必須排第二：RoomPage.test.ts 依呼叫順序取 effects[2] 當下面的搜尋 lifecycle
   const settings = useRoomSettingsWrites(room, {
     setActionError,
     setRoomSettingsBlocked,
@@ -132,10 +131,9 @@ export default function RoomPage() {
   }, [])
   useEffect(() => { setSpun(false) }, [draw?.version])
   useEffect(() => {
-    const getUser = supabase.auth?.getUser?.bind(supabase.auth)
-    if (getUser) void getUser().then(({ data }) => setIsGuest(data.user?.is_anonymous === true)).catch(() => {})
+    void supabase.auth.getUser().then(({ data }) => setIsGuest(data.user?.is_anonymous === true)).catch(() => {})
   }, [])
-  useMidnightRerender() // 新 hook 一律接在最後：RoomPage.test.ts 依呼叫順序 mock
+  useMidnightRerender()
   const [confirmAsk, setConfirmAsk] = useState<ConfirmAsk | null>(null)
   const confirmTriggerRef = useRef<HTMLElement | null>(null)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -451,7 +449,8 @@ export default function RoomPage() {
       {/* dialog 開著時整塊背景 inert：fixed 遮罩擋得住指標（elementFromPoint 實測），
           對 tab 順序毫無作用——沒有它鍵盤使用者可以 tab 到「開始搜尋餐廳」按 Enter（Codex P2） */}
       <div className="min-h-screen" inert={!!leaveDialog || !!confirmAsk}>
-      {RoomHeader({ room, copied, onCopy: copyInvite, leaveChecking, onLeave: askLeave, leaveTriggerRef })}
+      <RoomHeader room={room} copied={copied} onCopy={copyInvite} leaveChecking={leaveChecking} onLeave={askLeave}
+        leaveTriggerRef={leaveTriggerRef} />
 
       <main className="mx-auto w-full max-w-lg space-y-4 p-4">
         {!connected && (
@@ -486,7 +485,7 @@ export default function RoomPage() {
           </p>
         )}
 
-        {MemberList({ room, members, picksByMember })}
+        <MemberList room={room} members={members} picksByMember={picksByMember} />
         {guestHint && <p role="status" className="banner bg-brand-soft text-brand-strong">{guestHint}</p>}
 
         {/* 階段區塊：key 讓換階段時整段重新掛載並淡入（候選逐行浮現也跟著重播）。只淡入不位移：
@@ -525,8 +524,9 @@ export default function RoomPage() {
             ・用餐時間：{formatMealTime(room.meal_time)}
           </p>
         )}
-        {room.status === 'lobby' && RoomSettings({ room, isHost, searching, settings,
-          editingCustom, setEditingCustom, draftHH, setDraftHH, draftMM, setDraftMM })}
+        {room.status === 'lobby' && <RoomSettings room={room} isHost={isHost} searching={searching} settings={settings}
+          editingCustom={editingCustom} setEditingCustom={setEditingCustom} draftHH={draftHH} setDraftHH={setDraftHH}
+          draftMM={draftMM} setDraftMM={setDraftMM} />}
         {room.status === 'lobby' && me && <ConditionsForm me={me} isHost={isHost} searchVersion={room.search_version} disabled={searching}
           onFlushAvailable={flush => { conditionsFlush.current = flush ?? (async () => false) }} />}
         {room.status === 'lobby' && isHost && (

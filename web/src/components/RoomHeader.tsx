@@ -38,11 +38,6 @@ function Stepper({ status }: { status: Room['status'] }) {
 }
 
 // 房間頁頂部：回首頁（＝離席）、邀請碼、足跡、狀態印章與步驟列。
-// 以函式呼叫（RoomHeader({...})）而非 <RoomHeader />：比照 LeaveConfirm，本元件沒有自己的狀態，
-// RoomPage.test.ts 把頁面當純函式呼叫，要在回傳的元素樹裡直接摸到「回首頁」連結。
-// 所以這裡禁止用 hook（<Stepper /> 是真元件，不受限）：hook 會記在 RoomPage 上，房間載入前頁面提早 return、
-// 不會呼叫本元件，hook 數量一變整頁崩潰，oxlint 的 rules-of-hooks 抓不到。改回 <RoomHeader /> 要等
-// RoomPage.test.ts 改成行為導向（TODOS #14）
 export function RoomHeader({ room, copied, onCopy, leaveChecking, onLeave, leaveTriggerRef }: {
   room: Room
   copied: boolean
