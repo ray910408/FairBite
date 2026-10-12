@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CandidateList from '../components/CandidateList'
+import RelocationPanel from '../components/RelocationPanel'
 import ShortlistVotePanel from '../components/ShortlistVotePanel'
 import type { CandidateRow } from '../lib/types'
 
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   startVoting: vi.fn(async (): Promise<string | null> => null),
   cancelShortlist: vi.fn(async (): Promise<string | null> => null),
   voteShortlist: vi.fn(async (): Promise<string | null> => null),
+  voteLocation: vi.fn(async (): Promise<string | null> => null),
   pendingLeave: vi.fn<() => Promise<void> | null>(() => null),
   members: {} as { data?: unknown; error?: unknown },
   effects: [] as Array<() => void | (() => void)>,
@@ -77,6 +79,7 @@ vi.mock('../lib/api', () => ({
   startVoting: mocks.startVoting,
   cancelShortlist: mocks.cancelShortlist,
   voteShortlist: mocks.voteShortlist,
+  voteLocation: mocks.voteLocation,
   pendingLeave: mocks.pendingLeave,
 }))
 
@@ -1193,6 +1196,25 @@ describe('初選（Shortlist）', () => {
     mocks.voteShortlist.mockResolvedValueOnce('候選沒有超過成員數的 3 倍，不需要初選')
     await onVote(true)
     expect(mocks.stateSetters[1]).toHaveBeenCalledWith('候選沒有超過成員數的 3 倍，不需要初選')
+  })
+
+  it('表決已送出成功、只是重新載入失敗：如實說成功了，不說無法連線', async () => {
+    const tree = await render('candidates', { refetch: vi.fn(async (): Promise<void> => { throw new Error('offline') }) })
+    const onVote = panel(tree)!.props!.onVote as (want: boolean) => Promise<void>
+    await onVote(true)
+    expect(mocks.voteShortlist).toHaveBeenCalledWith('room-1', true, 3)
+    expect(mocks.stateSetters[1].mock.calls).toEqual([[''], ['初選表決成功，但重新載入失敗，請重新整理頁面']])
+  })
+
+  // busy state 要等重繪才生效：同一瞬間的兩下要靠 ref 鎖擋
+  it.each([
+    ['初選表決', 'candidates', ShortlistVotePanel, mocks.voteShortlist],
+    ['改地點表決', 'voting', RelocationPanel, mocks.voteLocation],
+  ] as const)('%s 同一瞬間連點只送一次', async (_label, status, Panel, send) => {
+    const tree = await render(status)
+    const onVote = findNode(tree, el => el.type === Panel)!.props!.onVote as (want: boolean) => Promise<void>
+    await Promise.all([onVote(true), onVote(true)])
+    expect(send).toHaveBeenCalledOnce()
   })
 
   it('初選中：每位成員（含房主）顯示 kept 圈選數，取代準備狀態', async () => {

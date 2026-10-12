@@ -92,6 +92,8 @@ export default function RoomPage() {
   const startVotingInFlight = useRef(false)
   const editConditionsInFlight = useRef(false)
   const pendingActionInFlight = useRef(false)
+  const shortlistInFlight = useRef(false)
+  const relocationInFlight = useRef(false)
   const currentDraw = draw?.version === room?.draw_version ? draw : null
 
   useEffect(() => {
@@ -300,32 +302,42 @@ export default function RoomPage() {
     }
   }
 
-  // candidates 與 shortlisting 共用：初選未圈滿時伺服器回 409 原文
-  async function onStartVoting() {
-    if (startVotingInFlight.current) return
-    startVotingInFlight.current = true
-    setStartingVoting(true)
+  // 房間動作的共用流程。ref 鎖保證同一瞬間的連點只送一次（busy state 只管畫面：要等重繪才生效，
+  // aria-busy 也擋不住點擊）。send 回傳伺服器訊息、成功回 null；前置步驟沒過、沒送出就回 false
+  // （不顯示錯誤、不 refetch）。成功後等 refetch 完成才解鎖：否則 Realtime 到之前按鈕又能按，第二下回 409
+  async function runAction(inFlight: { current: boolean }, setBusy: (busy: boolean) => void, label: string,
+    send: () => Promise<string | null | false>) {
+    if (inFlight.current) return
+    inFlight.current = true
+    setBusy(true)
     setActionError('')
-    // 成功後等 refetch 完成才解鎖：否則 Realtime 到之前按鈕又能按，第二下回 409
     try {
-      const msg = await startVoting(room!.id)
-        .catch(() => '開始投票失敗：無法連線到伺服器')
-      if (msg) setActionError(msg)
-      else await refetch().catch(() => setActionError('已開始投票，但重新載入失敗，請重新整理頁面'))
+      const msg = await send().catch(() => `${label}失敗：無法連線到伺服器`)
+      if (msg === false) return
+      if (msg) {
+        setActionError(msg)
+        return
+      }
+      // 動作已經成功：重新載入失敗不能說成「無法連線」
+      try {
+        await refetch()
+      } catch {
+        setActionError(`${label}成功，但重新載入失敗，請重新整理頁面`)
+      }
     } finally {
-      startVotingInFlight.current = false; setStartingVoting(false)
+      inFlight.current = false
+      setBusy(false)
     }
   }
 
-  async function onShortlistVote(want: boolean) {
-    if (shortlistBusy) return
-    setShortlistBusy(true); setActionError('')
-    try {
-      const msg = await voteShortlist(room!.id, want, room!.search_version)
-      if (msg) setActionError(msg)
-      else await refetch()
-    } catch { setActionError('初選表決失敗：無法連線到伺服器') }
-    finally { setShortlistBusy(false) }
+  // candidates 與 shortlisting 共用：初選未圈滿時伺服器回 409 原文
+  function onStartVoting() {
+    return runAction(startVotingInFlight, setStartingVoting, '開始投票', () => startVoting(room!.id))
+  }
+
+  function onShortlistVote(want: boolean) {
+    return runAction(shortlistInFlight, setShortlistBusy, '初選表決',
+      () => voteShortlist(room!.id, want, room!.search_version))
   }
 
   function askConfirm(e: React.MouseEvent<HTMLElement>, ask: ConfirmAsk) {
@@ -340,20 +352,13 @@ export default function RoomPage() {
   }
 
   function askCancelShortlist(e: React.MouseEvent<HTMLElement>) {
-    if (shortlistBusy) return
+    if (shortlistInFlight.current) return
     askConfirm(e, { title: '取消初選？', body: '取消初選會清除所有人的圈選，回到候選出爐。',
       confirmLabel: '清除圈選', onConfirm: onCancelShortlist })
   }
 
-  async function onCancelShortlist() {
-    if (shortlistBusy) return
-    setShortlistBusy(true); setActionError('')
-    try {
-      const msg = await cancelShortlist(room!.id)
-      if (msg) setActionError(msg)
-      else await refetch()
-    } catch { setActionError('取消初選失敗：無法連線到伺服器') }
-    finally { setShortlistBusy(false) }
+  function onCancelShortlist() {
+    return runAction(shortlistInFlight, setShortlistBusy, '取消初選', () => cancelShortlist(room!.id))
   }
 
   function askEditConditions(e: React.MouseEvent<HTMLElement>) {
@@ -362,95 +367,43 @@ export default function RoomPage() {
       confirmLabel: '清除候選並修改', onConfirm: onEditConditions })
   }
 
-  async function onEditConditions() {
-    if (editConditionsInFlight.current) return
-    editConditionsInFlight.current = true
-    setEditingConditions(true)
-    setActionError('')
-    try {
-      const msg = await editConditions(room!.id)
-      if (msg) {
-        setActionError(msg)
-        return
-      }
-      await refetch()
-    } catch {
-      setActionError('修改條件失敗：無法連線到伺服器')
-    } finally {
-      editConditionsInFlight.current = false
-      setEditingConditions(false)
-    }
+  function onEditConditions() {
+    return runAction(editConditionsInFlight, setEditingConditions, '修改條件', () => editConditions(room!.id))
   }
 
-  async function onLocationVote(want: boolean) {
-    if (relocationBusy) return
-    setRelocationBusy(true); setActionError('')
-    try {
-      const msg = await voteLocation(room!.id, want, room!.search_version)
-      if (msg) setActionError(msg)
-      else await refetch()
-    } catch { setActionError('改地點表決失敗：無法連線到伺服器') }
-    finally { setRelocationBusy(false) }
+  function onLocationVote(want: boolean) {
+    return runAction(relocationInFlight, setRelocationBusy, '改地點表決',
+      () => voteLocation(room!.id, want, room!.search_version))
   }
 
-  async function onChooseLocation(point: DeparturePoint) {
-    if (relocationBusy) return
-    setRelocationBusy(true); setActionError('')
-    try {
+  function onChooseLocation(point: DeparturePoint) {
+    return runAction(relocationInFlight, setRelocationBusy, '更新地點', async () => {
       // Relocating uses frozen conditions; its ConditionsForm is already unmounted.
       const [conditionsOK, roomSettingsOK] = await Promise.all([
         room!.status === 'lobby' ? conditionsFlush.current() : true,
         settings.flushRoomWrites(),
       ])
-      if (!conditionsOK || !roomSettingsOK) return
+      if (!conditionsOK || !roomSettingsOK) return false
       const msg = await chooseLocation(room!.id, point.lat, point.lng, room!.search_version)
-      if (msg) setActionError(msg)
-      else {
-        saveRoomDeparture(room!.id, point)
-        await refetch()
-      }
-    } catch { setActionError('更新地點失敗：無法連線到伺服器') }
-    finally { setRelocationBusy(false) }
+      if (!msg) saveRoomDeparture(room!.id, point)
+      return msg
+    })
   }
 
-  // 抽選與抽中待確認的兩個房主動作共用一把鎖：成功後等 refetch 完成才解除 busy
-  async function onDraw() {
-    if (pendingActionInFlight.current) return
-    pendingActionInFlight.current = true; setPendingAction('draw'); setActionError('')
-    try {
-      const msg = await drawRoom(room!.id)
-        .catch(() => '抽選失敗：無法連線到伺服器')
-      if (msg) setActionError(msg)
-      else await refetch().catch(() => setActionError('抽選成功，但重新載入失敗，請重新整理頁面'))
-    } finally {
-      pendingActionInFlight.current = false; setPendingAction(null)
-    }
+  // 抽選與抽中待確認的兩個房主動作共用一把鎖
+  function onDraw() {
+    return runAction(pendingActionInFlight, busy => setPendingAction(busy ? 'draw' : null), '抽選',
+      () => drawRoom(room!.id))
   }
 
-  async function onRedraw() {
-    if (pendingActionInFlight.current) return
-    pendingActionInFlight.current = true; setPendingAction('redraw'); setActionError('')
-    try {
-      const msg = await redrawRoom(room!.id, currentDraw!.version)
-        .catch(() => '重轉失敗：無法連線到伺服器')
-      if (msg) setActionError(msg)
-      else await refetch().catch(() => setActionError('重轉成功，但重新載入失敗，請重新整理頁面'))
-    } finally {
-      pendingActionInFlight.current = false; setPendingAction(null)
-    }
+  function onRedraw() {
+    return runAction(pendingActionInFlight, busy => setPendingAction(busy ? 'redraw' : null), '重轉',
+      () => redrawRoom(room!.id, currentDraw!.version))
   }
 
-  async function onConfirmDraw() {
-    if (pendingActionInFlight.current) return
-    pendingActionInFlight.current = true; setPendingAction('confirm'); setActionError('')
-    try {
-      const msg = await confirmDraw(room!.id, currentDraw!.version)
-        .catch(() => '確認失敗：無法連線到伺服器')
-      if (msg) setActionError(msg)
-      else await refetch().catch(() => setActionError('確認成功，但重新載入失敗，請重新整理頁面'))
-    } finally {
-      pendingActionInFlight.current = false; setPendingAction(null)
-    }
+  function onConfirmDraw() {
+    return runAction(pendingActionInFlight, busy => setPendingAction(busy ? 'confirm' : null), '確認',
+      () => confirmDraw(room!.id, currentDraw!.version))
   }
 
   function closeLeave() {
