@@ -12,10 +12,6 @@ function segment(active: boolean) {
 
 // lobby 的三張房間層設定卡：探索檔位、用餐時間、菜系過濾。只有房主能改（非房主只看摘要），寫入走 useRoomSettingsWrites。
 // 用餐時間草稿（editingCustom／draftHH／draftMM）是 RoomPage 的 state：寫入失敗時佇列要把它還原。
-// 以函式呼叫（RoomSettings({...})）而非 <RoomSettings />：比照 LeaveConfirm，本元件沒有自己的狀態，
-// RoomPage.test.ts 把頁面當純函式呼叫，要在回傳的元素樹裡讀到說明文字。
-// 所以這裡禁止用 hook：hook 會記在 RoomPage 上，而本元件只在 lobby 呼叫，換階段 hook 數量一變整頁崩潰，
-// oxlint 的 rules-of-hooks 抓不到。改回 <RoomSettings /> 要等 RoomPage.test.ts 改成行為導向（TODOS #14）
 export function RoomSettings({ room, isHost, searching, settings,
   editingCustom, setEditingCustom, draftHH, setDraftHH, draftMM, setDraftMM }: {
   room: Room
