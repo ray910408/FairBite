@@ -44,9 +44,11 @@ function scrollBehavior(): ScrollBehavior {
 // 動作的錯誤／提示只顯示在頁首：手機上按鈕在畫面下方時，訊息出現在畫面外，看起來像沒反應。
 // 橫幅掛載時捲到看得見的地方（scroll-mt-36 讓它停在 sticky 標頭下：320px 時標頭約 124px，
 // 加上浮現動畫起點的 8px 位移還有餘裕）。必須是模組層的穩定函式：
-// inline ref callback 每次 render 都是新函式，React 會每次重跑，Realtime 一更新就把畫面拉回去
+// inline ref callback 每次 render 都是新函式，React 會每次重跑，Realtime 一更新就把畫面拉回去。
+// 一律捲到最上面那則：降級的 422 搜尋同時有錯誤和警告、同一次 commit 掛上，後跑的警告若捲自己，
+// 會把上面該處理的錯誤推到標頭底下
 function revealBanner(el: HTMLElement | null) {
-  el?.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() })
+  el?.parentElement?.querySelector('[data-action-banner]')?.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() })
 }
 
 export default function RoomPage() {
@@ -499,14 +501,14 @@ export default function RoomPage() {
 
         {/* key：換一則訊息就重新掛載，revealBanner 與浮現動畫才會再跑一次 */}
         {actionError && (
-          <p key={actionError} ref={revealBanner} role="alert"
+          <p key={actionError} ref={revealBanner} data-action-banner role="alert"
             className="banner animate-rise scroll-mt-36 bg-danger-soft whitespace-pre-line text-danger">
             <Alert className="h-5 w-5 shrink-0" />
             <span>{actionError}</span>
           </p>
         )}
         {actionWarning && (
-          <p key={actionWarning} ref={revealBanner} role="status"
+          <p key={actionWarning} ref={revealBanner} data-action-banner role="status"
             className="banner animate-rise scroll-mt-36 bg-warn-soft text-warn">
             <Alert className="h-5 w-5 shrink-0" />
             <span>{actionWarning}</span>
