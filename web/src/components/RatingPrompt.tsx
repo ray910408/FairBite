@@ -64,7 +64,7 @@ export function RecentRatingPrompt({ onRated }: { onRated?: () => void } = {}) {
       const dismissed = (localStorage.getItem(`rating-dismissed:${uid}`) ?? '').split(',')
       if (dismissed.includes(r.id)) return
       setUserId(uid)
-      setRow({ id: r.id, name: (r.restaurants as unknown as { name: string } | null)?.name ?? '上一餐' })
+      setRow({ id: r.id, name: r.restaurants?.name ?? '上一餐' })
     })()
     return () => { live = false }
   }, [])

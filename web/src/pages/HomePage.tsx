@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase'
 import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
 import { leaveNotice } from '../lib/leaveNotice'
 import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
-import { suggestCuisines, type HistoryRow } from '../lib/prefsLearning'
+import { suggestCuisines } from '../lib/prefsLearning'
 import { loadLastDeparture, saveLastDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import { getUid } from '../lib/uid'
@@ -18,8 +18,6 @@ import { ThemeMenu } from '../components/ThemeMenu'
 import LocationPicker from '../components/LocationPicker'
 import { RecentRatingPrompt } from '../components/RatingPrompt'
 import CustomWheel from '../components/CustomWheel'
-
-type PrivatePrefs = { default_prefs: Record<string, unknown> }
 
 export default function HomePage() {
   const nav = useNavigate()
@@ -67,7 +65,7 @@ export default function HomePage() {
       { data: history, error: historyError },
       { data: lowRows, error: lowRowsError },
     ] = await Promise.all([
-      supabase.rpc('get_my_default_prefs').single<PrivatePrefs>(),
+      supabase.rpc('get_my_default_prefs').single(),
       supabase.from('dining_history')
         .select('rating, restaurants(cuisine_tags)')
         .order('decided_at', { ascending: false }).limit(50),
@@ -82,7 +80,7 @@ export default function HomePage() {
     if (!profile) return
     const dp = (profile.default_prefs ?? {}) as Record<string, unknown>
     const current = Array.isArray(dp.cuisines) ? (dp.cuisines as string[]) : []
-    const tags = suggestCuisines([...(lowRows ?? []), ...(history ?? [])] as unknown as HistoryRow[], current,
+    const tags = suggestCuisines([...(lowRows ?? []), ...(history ?? [])], current,
       CUISINE_OPTIONS.map(([k]) => k))
     const dismissed = (localStorage.getItem(`prefs-suggest-dismissed:${uid}`) ?? '').split(',')
     setMyUserId(uid)

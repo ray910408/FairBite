@@ -2,8 +2,6 @@ import { supabase } from './supabase'
 import { getUid } from './uid'
 import { CUISINE_OPTIONS } from './labels'
 
-type PrivatePrefs = { default_prefs: Record<string, unknown> }
-
 // default_prefs 帶入（spec §4；eng review D18 客戶端直寫版，取代 RPC 五欄位框架）：
 // 建/加成功後、導頁前，若有預設偏好就寫進自己的 member row（lobby 的 members_update
 // RLS 本來就允許）。失敗只影響預設值（罕見：搜尋凍結競態），靜默接受不擋導頁。
@@ -13,7 +11,7 @@ export async function applyDefaultPrefs(roomId: string) {
     if (!uid) return
     const appliedKey = `prefs-applied:${roomId}:${uid}`
     if (localStorage.getItem(appliedKey)) return
-    const { data: profile, error: profileError } = await supabase.rpc('get_my_default_prefs').single<PrivatePrefs>()
+    const { data: profile, error: profileError } = await supabase.rpc('get_my_default_prefs').single()
     if (profileError) return
     const raw = (profile?.default_prefs as { cuisines?: string[] } | null)?.cuisines
     // 詞彙可能收縮（如 2026-08-13 移除 sichuan）：只帶入仍在選單上的 tag，
@@ -26,7 +24,9 @@ export async function applyDefaultPrefs(roomId: string) {
     }
     const { error } = await supabase.from('room_members').update({ cuisines })
       .eq('room_id', roomId).eq('user_id', uid)
-      .eq('cuisines', '[]') // 只填仍是預設的列：重複加入不得覆蓋使用者已調好的條件（task6 review r1）
+      // 只填仍是預設的列：重複加入不得覆蓋使用者已調好的條件（task6 review r1）。
+      // eq 的值原樣放進 URL：jsonb 比對空陣列要送字面 '[]'（送 [] 會變成空字串），型別卻跟著 Row 收窄成 string[]
+      .eq('cuisines', '[]' as unknown as string[])
     if (!error) localStorage.setItem(appliedKey, '1')
   } catch {
     // 偏好是附加步驟；storage 或請求例外不得阻斷已成功的建房／入房。

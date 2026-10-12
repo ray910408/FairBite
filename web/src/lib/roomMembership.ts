@@ -57,12 +57,7 @@ export async function fetchLeaveRooms(): Promise<LeaveRoom[] | null> {
     if (!settled) return null // 逾時
     const [{ data, error }, uid] = settled
     if (error) return null
-    // rooms 是 to-one 嵌入（room_members.room_id FK），實際回物件；supabase-js 推不出
-    // 基數而給成陣列，比照 HistoryPage 的 dining_history 嵌入走 unknown 轉型
-    const rows = (data ?? []) as unknown as
-      { room_id: string; rooms: {
-        code: string; status: Room['status']; host_id: string; created_at: string; meal_time: string | null
-      } | null }[]
+    const rows = data ?? []
     const byRoom = new Map<string, LeaveRoom>()
     for (const r of rows) {
       if (!r.rooms) continue

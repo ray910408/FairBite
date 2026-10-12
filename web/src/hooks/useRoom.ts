@@ -53,15 +53,15 @@ export function useRoom(roomId: string) {
     setLoadError(state === 'error' || siblingError)
     // 查無列是權威結果（房間已刪或已非成員）：清掉舊快照，頁面才會顯示「找不到房間」而不是
     // 停在舊房、按鈕按了沒反應；暫時性錯誤仍保留舊值（TODOS「useRoom room 過期快照」）
-    if (r.data) setRoom(r.data as Room)
+    if (r.data) setRoom(r.data)
     else if (state === 'not-found') setRoom(null)
-    if (!m.error) setMembers((m.data ?? []) as MemberRow[])
-    if (!c.error) setCandidates((c.data ?? []) as CandidateRow[])
-    if (!d.error) setDraw((d.data ?? null) as DrawRow | null)
-    if (!v.error) setVotes((v.data ?? []) as VoteRow[])
-    if (!lv.error) setLocationVotes((lv.data ?? []) as LocationVoteRow[])
-    if (!sv.error) setShortlistVotes((sv.data ?? []) as ShortlistVoteRow[])
-    if (!sp.error) setShortlistPicks((sp.data ?? []) as ShortlistPickRow[])
+    if (!m.error) setMembers(m.data ?? [])
+    if (!c.error) setCandidates(c.data ?? [])
+    if (!d.error) setDraw(d.data ?? null)
+    if (!v.error) setVotes(v.data ?? [])
+    if (!lv.error) setLocationVotes(lv.data ?? [])
+    if (!sv.error) setShortlistVotes(sv.data ?? [])
+    if (!sp.error) setShortlistPicks(sp.data ?? [])
   }, [roomId])
   const refetch = useCallback(() => latestRefetch.current = loadRoom(++refetchGen.current), [loadRoom])
 

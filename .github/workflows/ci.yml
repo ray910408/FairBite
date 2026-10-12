@@ -55,6 +55,17 @@ jobs:
         with:
           version: 2.113.0
       - run: supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector
+      # web 的 Database 型別是 gen types 的產物：migration 改了 schema 卻沒重新產生就擋下。
+      # gen types --local 會另起一次性的 postgres-meta 容器連 DB，不靠上面 -x 排除的 postgres-meta 服務
+      - name: Check generated database types
+        run: |
+          supabase gen types typescript --local --schema public > "$RUNNER_TEMP/database.types.ts"
+          if ! diff -u web/src/lib/database.types.ts "$RUNNER_TEMP/database.types.ts"; then
+            echo "::error file=web/src/lib/database.types.ts::database.types.ts 與 migration 不一致，請重新產生後 commit"
+            echo "本機 supabase start 後（DB 要跟 migration 一致，有多餘物件就先 supabase db reset）執行："
+            echo "  cd web && npm run gen:types"
+            exit 1
+          fi
       - run: supabase test db
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
