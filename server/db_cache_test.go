@@ -18,7 +18,7 @@ func TestCachedRestaurantsPersistAndFilterPrimaryType(t *testing.T) {
 		PlaceID: "cache-primary-valid", Name: "可前往麵店", PrimaryType: "noodle_shop",
 		Lat: 0.12345, Lng: 0.12345, Hours: OpeningHours{}, TimeZone: "Asia/Tokyo",
 	}}
-	if err := UpsertRestaurants(ctx, tx, valid, "google"); err != nil {
+	if _, err := UpsertRestaurants(ctx, tx, valid, "google"); err != nil {
 		t.Fatal(err)
 	}
 	var storedPrimaryType string
@@ -31,7 +31,7 @@ func TestCachedRestaurantsPersistAndFilterPrimaryType(t *testing.T) {
 	}
 	valid[0].PrimaryType = "restaurant"
 	valid[0].TimeZone = "" // provider 這次沒給時區：不得抹掉已知值
-	if err := UpsertRestaurants(ctx, tx, valid, "google"); err != nil {
+	if _, err := UpsertRestaurants(ctx, tx, valid, "google"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(ctx, `select primary_type from restaurants where place_id = $1`, valid[0].PlaceID).

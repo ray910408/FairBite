@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -64,12 +65,7 @@ type Excluded struct {
 }
 
 func hasKind(ks []string, want string) bool {
-	for _, k := range ks {
-		if k == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ks, want)
 }
 
 type EngineInput struct {
@@ -96,12 +92,7 @@ type EngineResult struct {
 }
 
 func hasTag(tags []string, want string) bool {
-	for _, t := range tags {
-		if t == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(tags, want)
 }
 
 // rkey：真實流程一律有 DB uuid；引擎測試無 DB 用 PlaceID

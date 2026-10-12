@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -276,10 +277,12 @@ func LoadSatisfaction(ctx context.Context, q querier, memberIDs []string) (map[s
 	return out, nil
 }
 
-// UpsertRestaurants 寫入快取並回填 DB uuid 到 rs[i].ID。
+// UpsertRestaurants 寫入快取，回傳帶 DB uuid（ID）的副本；傳入的 rs 不會被改動，
+// 呼叫端要接回回傳值才拿得到 ID。
 // source 是寫入 provider 的出身（PlacesProvider.Source）；conflict 時一併更新——
 // 同一列被不同 provider 重抓時，provenance 跟著最新寫入者走。
-func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant, source string) error {
+func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant, source string) ([]Restaurant, error) {
+	rs = slices.Clone(rs)
 	for i := range rs {
 		// migration 0021 的 cuisine_tags CHECK 只接受字串陣列；nil slice 必須寫成 []，不能是 JSON null。
 		if rs[i].CuisineTags == nil {
@@ -299,10 +302,10 @@ func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant, source s
 			rs[i].PlaceID, rs[i].Name, rs[i].PrimaryType, tags, rs[i].PriceLevel, rs[i].Lat, rs[i].Lng,
 			rs[i].Address, hours, rs[i].Rating, source, rs[i].TimeZone).Scan(&rs[i].ID)
 		if err != nil {
-			return fmt.Errorf("upsert %s: %w", rs[i].PlaceID, err)
+			return nil, fmt.Errorf("upsert %s: %w", rs[i].PlaceID, err)
 		}
 	}
-	return nil
+	return rs, nil
 }
 
 // StaleOutRestaurants：歇業訊號只將既有 row 推出快取窗；不可 DELETE：舊房的 room_candidates 仍有 FK 參照。

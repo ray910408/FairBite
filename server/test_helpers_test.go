@@ -27,6 +27,14 @@ func newTestPool(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	return pool
 }
 
+// insertTestUser 建一筆 auth.users fixture；已存在就沿用（on conflict do nothing）。
+func insertTestUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id, email string) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email) values ($1, $2) on conflict do nothing`, id, email); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func setTestClock(t *testing.T, now func() time.Time) {
 	t.Helper()
 	original := clockNow
