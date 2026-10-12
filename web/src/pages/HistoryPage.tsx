@@ -44,7 +44,7 @@ export default function HistoryPage() {
     if (request !== requestGen.current) return
     if (error) setState({ phase: 'error' })
     else {
-      const rows = (data ?? []) as unknown as FootprintRow[]
+      const rows = data ?? []
       setState({ phase: 'ready', rows, total: count ?? rows.length })
     }
   }, [])

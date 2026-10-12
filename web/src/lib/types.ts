@@ -1,3 +1,5 @@
+import type { Database as GeneratedDatabase } from './database.types'
+
 export type TraceEntry = { factor: string; mult: number; reason: string }
 
 // center_lat/center_lng 刻意不在這裡：0015 起 rooms 的 SELECT 是欄級 grant，
@@ -73,3 +75,21 @@ export type LocationVoteRow = { room_id: string; user_id: string }
 // 初選（ADR-0010）：表決意願與圈選，client 只讀，寫入走 Go
 export type ShortlistVoteRow = { room_id: string; user_id: string }
 export type ShortlistPickRow = { room_id: string; user_id: string; restaurant_id: string }
+
+// supabase client 用的 Database 型別：產生的 database.types.ts 裡 text＋CHECK 欄位只到 string、
+// jsonb 欄位只到 Json，這裡只把前端讀的這幾欄收窄成上面的手寫型別（只動 Row，寫入照產生型別）。
+// 其餘欄位都照產生型別：欄位改名或型別改變時，編譯器會在查詢結果交給手寫型別的地方報錯
+type Tables = GeneratedDatabase['public']['Tables']
+type NarrowRow<T extends keyof Tables, Cols> = Omit<Tables[T], 'Row'> & { Row: Omit<Tables[T]['Row'], keyof Cols> & Cols }
+export type Database = {
+  public: Omit<GeneratedDatabase['public'], 'Tables'> & {
+    Tables: Omit<Tables, 'rooms' | 'room_members' | 'room_candidates' | 'restaurants' | 'draws' | 'votes'> & {
+      rooms: NarrowRow<'rooms', Pick<Room, 'status' | 'exploration'>>
+      room_members: NarrowRow<'room_members', Pick<MemberRow, 'transport' | 'cuisines' | 'dietary'>>
+      room_candidates: NarrowRow<'room_candidates', Pick<CandidateRow, 'status' | 'weight_breakdown'>>
+      restaurants: NarrowRow<'restaurants', { cuisine_tags: string[] }>
+      draws: NarrowRow<'draws', Pick<DrawRow, 'probabilities'>>
+      votes: NarrowRow<'votes', Pick<VoteRow, 'kind'>>
+    }
+  }
+}

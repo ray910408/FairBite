@@ -63,7 +63,7 @@ export default function JoinPage() {
     try {
       const { data, error: resolveError } = await supabase.rpc('resolve_room_invite', { p_code: code })
       if (generation !== inviteGeneration.current) return
-      const row = (data as InviteRow[] | null)?.[0]
+      const row = data?.[0]
       if (resolveError || !row) setError(resolveError?.message?.includes('頻繁')
         ? '嘗試過於頻繁，請稍後再試' : '房間不存在或已開始')
       else await joinResolvedRoom(row, generation)

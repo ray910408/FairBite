@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import type { Database } from './types'
 
 const configuredUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseUrl = configuredUrl.startsWith('/')
@@ -18,7 +19,7 @@ async function fetchRetryingStaleClock(input: RequestInfo | URL, init?: RequestI
   return fetch(input, init)
 }
 
-export const supabase = createClient(
+export const supabase = createClient<Database>(
   supabaseUrl,
   import.meta.env.VITE_SUPABASE_ANON_KEY,
   { global: { fetch: fetchRetryingStaleClock } },
