@@ -96,9 +96,9 @@ feat/phase-1 全分支 final review 的 DEFER-P2 批次。原本優先的前三�
 
 ### 搜尋進行中房間被刪仍回 500（server 可維護度重構 review 遞延，2026-10-12）
 
-- **What:** 搜尋進行中房間被刪（例如唯一成員的房主在 Places 呼叫期間從另一個分頁退房），仍回 500「資料庫錯誤」，並記一條 "room not found" log。有餐廳時，`freezeSearchCandidates` 的 `assertHostInTx` 回 `ErrRoomNotFound`，它不是 `ErrNotHost`，於是走 `serverError`；零筆時，`rejectChangedSearchSnapshot` 拿到的是 `pgx.ErrNoRows`。
+- **What:** 搜尋進行中房間被刪（例如唯一成員的房主在 Places 呼叫期間從另一個分頁退房），仍回 500「資料庫錯誤」。有餐廳時，`freezeSearchCandidates` 的 `assertHostInTx` 回 `ErrRoomNotFound`，它不是 `ErrNotHost`，於是走 `serverError`，log 記 "room not found"；零筆時，`rejectChangedSearchSnapshot` 從 `checkSearchSnapshot` 拿到 `pgx.ErrNoRows`，log 記 "no rows in result set"。
 - **Why:** 改之前也是 500，不算回歸；要測就得編排搜尋競態，成本高，所以延後。其他房間動作在房間被刪後已回 404「房間不存在」。
-- **修法:** 在 `server/search.go` 的 `assertHostInTx` 錯誤分支先判斷 `ErrRoomNotFound`，回 404「房間不存在」；`checkSearchSnapshot` 讀房間列的 `ErrNoRows` 也用 `roomRowErr` 轉成同一個 sentinel。
+- **修法:** 在 `server/search.go` 的 `assertHostInTx` 錯誤分支先判斷 `ErrRoomNotFound`，回 404「房間不存在」；`checkSearchSnapshot`（`relocation.go`）讀房間列的 `ErrNoRows` 也用 `roomRowErr` 轉成同一個 sentinel。光轉 sentinel 仍是 500，因為 `rejectChangedSearchSnapshot` 只分 `ErrSearchChanged` 與其他：`rejectChangedSearchSnapshot` 也要加 `ErrRoomNotFound` → 404 的分支。它的兩個呼叫端要一併檢查：零筆的 `respondNoRestaurants`，以及 provider 失敗且沒有快取的那條路徑（`fetchSearchRestaurants`，回 502 之前）。
 
 ## /qa-only 線上站 QA + PR #17 review 殘留（2026-08-16）
 
