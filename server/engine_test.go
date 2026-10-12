@@ -67,6 +67,10 @@ func TestHardFilters(t *testing.T) {
 		{"價位超過最低偏好", rest(func(r *Restaurant) { r.PriceLevel = 4 }),
 			[]Member{member(nil), member(func(m *Member) { m.UserID = "u2"; m.BudgetMax = 200 })},
 			"budget", "高價"},
+		{"未設定預算的成員不放寬其他人的預算", rest(func(r *Restaurant) { r.PriceLevel = 4 }),
+			[]Member{member(func(m *Member) { m.BudgetMax = 50 }),
+				member(func(m *Member) { m.UserID = "u2"; m.DisplayName = "阿華"; m.BudgetMax = 200 })},
+			"budget", "阿華 的「平價」"},
 		{"未營業", rest(func(r *Restaurant) { r.Hours = daily([2]int{330, 660}) }),
 			[]Member{member(nil)}, "closed", "未營業"},
 	}

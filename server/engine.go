@@ -135,14 +135,16 @@ func hardExclude(r Restaurant, ms []Member, now time.Time, cuisineFilter bool) (
 			// 不在 DietaryRequires 的舊值沒有正向 Places 證據；相容期安全忽略。
 		}
 	}
-	minBudget, minName := ms[0].BudgetMax, ms[0].DisplayName
-	for _, m := range ms[1:] {
-		if m.BudgetMax < minBudget {
-			minBudget, minName = m.BudgetMax, m.DisplayName
+	// 最嚴的那位只在「有設定」的成員裡找：未設定（PriceLevelUnknown）的數值最小，
+	// 若一起比，一位未設定就會關掉全房其他人的預算條件。
+	maxPriceLevel, minName := PriceLevelUnknown, ""
+	for _, m := range ms {
+		level := BudgetMaxGooglePriceLevel(m.BudgetMax)
+		if level != PriceLevelUnknown && (maxPriceLevel == PriceLevelUnknown || level < maxPriceLevel) {
+			maxPriceLevel, minName = level, m.DisplayName
 		}
 	}
-	maxPriceLevel := BudgetMaxGooglePriceLevel(minBudget)
-	// 偏好為 PriceLevelUnknown＝未設定，依常數契約不參與硬排除；
+	// 全員未設定時 maxPriceLevel 仍為 PriceLevelUnknown，依常數契約不參與硬排除；
 	// 少了這道守衛，-1 會排掉所有已知價位（含免費的 0）。
 	if r.PriceLevel >= 0 && maxPriceLevel != PriceLevelUnknown && r.PriceLevel > maxPriceLevel {
 		priceLabel := GooglePriceLevelLabels[r.PriceLevel]
