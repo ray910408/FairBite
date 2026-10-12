@@ -172,7 +172,11 @@ export default function JoinPage() {
         </p>
       )}
       {error && !busy && (
-        <button className="btn btn-quiet w-full" type="button" onClick={() => resolveInvite()}>重新嘗試</button>
+        <>
+          <button className="btn btn-quiet w-full" type="button" onClick={() => resolveInvite()}>重新嘗試</button>
+          {/* 邀請碼失效、房間已開始等錯誤重試沒用：給一條離開的路（首頁 mount 會自己攔下要不要退房） */}
+          <button className="btn btn-quiet w-full" type="button" onClick={() => nav('/')}>回首頁</button>
+        </>
       )}
 
     </main>

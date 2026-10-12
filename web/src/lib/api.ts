@@ -22,12 +22,17 @@ async function post(path: string, body?: unknown, options: PostOptions = {}): Pr
   })
 }
 
-// 共用錯誤萃取：伺服器 body.error 優先，沒有才用 fallback + 狀態碼
+// 沒有 body.error 時的後備文案：5xx 多半是 Render 冷啟動或部署中的閘道錯誤，狀態碼對使用者沒有意義
+function fallbackError(fallback: string, status: number): string {
+  return status >= 500 ? `${fallback}：伺服器暫時沒有回應，請稍後再試` : `${fallback}（${status}）`
+}
+
+// 共用錯誤萃取：伺服器 body.error 優先，沒有才用 fallback
 async function postAction(path: string, fallback: string, body?: unknown): Promise<string | null> {
   const res = await post(path, body)
   if (res.ok) return null
   const msg = await res.json().then(b => b.error as string).catch(() => null)
-  return msg || `${fallback}（${res.status}）`
+  return msg || fallbackError(fallback, res.status)
 }
 
 export type SearchOutcome = { error: string | null; warning: string | null }
@@ -62,7 +67,7 @@ export async function searchRoom(roomId: string, options: PostOptions = {}): Pro
   }
   if (!res.ok) {
     const msg = await res.json().then(b => b.error as string).catch(() => null)
-    return { error: msg || `搜尋失敗（${res.status}）`, warning: null }
+    return { error: msg || fallbackError('搜尋失敗', res.status), warning: null }
   }
   const body = await res.json()
   return {

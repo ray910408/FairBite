@@ -20,6 +20,7 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
   const [results, setResults] = useState<DeparturePoint[]>([])
   const [searching, setSearching] = useState(false)
   const [error, setError] = useState('')
+  const [locating, setLocating] = useState(false)
   const mapEl = useRef<HTMLDivElement>(null)
   const mapRef = useRef<LeafletMap | null>(null)
   const markerRef = useRef<Marker | null>(null)
@@ -51,6 +52,7 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
       marker.on('dragend', () => {
         const p = marker.getLatLng().wrap()
         selectionGen.current++
+        setLocating(false)
         const next = { lat: p.lat, lng: p.lng }
         onChange({ ...next, label: mapSelectionLabel(valueRef.current?.label, anchorRef.current, next) })
       })
@@ -58,6 +60,7 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
         const p = e.latlng.wrap()
         marker.setLatLng(p)
         selectionGen.current++
+        setLocating(false)
         const next = { lat: p.lat, lng: p.lng }
         onChange({ ...next, label: mapSelectionLabel(valueRef.current?.label, anchorRef.current, next) })
       })
@@ -115,6 +118,7 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
     selectionGen.current++
     const gen = selectionGen.current
     setError('')
+    setLocating(true)
     try {
       const pos = await getPosition(navigator.geolocation)
       if (gen !== selectionGen.current) return
@@ -124,6 +128,10 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
     } catch (err) {
       if (gen !== selectionGen.current) return
       setError(err instanceof Error ? err.message : '無法取得目前位置')
+    } finally {
+      // 權限詢問擱著時 getCurrentPosition 不會結束（timeout 不含等授權的時間），所以改選搜尋結果、
+      // 點地圖、拖圖釘時會各自收掉 loading；之後再按一次定位，舊的這發結束時不能把新的 loading 收掉
+      if (gen === selectionGen.current) setLocating(false)
     }
   }
 
@@ -149,7 +157,7 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
               {searching ? <Spinner className="h-4 w-4" /> : '搜尋'}
             </button>
           </form>
-          {error && <p className="text-xs text-danger">{error}</p>}
+          {error && <p role="alert" className="text-xs text-danger">{error}</p>}
           {results.length > 0 && (
             <ul className="space-y-1">
               {results.map((r, i) => (
@@ -157,6 +165,7 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
                   <button type="button" className="btn btn-quiet w-full justify-start px-3 text-left text-sm"
                     onClick={() => {
                       selectionGen.current++
+                      setLocating(false)
                       anchorRef.current = { lat: r.lat, lng: r.lng }
                       lastLabelRef.current = r.label
                       onChange(r)
@@ -169,8 +178,10 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
               ))}
             </ul>
           )}
-          <button type="button" className="btn btn-quiet w-full" onClick={useGPS}>
-            使用目前位置
+          {/* 定位最久要等 5 秒（getPosition timeout）：沒有回饋會被當成沒反應而連按 */}
+          <button type="button" className="btn btn-quiet w-full" onClick={useGPS}
+            disabled={locating} aria-busy={locating}>
+            {locating ? <><Spinner className="h-4 w-4" />定位中…</> : '使用目前位置'}
           </button>
           <div ref={mapEl} className="h-56 w-full overflow-hidden rounded-card border border-border" aria-label="出發點地圖" />
           <p className="text-xs text-fg-muted">搜尋後可拖曳圖釘或點地圖微調</p>

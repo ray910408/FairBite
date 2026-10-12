@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { getPosition, type GeolocationLike } from './geolocation'
+import { GEO_DENIED, getPosition, type GeolocationLike } from './geolocation'
 
 describe('getPosition', () => {
   it('定位不支援時拒絕，不得靜默回傳預設地點', async () => {
@@ -11,6 +11,13 @@ describe('getPosition', () => {
       getCurrentPosition: vi.fn((_success, error) => error?.({} as GeolocationPositionError)),
     }
     await expect(getPosition(geolocation)).rejects.toThrow('無法取得目前位置')
+  })
+
+  it('權限被拒時講怎麼打開權限，而不是叫人重試', async () => {
+    const geolocation: GeolocationLike = {
+      getCurrentPosition: vi.fn((_success, error) => error?.({ code: 1 } as GeolocationPositionError)),
+    }
+    await expect(getPosition(geolocation)).rejects.toThrow(GEO_DENIED)
   })
 
   it('定位成功時回傳真實座標', async () => {
