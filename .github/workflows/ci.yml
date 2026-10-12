@@ -56,14 +56,21 @@ jobs:
           version: 2.113.0
       - run: supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector
       # web 的 Database 型別是 gen types 的產物：migration 改了 schema 卻沒重新產生就擋下。
-      # gen types --local 會另起一次性的 postgres-meta 容器連 DB，不靠上面 -x 排除的 postgres-meta 服務
+      # gen types --local 會另起一次性的 postgres-meta 容器連 DB，不靠上面 -x 排除的 postgres-meta 服務。
+      # postgres-meta 映像跟著 CLI 版本走，只升一處這裡就會假紅：升 Supabase CLI 時下列各處要同步改，
+      # 並在同一個 PR 重新產生 database.types.ts —— 本檔 db 與 e2e job 的 setup-cli version、
+      # deploy-pages.yml 的 setup-cli version、web/scripts/gen-types.mjs（npm run gen:types）的 supabase@ 版本
       - name: Check generated database types
         run: |
           supabase gen types typescript --local --schema public > "$RUNNER_TEMP/database.types.ts"
           if ! diff -u web/src/lib/database.types.ts "$RUNNER_TEMP/database.types.ts"; then
             echo "::error file=web/src/lib/database.types.ts::database.types.ts 與 migration 不一致，請重新產生後 commit"
-            echo "本機 supabase start 後（DB 要跟 migration 一致，有多餘物件就先 supabase db reset）執行："
-            echo "  cd web && npm run gen:types"
+            echo "要在只套本 repo migration 的乾淨 stack 上產生：先確認 supabase migration list --local 與 DB 物件"
+            echo "都沒有多餘的；本機 stack 跟別的 session 共用或有多餘物件時，另起隔離的 stack（不同 project_id 與 port）。"
+            echo "不要用 supabase db reset 清多餘物件：它會清空整個本機 DB，連別人進行中的資料一起。產生方式："
+            echo "  cd web"
+            echo "  npm run gen:types"
+            echo "隔離 stack 則把它的目錄（supabase/ 的上一層）接在後面：npm run gen:types -- <目錄>"
             exit 1
           fi
       - run: supabase test db
