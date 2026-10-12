@@ -32,3 +32,7 @@ services:
       # 留空則走 14 家 mock 餐廳
       - key: GOOGLE_PLACES_API_KEY
         sync: false
+      # Supabase Before User Created hook 的 signing secret（v1,whsec_...）；漏了它而 hook 已啟用，
+      # 所有註冊與訪客加入（匿名登入）都會被 503 擋下。建立 hook 的順序見 docs/deploy.md「註冊 Email」一節
+      - key: SIGNUP_HOOK_SECRET
+        sync: false
