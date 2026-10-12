@@ -234,7 +234,7 @@ func lowestSatisfactionMember(in EngineInput) string {
 // 禁忌（DietaryRequires）推導的檢索詞——素食店在 nearby 的 20 筆熱門裡抽不到
 // （2026-08-16 實測台北車站 1.5km 為 0 家），沒有專屬支線就永遠進不了池。
 // 回傳值同時是 freeze.go under-fetch 不變式的比對基準（freeze.go:46）與
-// memberCuisinesDrifted 的 409 判準（handlers.go:397）——三個呼叫端必須共用這一個函式。
+// memberCuisinesDrifted 的 409 判準（search.go）——三個呼叫端必須共用這一個函式。
 func cuisineUnion(ms []Member) []string {
 	seen := map[string]bool{}
 	var out []string
