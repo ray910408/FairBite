@@ -26,6 +26,9 @@ const mocks = vi.hoisted(() => ({
   pendingLeave: vi.fn<() => Promise<void> | null>(() => null),
   members: {} as { data?: unknown; error?: unknown },
   effects: [] as Array<() => void | (() => void)>,
+  // 預設每次 render 都拿新 ref；要跨 render 保留（例如比對前後兩次的 status）時設成 []
+  refs: undefined as Array<{ current: unknown }> | undefined,
+  refIndex: 0,
 }))
 
 vi.mock('react', async importOriginal => {
@@ -39,7 +42,11 @@ vi.mock('react', async importOriginal => {
       mocks.stateSetters[index] = setter
       return [value, setter]
     },
-    useRef: (initial: unknown) => ({ current: initial }),
+    useRef: (initial: unknown) => {
+      if (!mocks.refs) return { current: initial }
+      const index = mocks.refIndex++
+      return (mocks.refs[index] ??= { current: initial })
+    },
     useEffect: (effect: () => void | (() => void)) => { mocks.effects.push(effect) },
   }
 })
@@ -131,13 +138,27 @@ function deferred<T>() {
 
 async function renderRoomPage() {
   const { default: RoomPage } = await import('./RoomPage')
+  mocks.refIndex = 0
   return RoomPage()
+}
+
+type ConfirmAskLike = { title: string; body: string; confirmLabel: string; onConfirm: () => Promise<void> }
+
+// 站內確認框：觸發鈕只開框（setConfirmAsk＝頁面第 19 個 state），回傳框上「確定」要跑的內容。
+// setter 要在 findButton 之前抓：展開子元件時它們的 useState 會覆寫 stateSetters
+function openConfirm(tree: unknown, label: string, setConfirmAsk: ReturnType<typeof vi.fn>,
+  trigger: { focus: () => void } = { focus: vi.fn() }): ConfirmAskLike {
+  const click = findButton(tree, label).props?.onClick as ((e: unknown) => void) | undefined
+  if (!click) throw new Error(`找不到${label}`)
+  click({ currentTarget: trigger })
+  expect(setConfirmAsk).toHaveBeenCalledOnce()
+  return setConfirmAsk.mock.calls[0][0] as ConfirmAskLike
 }
 
 // 關閉 dialog 後的焦點還原走 rAF（背景整塊 inert，要等移除它的那次 commit 才聚焦得到）
 // ——node 測試環境沒有這個瀏覽器全域，補一個等價的排程器
 beforeEach(() => vi.stubGlobal('requestAnimationFrame', (cb: () => void) => setTimeout(cb, 0)))
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { vi.unstubAllGlobals(); mocks.refs = undefined })
 
 describe('RoomPage meal_time draft intent', () => {
   beforeEach(() => {
@@ -208,6 +229,56 @@ describe('RoomPage voting controls', () => {
     expect(veto?.props?.['aria-pressed']).toBe(true)
     expect(veto?.props?.disabled).toBe(false)
   })
+
+  it('投票中順序固定：贊成改變機率不重排，被否決的店留在原位、可就地收回', () => {
+    const row = (id: string, probability: number | null, extra: Partial<CandidateRow> = {}): CandidateRow => ({
+      room_id: 'room-1', restaurant_id: id, status: 'kept', probability,
+      weight_breakdown: [], exclusion_reason: null, exclusion_kinds: [],
+      restaurants: { name: `店${id}`, lat: 25, lng: 121, place_id: id, source: 'mock' }, ...extra,
+    })
+    const onToggle = vi.fn()
+    const voting = { hasMyVote: (rid: string, kind: 'up' | 'veto') => kind === 'veto' && rid === 'b',
+      ups: {}, vetoesRemaining: 1, onToggle }
+    const rowNames = (tree: unknown): string[] => {
+      const out: string[] = []
+      const walk = (n: unknown) => {
+        if (Array.isArray(n)) return n.forEach(walk)
+        if (!n || typeof n !== 'object') return
+        const el = n as NodeLike
+        const id = el.props?.['data-testid']
+        if (id === 'candidate-row' || id === 'vetoed-row') out.push(textContent(el).match(/店\w/)![0])
+        else walk(el.props?.children)
+      }
+      walk(tree)
+      return out
+    }
+    mocks.refs = [] // 同一個元件實例的兩次 render：順序記在 ref 裡
+    mocks.refIndex = 0
+    expect(rowNames(CandidateList({ rows: [row('a', 0.3), row('b', 0.5), row('c', 0.2)], voting }))).toEqual(['店b', '店a', '店c'])
+
+    mocks.refIndex = 0
+    const tree = CandidateList({ rows: [row('a', 0.9), row('c', 0.1), row('b', null, {
+      status: 'excluded', exclusion_kinds: ['veto'], exclusion_reason: '遭 小明 否決（可收回）' })], voting })
+    expect(rowNames(tree)).toEqual(['店b', '店a', '店c'])
+    const vetoed = findNode(tree, el => el.props?.['data-testid'] === 'vetoed-row')
+    expect(textContent(vetoed)).toContain('遭 小明 否決（可收回）')
+    findButton(vetoed, '收回否決').props!.onClick!()
+    expect(onToggle).toHaveBeenCalledWith('b', 'veto')
+    expect(findNode(tree, el => el.type === 'details')).toBeUndefined() // 否決的店不再收進「被排除」
+    // 否決列和候選列是同一個 <li>：animation-name 與 delay 不變，切換時才不會整列重新浮現
+    expect(String(vetoed!.props!.className)).toContain('animate-row-in')
+    expect(vetoed!.props!.style).toEqual({ animationDelay: '0ms' })
+
+    // 進投票時候選還沒載到（查詢失敗、重試中）：不能把空清單凍結起來
+    mocks.refs = []
+    mocks.refIndex = 0
+    CandidateList({ rows: [], voting })
+    mocks.refIndex = 0
+    CandidateList({ rows: [row('a', 0.3), row('b', 0.5), row('c', 0.2)], voting })
+    mocks.refIndex = 0
+    expect(rowNames(CandidateList({ rows: [row('a', 0.9), row('b', 0.05), row('c', 0.05)], voting })))
+      .toEqual(['店b', '店a', '店c'])
+  })
 })
 
 describe('RoomPage pending selection controls', () => {
@@ -227,7 +298,7 @@ describe('RoomPage pending selection controls', () => {
     return {
       room: { id: 'room-1', code: 'ABC123', host_id: 'host', status: 'pending',
         exploration: 'balanced', meal_time: null, cuisine_filter: false, draw_version: 4 },
-      members: [], candidates: [candidate],
+      members: [], candidates: [candidate, { ...candidate, restaurant_id: 'r2', probability: 0 }],
       draw: { room_id: 'room-1', winner_restaurant_id: 'r1', seed: 'seed', probabilities: { r1: 1 }, version: 4 },
       myUserId, connected: true, notFound: false, loadError: false, refetch: vi.fn(async (): Promise<void> => undefined),
       toggleVote: vi.fn(), hasMyVote: vi.fn(), ups: new Map(), vetoesRemaining: 2,
@@ -302,6 +373,132 @@ describe('RoomPage pending selection controls', () => {
     await Promise.all([first, second])
     expect(setPendingAction).toHaveBeenLastCalledWith(null)
     expect(setActionError.mock.calls).toEqual([['']])
+  })
+
+  it('這台看過這次轉盤就不重播：沒看過才轉，轉完記下來，再進來直接是結果卡', async () => {
+    const store = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v) } })
+    const { default: DrawPanel } = await import('../components/DrawPanel')
+    const { default: Wheel } = await import('../components/Wheel')
+    const state = pendingState('member')
+    const props = { room: state.room, draw: state.draw, candidates: state.candidates, spun: false, onSpun: vi.fn(),
+      me: undefined, myUserId: 'member', isHost: false, isGuest: false, pendingAction: null, lastCandidate: false,
+      onRedraw: vi.fn(), onConfirm: vi.fn() } as unknown as Parameters<typeof DrawPanel>[0]
+
+    const wheel = findNode(DrawPanel(props), el => el.type === Wheel)
+    expect(wheel).toBeDefined()
+    // 轉到一半的重繪（Realtime）不能把轉盤收掉：轉完才記
+    expect(store.size).toBe(0)
+    expect(findNode(DrawPanel(props), el => el.type === Wheel)).toBeDefined()
+    ;(wheel!.props!.onDone as () => void)()
+    expect(store.get('wheel-seen:room-1')).toBe('4')
+    expect(props.onSpun).toHaveBeenCalledOnce()
+    expect(findNode(DrawPanel(props), el => el.type === Wheel)).toBeUndefined()
+    // 重轉是新版本：照樣會播
+    const redrawn = { ...props, draw: { ...props.draw, version: 5 } }
+    expect(findNode(DrawPanel(redrawn), el => el.type === Wheel)).toBeDefined()
+  })
+
+  it('標頭的邀請碼鈕複製 /join 連結（訪客點了可直接入房），不是只複製 12 碼', async () => {
+    const writeText = vi.fn(async () => undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    mocks.useRoom.mockReturnValue(pendingState('member'))
+    const tree = await renderRoomPage()
+    await findButton(tree, 'ABC123').props!.onClick!()
+    expect(writeText).toHaveBeenCalledWith('#/join/ABC123') // node 沒有 window，origin 為空
+  })
+
+  it('只剩抽中的一家：重轉改成「排除並回到準備階段」，先開確認框，確定才送', async () => {
+    mocks.useRoom.mockReturnValue({ ...pendingState('host'), candidates: [candidate] })
+    const tree = await renderRoomPage()
+    const setConfirmAsk = mocks.stateSetters[19]
+    expect(findButton(tree, '排除這家並重轉').type).toBeUndefined()
+
+    const ask = openConfirm(tree, '排除並回到準備階段', setConfirmAsk)
+    expect(ask.title).toBe('這是最後一家候選')
+    expect(mocks.redrawRoom).not.toHaveBeenCalled()
+    await ask.onConfirm()
+    expect(mocks.redrawRoom).toHaveBeenCalledWith('room-1', 4)
+  })
+
+  it('兩家以上候選：排除這家並重轉直接送、不開確認框', async () => {
+    mocks.useRoom.mockReturnValue(pendingState('host'))
+    const tree = await renderRoomPage()
+    const setConfirmAsk = mocks.stateSetters[19]
+    await findButton(tree, '排除這家並重轉').props!.onClick!()
+    expect(setConfirmAsk).not.toHaveBeenCalled()
+    expect(mocks.redrawRoom).toHaveBeenCalledWith('room-1', 4)
+  })
+
+  it('從抽中待確認回到準備階段時告訴全房原因；別的換階段只收掉這則、不動其他警告', async () => {
+    const state = pendingState('member')
+    // 跑一次 from→to 的階段 effect，回傳它交給 setActionWarning 的 updater
+    async function transition(from: string, to: string) {
+      mocks.refs = []; mocks.stateIndex = 0; mocks.effects = []
+      mocks.useRoom.mockReturnValue({ ...state, room: { ...state.room, status: from } })
+      await renderRoomPage()
+      mocks.effects.at(-1)!() // 階段 effect 排最後：記下前一個 status
+      mocks.stateIndex = 0; mocks.effects = []
+      mocks.useRoom.mockReturnValue({ ...state, room: { ...state.room, status: to }, draw: null })
+      await renderRoomPage()
+      const setActionWarning = mocks.stateSetters[2]
+      mocks.effects.at(-1)!()
+      expect(setActionWarning).toHaveBeenCalledOnce()
+      return setActionWarning.mock.calls[0][0] as (w: string) => string
+    }
+    const exhausted = (await transition('pending', 'lobby'))('')
+    expect(exhausted).toContain('候選已經全部排除')
+
+    const editBack = await transition('candidates', 'lobby') // 修改條件回準備階段：不講
+    expect(editBack('')).toBe('')
+    const searched = await transition('lobby', 'candidates') // 重新搜尋後：收掉排光提示，快取警告留著
+    expect(searched(exhausted)).toBe('')
+    expect(searched('外部搜尋暫時失敗，本次使用 30 天內的快取資料')).toBe('外部搜尋暫時失敗，本次使用 30 天內的快取資料')
+  })
+
+  it('換階段：新階段開頭被標頭蓋住才捲回去、同一份清單換按鈕不捲；焦點掉在 body 才移到階段標題', async () => {
+    const state = pendingState('member')
+    const BODY = { tagName: 'BODY' }
+    const scrollBy = vi.fn()
+    vi.stubGlobal('scrollBy', scrollBy)
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+    type Case = { from: string; to: string; top: number; active: object; after?: object; scroll: number | null; focus: boolean }
+    const cases: Case[] = [
+      { from: 'voting', to: 'pending', top: 40, active: BODY, scroll: -72, focus: true },
+      { from: 'voting', to: 'pending', top: 300, active: { tagName: 'BUTTON' }, scroll: null, focus: false },
+      { from: 'voting', to: 'pending', top: 40, active: { tagName: 'BUTTON' }, scroll: -72, focus: false },
+      // 初選表決過半自動換階段時房主開著確認框：effect 當下焦點還在框裡，框卸載後才掉回 body
+      { from: 'candidates', to: 'shortlisting', top: 300, active: { tagName: 'BUTTON' }, after: BODY, scroll: null, focus: true },
+      { from: 'candidates', to: 'voting', top: 40, active: BODY, scroll: null, focus: true },
+    ]
+    for (const c of cases) {
+      scrollBy.mockClear()
+      const doc = { body: BODY, activeElement: c.active,
+        querySelector: () => ({ getBoundingClientRect: () => ({ bottom: 96 }) }) }
+      vi.stubGlobal('document', doc)
+      mocks.refs = []; mocks.stateIndex = 0; mocks.effects = []
+      mocks.useRoom.mockReturnValue({ ...state, room: { ...state.room, status: c.from } })
+      await renderRoomPage()
+      mocks.effects.at(-1)!() // 記下前一個 status
+      mocks.stateIndex = 0; mocks.effects = []
+      mocks.useRoom.mockReturnValue({ ...state, room: { ...state.room, status: c.to } })
+      const tree = await renderRoomPage()
+      // 這次 render 的 ref 和上一次是同一個物件（mocks.refs），effect 跑之前塞進假 DOM
+      const h1 = findNode(tree, el => el.type === 'h1')!
+      const stage = findNode(tree, el => el.type === 'div' && Array.isArray(el.props?.children) &&
+        (el.props.children as NodeLike[]).some(ch => ch?.type === 'h1'))!
+      const focus = vi.fn()
+      ;(h1.props!.ref as { current: unknown }).current = { focus }
+      ;(stage.props!.ref as { current: unknown }).current = { getBoundingClientRect: () => ({ top: c.top }) }
+      mocks.effects.at(-1)!()
+      if (c.after) doc.activeElement = c.after
+      await new Promise(r => setTimeout(r, 0)) // 焦點檢查在 rAF（測試裡是 setTimeout 0）
+      if (c.scroll === null) expect(scrollBy, `${c.from}→${c.to}`).not.toHaveBeenCalled()
+      else expect(scrollBy).toHaveBeenCalledWith({ top: c.scroll, behavior: 'smooth' })
+      if (c.focus) expect(focus).toHaveBeenCalledWith({ preventScroll: true })
+      else expect(focus).not.toHaveBeenCalled()
+    }
   })
 
   it('抽選進行中：啟動轉盤 disabled 並顯示「抽選中…」', async () => {
@@ -656,7 +853,7 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
   it('搜尋 POST 超過三秒時顯示 truthful status copy', async () => {
     mocks.stateValues[13] = true
     const tree = await renderRoomPage()
-    const status = findNode(tree, el => el.props?.role === 'status')
+    const status = findNode(tree, el => el.type === 'p' && el.props?.role === 'status')
     expect(textContent(status)).toBe('搜尋仍在進行；首次使用可能需要約 15 秒。')
   })
 
@@ -727,15 +924,16 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     expect(textContent(await renderRoomPage())).not.toContain('我準備好了」')
   })
 
-  it('lobby 顯示菜系過濾開關；成員視角 disabled', async () => {
+  it('lobby 成員視角：房主的設定收成一行摘要，沒有開關', async () => {
     mocks.useRoom.mockReturnValue({ room: { ...lobbyRoom, cuisine_filter: false },
       members: [hostMe, memberB], myUserId: 'user-b',
       candidates: [], draw: null, connected: true, notFound: false, loadError: false,
       refetch: vi.fn(), toggleVote: vi.fn(), myVote: () => null, ups: {}, vetoesRemaining: 2 })
     const tree = await renderRoomPage()
-    const toggle = findButton(tree, '關閉')
-    expect((toggle as { props?: { disabled?: boolean } }).props?.disabled).toBe(true)
-    expect(textContent(tree)).toContain('開啟後只保留符合成員菜系偏好的店')
+    expect(findButton(tree, '關閉').type).toBeUndefined()
+    expect(findButton(tree, '平均').type).toBeUndefined()
+    expect(textContent(tree)).toContain('探索檔位：平均・用餐時間：')
+    expect(textContent(tree)).toContain('・菜系過濾：關閉')
   })
 
   // eng review 5A：寫入路徑防線——點了沒寫進 DB（或漏 count 防線）這條會紅
@@ -795,29 +993,45 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     expect(findButton(guestTree, '開始投票').type).toBeUndefined()
   })
 
-  it('修改條件先用 native confirm；取消時不送 request', async () => {
-    const confirm = vi.fn(() => false)
-    vi.stubGlobal('confirm', confirm)
+  it('修改條件先開站內確認框；按取消不送 request、焦點回到觸發鈕', async () => {
+    mocks.refs = [] // 觸發鈕記在 ref 裡，關框那次 render 要拿得到
     mocks.useRoom.mockReturnValue(roomState({ room: { ...lobbyRoom, status: 'candidates' } }))
     const tree = await renderRoomPage()
-
-    await findButton(tree, '修改條件').props!.onClick!()
-
-    expect(confirm).toHaveBeenCalledOnce()
+    const trigger = { focus: vi.fn() }
+    const ask = openConfirm(tree, '修改條件', mocks.stateSetters[19], trigger)
+    expect(ask).toMatchObject({ title: '修改條件？', confirmLabel: '清除候選並修改' })
     expect(mocks.editConditions).not.toHaveBeenCalled()
+
+    // 框開著：背景 inert，按取消只關框
+    mocks.stateIndex = 0; mocks.stateValues = []; mocks.stateValues[19] = ask
+    const open = await renderRoomPage()
+    const setConfirmAsk = mocks.stateSetters[19]
+    expect(findNode(open, el => el.props?.inert === true)).toBeDefined()
+    expect(textContent(findNode(open, el => el.props?.role === 'dialog'))).toContain(ask.body)
+    findButton(open, '取消').props!.onClick!()
+    expect(setConfirmAsk).toHaveBeenCalledWith(null)
+    expect(mocks.editConditions).not.toHaveBeenCalled()
+    expect(trigger.focus).not.toHaveBeenCalled() // 同步聚焦會被還沒解除的 inert 吃掉
+    await new Promise(r => setTimeout(r, 0)) // rAF（測試裡是 setTimeout 0）之後才還原焦點
+    expect(trigger.focus).toHaveBeenCalledOnce()
+
+    // 按確定：關框並送出
+    setConfirmAsk.mockClear()
+    findButton(open, '清除候選並修改').props!.onClick!()
+    expect(setConfirmAsk).toHaveBeenCalledWith(null)
+    expect(mocks.editConditions).toHaveBeenCalledWith('room-1')
   })
 
   it('修改條件 busy ref 擋連點，成功只 refetch 一次', async () => {
     const pending = deferred<string | null>()
     const refetch = vi.fn()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     mocks.editConditions.mockReturnValue(pending.promise)
     mocks.useRoom.mockReturnValue(roomState({
       room: { ...lobbyRoom, status: 'candidates' },
       refetch,
     }))
     const tree = await renderRoomPage()
-    const click = findButton(tree, '修改條件').props!.onClick!
+    const click = openConfirm(tree, '修改條件', mocks.stateSetters[19]).onConfirm
 
     const first = click()
     await click()
@@ -831,7 +1045,6 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
 
   it('修改條件錯誤顯示在既有 action alert 且不 refetch', async () => {
     const refetch = vi.fn()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     mocks.editConditions.mockResolvedValue('房間狀態已變更')
     mocks.useRoom.mockReturnValue(roomState({
       room: { ...lobbyRoom, status: 'candidates' },
@@ -839,7 +1052,7 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     }))
     const tree = await renderRoomPage()
 
-    await findButton(tree, '修改條件').props!.onClick!()
+    await openConfirm(tree, '修改條件', mocks.stateSetters[19]).onConfirm()
 
     expect(mocks.stateSetters[1]).toHaveBeenCalledWith('房間狀態已變更')
     expect(refetch).not.toHaveBeenCalled()
@@ -973,16 +1186,13 @@ describe('初選（Shortlist）', () => {
     expect(mocks.stateSetters[1]).toHaveBeenCalledWith('每人最多圈選 5 家')
   })
 
-  it('取消初選先用 native confirm；取消不送，確定才送並 refetch', async () => {
-    const confirm = vi.fn(() => false)
-    vi.stubGlobal('confirm', confirm)
+  it('取消初選先開站內確認框；確定才送並 refetch', async () => {
     const tree = await render('shortlisting')
-    await findButton(tree, '取消初選').props!.onClick!()
-    expect(confirm).toHaveBeenCalledWith('取消初選會清除所有人的圈選，回到候選出爐。確定繼續？')
+    const ask = openConfirm(tree, '取消初選', mocks.stateSetters[19])
+    expect(ask).toMatchObject({ title: '取消初選？', body: '取消初選會清除所有人的圈選，回到候選出爐。' })
     expect(mocks.cancelShortlist).not.toHaveBeenCalled()
 
-    confirm.mockReturnValue(true)
-    await findButton(tree, '取消初選').props!.onClick!()
+    await ask.onConfirm()
     expect(mocks.cancelShortlist).toHaveBeenCalledWith('room-1')
     expect(mocks.useRoom.mock.results[0].value.refetch).toHaveBeenCalledOnce()
   })
@@ -1064,6 +1274,8 @@ describe('回首頁離席確認', () => {
     })
     expect(mocks.stateSetters[LEAVE_CHECKING]).toHaveBeenCalledWith(true)
     expect(mocks.stateSetters[LEAVE_CHECKING]).toHaveBeenCalledWith(false)
+    // 查房籍期間背景還沒 inert，可能先開了「修改條件」確認框：兩個 dialog 不能疊在一起
+    expect(mocks.stateSetters[19]).toHaveBeenCalledWith(null)
   })
 
   // useRoom.ts:46 只在 r.data 為真時 setRoom——rooms 查詢失敗／Realtime 斷線時 room

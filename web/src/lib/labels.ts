@@ -49,6 +49,12 @@ export const DIETARY_OPTIONS: [string, string][] = [
 
 export const DIETARY_LABEL = Object.fromEntries(DIETARY_OPTIONS)
 
+// 房間標頭的狀態印章與 RoomPage 的階段標題共用
+export const ROOM_STATUS_LABEL: Record<Room['status'], string> = {
+  lobby: '等待中', candidates: '候選已出爐', shortlisting: '初選中', voting: '投票中',
+  relocating: '等待選新地點', pending: '抽中待確認', decided: '已定案',
+}
+
 export const EXPLORATION_OPTIONS: [Room['exploration'], string, string][] = [
   ['familiar', '熟悉', '常去的店優先：新店加成關閉，最近去過的降權減半'],
   ['balanced', '平均', '預設的平衡配置'],

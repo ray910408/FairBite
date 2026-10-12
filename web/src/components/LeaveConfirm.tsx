@@ -4,7 +4,8 @@ import { leaveNotice } from '../lib/leaveNotice'
 import type { LeaveTarget } from '../lib/roomMembership'
 
 // 「回首頁＝離席」（ADR-0007）確認框的共用外殼，三個呼叫端共用：RoomPage 的 header
-// logo、HistoryPage 的兩個回首頁入口、HomePage 的 mount 攔截。
+// logo、HistoryPage 的兩個回首頁入口、HomePage 的 mount 攔截。RoomPage 的站內確認框
+// （修改條件、取消初選、最後一家重轉）也借用這個外殼。
 //
 // 這段版面不是裝飾：多房籍在 320x568 會長到超出畫面，垂直置中時上下一起溢出、
 // 「取消」與「確認」都點不到。卡片限高在視窗內（max-h-full + flex-col），只讓中段
@@ -30,10 +31,10 @@ export function LeaveConfirm({ title, onClose, actions, actionsClassName, childr
     // 遮罩用 black 而非 fg：fg 在深色主題是米白，會變成一層亮霧
     <div className="fixed inset-0 z-30 flex animate-fade items-center justify-center bg-black/50 p-3"
       onKeyDown={onClose && (e => { if (e.key === 'Escape') onClose() })}>
-      <div role="dialog" aria-modal="true" aria-labelledby="leave-title"
+      <div role="dialog" aria-modal="true" aria-labelledby="leave-title" aria-describedby="leave-body"
         className="card flex max-h-full w-full max-w-sm animate-rise flex-col space-y-3">
         <h2 id="leave-title" className="shrink-0 text-base font-semibold">{title}</h2>
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">{children}</div>
+        <div id="leave-body" className="min-h-0 flex-1 space-y-3 overflow-y-auto">{children}</div>
         <div className={`flex shrink-0 flex-col gap-2 ${actionsClassName ?? ''}`}>{actions}</div>
       </div>
     </div>

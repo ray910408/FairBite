@@ -221,8 +221,9 @@ function votingCard(page: Page, restaurantName: string) {
     .filter({ has: page.getByRole('button', { name: /^贊成/ }) })
 }
 
+// 被否決的店在投票中留在原位（CandidateList 的 vetoed-row），不再收進「被排除」
 function excludedRow(page: Page, restaurantName: string) {
-  return page.locator('details li')
+  return page.getByTestId('vetoed-row')
     .filter({ has: page.getByText(restaurantName, { exact: true }) })
 }
 
@@ -375,13 +376,12 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     // A 建房、B 以十二碼邀請碼加入；雙方都看到 2 位成員。
     await createAndJoinRoom(a, b, true)
 
-    // D10 #3：房主切到探索；成員同步看到狀態與說明，且不能更改。
+    // D10 #3：房主切到探索；成員同步在摘要卡看到狀態與說明，且沒有可改的開關。
     await a.getByRole('button', { name: '探索', exact: true }).click()
-    const memberExplore = b.getByRole('button', { name: '探索', exact: true })
-    await expect(memberExplore).toHaveAttribute('aria-pressed', 'true')
-    await expect(b.getByText('沒去過的店加成加倍、常中選的店降權，鼓勵換口味（由房主設定）', { exact: true })).toBeVisible()
+    await expect(b.getByText(/^探索檔位：探索・/)).toBeVisible()
+    await expect(b.getByText('沒去過的店加成加倍、常中選的店降權，鼓勵換口味', { exact: true })).toBeVisible()
     for (const label of ['熟悉', '平均', '探索']) {
-      await expect(b.getByRole('button', { name: label, exact: true })).toBeDisabled()
+      await expect(b.getByRole('button', { name: label, exact: true })).toHaveCount(0)
     }
 
     // Task 3：台式偏好必須寫入、重載後仍回讀為 selected；菜系過濾再用同一個真實房間流程開啟。
@@ -538,11 +538,8 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     })
     const clearedA = emptyCandidates(a)
     const clearedB = emptyCandidates(b)
-    a.once('dialog', async dialog => {
-      expect(dialog.type()).toBe('confirm')
-      await dialog.accept()
-    })
     await a.getByRole('button', { name: '修改條件' }).click()
+    await a.getByRole('dialog', { name: '修改條件？' }).getByRole('button', { name: '清除候選並修改' }).click()
     await Promise.all([clearedA, clearedB])
     await expect(candidateHeadingA).toHaveCount(0)
     await expect(candidateHeadingB).toHaveCount(0)
@@ -680,10 +677,10 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     // 《店名》全文——prompt 查詢必然發生在退房 commit 之後，且 fallback「上一餐」
     // 騙不過全文比對，這才是 0022 RLS 條款的 E2E 證據。
     await leaveViaHome(b) // 確認後才退房、settle 才繼續
-    await b.getByRole('button', { name: '送出評分' }).click()
     await b.reload()
     await expect(b.getByText(`上次吃的《${winnerName}》滿意嗎？`)).toBeVisible()
     await b.getByRole('button', { name: '5 顆星' }).click()
+    await b.getByRole('button', { name: '送出評分' }).click()
     await expect(b.getByText(/滿意嗎？/)).toBeHidden()
     await b.reload()
     await expect(b.getByText(/滿意嗎？/)).toBeHidden()
@@ -694,10 +691,10 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await expect(a.getByRole('heading', { name: '足跡' })).toBeVisible()
     const firstRow = a.getByRole('listitem').first()
     await expect(firstRow).toContainText(winnerName)
-    await firstRow.getByRole('button', { name: '送出評分' }).click()
     // 未評列預設收合為 chip，點擊展開 StarRow（design review D4）
     await firstRow.getByRole('button', { name: '尚未評分 · 補評' }).click()
     await firstRow.getByRole('button', { name: '3 顆星' }).click()
+    await firstRow.getByRole('button', { name: '送出評分' }).click()
     const ratingStars = firstRow.getByLabel('已評 3 顆星').locator('svg')
     await expect(ratingStars).toHaveCount(5)
     for (let i = 0; i < 5; i++) {
@@ -708,7 +705,7 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await expect(a.getByText('已評 1 筆 · 平均 3.0 ★')).toBeVisible()
     // 房內 RatingPrompt 的已評靜態分支：goBack 一次回房（history 由房內進入）
     await a.goBack()
-    // 回房是真重載：轉盤重播 SPIN_MS+200≈4.2s 後 RatingPrompt 才回讀，預設 10s expect 預算吃掉近半——放寬（final review）
+    // 回房是真重載；這台已看過這次轉盤（wheelSeen）不會重播，但 15s 預算留著給冷啟動的 RatingPrompt 回讀
     await expect(a.getByText('已評分 3 顆星')).toBeVisible({ timeout: 15_000 })
 
     // Round 4 退房全鏈：A（末位成員）回首頁 → 房被刪 → 重訪房間 URL 得 not-found。

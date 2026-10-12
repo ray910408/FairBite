@@ -9,7 +9,8 @@ import {
 } from '../lib/api'
 import { loadRoomDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
 import { isVetoDeadEnd } from '../lib/deadEnd'
-import { EXPLORATION_OPTIONS } from '../lib/labels'
+import { buildInviteUrl } from '../lib/invite'
+import { EXPLORATION_OPTIONS, ROOM_STATUS_LABEL } from '../lib/labels'
 import { formatMealTime } from '../lib/mealTime'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import {
@@ -27,9 +28,26 @@ import { RoomHeader } from '../components/RoomHeader'
 import { RoomSettings } from '../components/RoomSettings'
 import ShortlistVotePanel from '../components/ShortlistVotePanel'
 import { InviteQRCode } from '../components/InviteQRCode'
-import { Alert, Logo, Spinner } from '../components/icons'
+import { Alert, Chevron, Logo, Spinner } from '../components/icons'
 
 const SEARCH_SLOW_STATUS_MS = 3000
+const LIST_STAGES = new Set<string>(['candidates', 'shortlisting', 'voting'])
+const EXHAUSTED_NOTICE = '候選已經全部排除（或都打烊了），回到準備階段：可以放寬條件或換地點後重新搜尋'
+
+// 站內確認框（取代原生 confirm()）：清掉全房資料的動作先講後果
+type ConfirmAsk = { title: string; body: string; confirmLabel: string; onConfirm: () => Promise<void> }
+
+function scrollBehavior(): ScrollBehavior {
+  return matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+}
+
+// 動作的錯誤／提示只顯示在頁首：手機上按鈕在畫面下方時，訊息出現在畫面外，看起來像沒反應。
+// 橫幅掛載時捲到看得見的地方（scroll-mt-36 讓它停在 sticky 標頭下：320px 時標頭約 124px，
+// 加上浮現動畫起點的 8px 位移還有餘裕）。必須是模組層的穩定函式：
+// inline ref callback 每次 render 都是新函式，React 會每次重跑，Realtime 一更新就把畫面拉回去
+function revealBanner(el: HTMLElement | null) {
+  el?.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() })
+}
 
 export default function RoomPage() {
   const { id = '' } = useParams()
@@ -113,6 +131,37 @@ export default function RoomPage() {
     if (getUser) void getUser().then(({ data }) => setIsGuest(data.user?.is_anonymous === true)).catch(() => {})
   }, [])
   useMidnightRerender() // 新 hook 一律接在最後：RoomPage.test.ts 依呼叫順序 mock
+  const [confirmAsk, setConfirmAsk] = useState<ConfirmAsk | null>(null)
+  const confirmTriggerRef = useRef<HTMLElement | null>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const stageHeadingRef = useRef<HTMLHeadingElement>(null)
+  const shownStatus = useRef<Room['status'] | undefined>(undefined)
+  const status = room?.status
+  // 換階段：舊階段的按鈕跟著整段卸載、焦點掉回 body，捲動也停在原位（常落在新階段中段）。
+  // 捲回新階段開頭；焦點沒有別的去處時移到階段標題，螢幕閱讀器才會念出換到哪一步
+  useEffect(() => {
+    const prev = shownStatus.current
+    shownStatus.current = status
+    if (!prev || !status || prev === status) return
+    // pending 回 lobby 只有一條路：重轉／確認時候選排光（pending.go resetExhaustedBatch），全房都要知道為什麼。
+    // 換到別的階段就收掉這則（只收這則，搜尋的快取警告不動）：成員那邊沒有別的動作會清 actionWarning
+    setActionWarning(w => prev === 'pending' && status === 'lobby' ? EXHAUSTED_NOTICE
+      : w === EXHAUSTED_NOTICE ? '' : w)
+    setConfirmAsk(null) // 開框時看到的後果已經不是現在這一步了
+    const stage = stageRef.current
+    if (!stage) return
+    // 候選出爐／初選／投票之間是同一份清單換按鈕：別人推進階段時不拉走正在讀第幾家的人
+    const sameList = LIST_STAGES.has(prev) && LIST_STAGES.has(status)
+    // 量 sticky 標頭的實際底緣（320px 時印章會換行、標頭變高），不靠固定的 scroll-margin
+    const hidden = stage.getBoundingClientRect().top - (document.querySelector('header')?.getBoundingClientRect().bottom ?? 0)
+    // 留 16px（同 main 的 p-4），不貼著標頭的雙線
+    if (!sameList && hidden < 0) scrollBy({ top: hidden - 16, behavior: scrollBehavior() })
+    // 排到 rAF 才看焦點：上面關掉的確認框要等下一次 commit 才卸載、背景也那時才解除 inert，
+    // 同步檢查時焦點還在框裡，卸載後掉回 body 就沒人接手
+    requestAnimationFrame(() => {
+      if (document.activeElement === document.body) stageHeadingRef.current?.focus({ preventScroll: true })
+    })
+  }, [status])
   if (!room) {
     if (loadError) return (
       <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
@@ -158,9 +207,10 @@ export default function RoomPage() {
   const picksByMember = keptPickCounts(shortlistPicks, candidates)
   const shortlistUnfinished = membersBelowMin(members, picksByMember)
 
-  async function copyCode() {
+  // 複製連結而非 12 碼：收到碼的人得先註冊，/join/:code 連結才能讓訪客直接入房
+  async function copyInvite() {
     try {
-      await navigator.clipboard.writeText(room!.code)
+      await navigator.clipboard.writeText(buildInviteUrl(room!.code))
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     } catch {
@@ -262,9 +312,25 @@ export default function RoomPage() {
     finally { setShortlistBusy(false) }
   }
 
+  function askConfirm(e: React.MouseEvent<HTMLElement>, ask: ConfirmAsk) {
+    confirmTriggerRef.current = e.currentTarget
+    setConfirmAsk(ask)
+  }
+
+  function closeConfirm() {
+    setConfirmAsk(null)
+    // 同 closeLeave：背景 inert 要等這次 commit 移除，焦點才回得去觸發的按鈕
+    requestAnimationFrame(() => confirmTriggerRef.current?.focus())
+  }
+
+  function askCancelShortlist(e: React.MouseEvent<HTMLElement>) {
+    if (shortlistBusy) return
+    askConfirm(e, { title: '取消初選？', body: '取消初選會清除所有人的圈選，回到候選出爐。',
+      confirmLabel: '清除圈選', onConfirm: onCancelShortlist })
+  }
+
   async function onCancelShortlist() {
     if (shortlistBusy) return
-    if (!globalThis.confirm('取消初選會清除所有人的圈選，回到候選出爐。確定繼續？')) return
     setShortlistBusy(true); setActionError('')
     try {
       const msg = await cancelShortlist(room!.id)
@@ -274,9 +340,14 @@ export default function RoomPage() {
     finally { setShortlistBusy(false) }
   }
 
+  function askEditConditions(e: React.MouseEvent<HTMLElement>) {
+    if (editConditionsInFlight.current) return
+    askConfirm(e, { title: '修改條件？', body: '修改條件會清除目前候選，並請所有成員重新準備。',
+      confirmLabel: '清除候選並修改', onConfirm: onEditConditions })
+  }
+
   async function onEditConditions() {
     if (editConditionsInFlight.current) return
-    if (!globalThis.confirm('修改條件會清除目前候選，並請所有成員重新準備。確定繼續？')) return
     editConditionsInFlight.current = true
     setEditingConditions(true)
     setActionError('')
@@ -398,6 +469,7 @@ export default function RoomPage() {
       nav('/')
       return
     }
+    setConfirmAsk(null) // 查房籍期間背景還沒 inert，可能先開了確認框：兩個 dialog 不能疊在一起
     setLeaveDialog(rooms ? { kind: 'rooms', rooms } : { kind: 'unknown' })
   }
 
@@ -405,8 +477,8 @@ export default function RoomPage() {
     <>
       {/* dialog 開著時整塊背景 inert：fixed 遮罩擋得住指標（elementFromPoint 實測），
           對 tab 順序毫無作用——沒有它鍵盤使用者可以 tab 到「開始搜尋餐廳」按 Enter（Codex P2） */}
-      <div className="min-h-screen" inert={!!leaveDialog}>
-      {RoomHeader({ room, copied, onCopy: copyCode, leaveChecking, onLeave: askLeave, leaveTriggerRef })}
+      <div className="min-h-screen" inert={!!leaveDialog || !!confirmAsk}>
+      {RoomHeader({ room, copied, onCopy: copyInvite, leaveChecking, onLeave: askLeave, leaveTriggerRef })}
 
       <main className="mx-auto w-full max-w-lg space-y-4 p-4">
         {!connected && (
@@ -425,14 +497,17 @@ export default function RoomPage() {
           </p>
         )}
 
+        {/* key：換一則訊息就重新掛載，revealBanner 與浮現動畫才會再跑一次 */}
         {actionError && (
-          <p role="alert" className="banner bg-danger-soft whitespace-pre-line text-danger">
+          <p key={actionError} ref={revealBanner} role="alert"
+            className="banner animate-rise scroll-mt-36 bg-danger-soft whitespace-pre-line text-danger">
             <Alert className="h-5 w-5 shrink-0" />
             <span>{actionError}</span>
           </p>
         )}
         {actionWarning && (
-          <p role="status" className="banner bg-warn-soft text-warn">
+          <p key={actionWarning} ref={revealBanner} role="status"
+            className="banner animate-rise scroll-mt-36 bg-warn-soft text-warn">
             <Alert className="h-5 w-5 shrink-0" />
             <span>{actionWarning}</span>
           </p>
@@ -441,18 +516,35 @@ export default function RoomPage() {
         {MemberList({ room, members, picksByMember })}
         {guestHint && <p role="status" className="banner bg-brand-soft text-brand-strong">{guestHint}</p>}
 
+        {/* 階段區塊：key 讓換階段時整段重新掛載並淡入（候選逐行浮現也跟著重播）。只淡入不位移：
+            換階段 effect 量的是它的位置，帶著 translateY 量會少捲 8px、開頭被標頭蓋住。
+            pending→decided 共用一段：結果卡不重掛，只由 ResultCard 換印章 */}
+        <div key={room.status === 'decided' ? 'pending' : room.status} ref={stageRef}
+          className="animate-fade space-y-4">
+        <h1 ref={stageHeadingRef} tabIndex={-1} className="sr-only">
+          目前階段：{ROOM_STATUS_LABEL[room.status]}
+        </h1>
         {(room.status === 'voting' || room.status === 'relocating' || (room.status === 'lobby' && isHost)) && (
           <RelocationPanel key={room.id} isHost={isHost} status={room.status}
             wantChange={locationVotes.some(v => v.user_id === myUserId)}
             yesCount={locationVotes.length} memberCount={members.length} busy={relocationBusy}
             onVote={onLocationVote} onChoose={onChooseLocation} current={loadRoomDeparture(room.id)} />
         )}
-        {room.status === 'lobby' && (
+        {room.status === 'lobby' && (isHost ? (
           <section className="card space-y-3">
             <h2 className="text-base font-semibold">邀請成員</h2>
             <InviteQRCode code={room.code} />
           </section>
-        )}
+        ) : (
+          // 非房主不是主要邀請人：收起來，自己的條件不必捲過整張 QR 卡
+          <details className="card py-0">
+            <summary className="flex min-h-12 list-none items-center gap-2 font-serif text-base font-semibold [&::-webkit-details-marker]:hidden">
+              <Chevron className="disclosure-chevron h-4 w-4" />
+              邀請其他人加入
+            </summary>
+            <div className="pb-4"><InviteQRCode code={room.code} /></div>
+          </details>
+        ))}
 
         {(room.status === 'candidates' || room.status === 'shortlisting' || room.status === 'voting') && (
           <p className="text-xs text-fg-muted">
@@ -489,7 +581,7 @@ export default function RoomPage() {
             {isHost && (
               <div className="grid grid-cols-2 gap-3">
                 <button className="btn btn-secondary w-full" disabled={editingConditions || startingVoting}
-                  aria-busy={editingConditions} onClick={onEditConditions}>
+                  aria-busy={editingConditions} onClick={askEditConditions}>
                   {editingConditions ? <><Spinner className="h-5 w-5" />處理中…</> : '修改條件'}
                 </button>
                 <button className="btn btn-primary w-full" disabled={startingVoting || editingConditions}
@@ -516,12 +608,12 @@ export default function RoomPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <button className="btn btn-secondary w-full"
                     disabled={editingConditions || startingVoting || shortlistBusy}
-                    aria-busy={editingConditions} onClick={onEditConditions}>
+                    aria-busy={editingConditions} onClick={askEditConditions}>
                     {editingConditions ? <><Spinner className="h-5 w-5" />處理中…</> : '修改條件'}
                   </button>
                   <button className="btn btn-quiet w-full"
                     disabled={shortlistBusy || startingVoting || editingConditions}
-                    aria-busy={shortlistBusy} onClick={onCancelShortlist}>
+                    aria-busy={shortlistBusy} onClick={askCancelShortlist}>
                     {shortlistBusy ? <><Spinner className="h-5 w-5" />處理中…</> : '取消初選'}
                   </button>
                 </div>
@@ -564,8 +656,13 @@ export default function RoomPage() {
         {(room.status === 'pending' || room.status === 'decided') && currentDraw && (
           <DrawPanel room={room} draw={currentDraw} candidates={candidates} spun={spun} onSpun={() => setSpun(true)}
             me={me} myUserId={myUserId} isHost={isHost} isGuest={isGuest}
-            pendingAction={pendingAction} onRedraw={onRedraw} onConfirm={onConfirmDraw} />
+            pendingAction={pendingAction} lastCandidate={keptCount <= 1} onConfirm={onConfirmDraw}
+            // 只剩這一家時重轉必然排光候選、全房回準備階段：先講清楚再送
+            onRedraw={keptCount > 1 ? onRedraw : e => askConfirm(e, { title: '這是最後一家候選',
+              body: '排除後就沒有候選了：全房會回到準備階段，要調整條件或換地點後重新搜尋。',
+              confirmLabel: '排除並回到準備階段', onConfirm: onRedraw })} />
         )}
+        </div>
       </main>
       </div>
 
@@ -585,6 +682,23 @@ export default function RoomPage() {
           </>
         ),
         children: LeaveRoomsBody({ target: leaveDialog }),
+      })}
+      {confirmAsk && LeaveConfirm({
+        title: confirmAsk.title,
+        onClose: closeConfirm,
+        actionsClassName: 'sm:flex-row',
+        actions: (
+          <>
+            <button type="button" autoFocus className="btn btn-quiet w-full sm:flex-1" onClick={closeConfirm}>
+              取消
+            </button>
+            <button type="button" className="btn w-full bg-danger text-on-danger sm:flex-1"
+              onClick={() => { closeConfirm(); void confirmAsk.onConfirm() }}>
+              {confirmAsk.confirmLabel}
+            </button>
+          </>
+        ),
+        children: <p className="text-sm text-fg-muted">{confirmAsk.body}</p>,
       })}
     </>
   )

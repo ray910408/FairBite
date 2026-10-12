@@ -1,5 +1,6 @@
 import type { MouseEvent, Ref } from 'react'
 import { Link } from 'react-router-dom'
+import { ROOM_STATUS_LABEL } from '../lib/labels'
 import type { Room } from '../lib/types'
 import { Check, Copy, Logo } from './icons'
 
@@ -57,16 +58,17 @@ export function RoomHeader({ room, copied, onCopy, leaveChecking, onLeave, leave
           className="-ml-1.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl">
           <Logo className="h-8 w-8" />
         </Link>
-        {/* 12 碼在 320px 塞不下 text-lg + 0.25em 字距，小螢幕縮小、sm 以上維持原樣 */}
-        <button onClick={onCopy}
+        {/* 12 碼在 320px 塞不下 text-lg + 0.25em 字距，小螢幕縮小、sm 以上維持原樣。
+            複製的是邀請連結而非 12 碼：只有 /join/:code 連結能讓訪客不註冊直接入房 */}
+        <button onClick={onCopy} title="複製邀請連結" aria-label={`邀請碼 ${room.code}，點一下複製加入連結`}
           className="btn btn-quiet min-h-11 gap-1.5 px-1.5 font-mono text-sm sm:gap-2 sm:px-3 sm:text-lg sm:tracking-[0.25em]">
           {room.code}
           {copied ? <Check className="h-4 w-4 text-ok" /> : <Copy className="h-4 w-4 text-fg-muted" />}
         </button>
-        <span className="sr-only" aria-live="polite">{copied ? '邀請碼已複製' : ''}</span>
+        <span className="sr-only" aria-live="polite">{copied ? '邀請連結已複製' : ''}</span>
         <Link to="/history" className="btn btn-quiet min-h-11 px-1.5 text-xs sm:px-2 sm:text-sm">足跡</Link>
         <span className="seal ml-auto text-xs min-[375px]:text-sm">
-          {{ lobby: '等待中', candidates: '候選已出爐', shortlisting: '初選中', voting: '投票中', relocating: '等待選新地點', pending: '抽中待確認', decided: '已定案' }[room.status]}
+          {ROOM_STATUS_LABEL[room.status]}
         </span>
       </div>
       <div className="mx-auto w-full max-w-lg px-3">

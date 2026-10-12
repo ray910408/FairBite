@@ -10,7 +10,7 @@ function segment(active: boolean) {
     active ? 'bg-fg text-canvas' : 'text-fg enabled:hover:bg-brand-soft'}`
 }
 
-// lobby 的三張房間層設定卡：探索檔位、用餐時間、菜系過濾。只有房主能改，寫入走 useRoomSettingsWrites。
+// lobby 的三張房間層設定卡：探索檔位、用餐時間、菜系過濾。只有房主能改（非房主只看摘要），寫入走 useRoomSettingsWrites。
 // 用餐時間草稿（editingCustom／draftHH／draftMM）是 RoomPage 的 state：寫入失敗時佇列要把它還原。
 // 以函式呼叫（RoomSettings({...})）而非 <RoomSettings />：比照 LeaveConfirm，本元件沒有自己的狀態，
 // RoomPage.test.ts 把頁面當純函式呼叫，要在回傳的元素樹裡讀到說明文字
@@ -27,13 +27,31 @@ export function RoomSettings({ room, isHost, searching, settings,
   draftMM: string
   setDraftMM: (mm: string) => void
 }) {
+  // 非房主改不了這三項：收成一張摘要卡，自己的條件表單才不會被擠到三張停用的設定卡下面
+  if (!isHost) return (
+    <section className="card animate-rise space-y-1">
+      <h2 className="text-sm font-semibold text-fg-muted">房主的設定</h2>
+      {/* 每項整段不折行：320px 時寧可換到下一行，也不要把「菜系過濾」拆成兩半 */}
+      <p className="text-sm">
+        <span className="whitespace-nowrap">探索檔位：{EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[1]}</span>
+        ・<span className="whitespace-nowrap">用餐時間：{formatMealTime(room.meal_time)}</span>
+        ・<span className="whitespace-nowrap">菜系過濾：{room.cuisine_filter ? '開啟' : '關閉'}</span>
+      </p>
+      <p className="text-xs text-fg-muted">{EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[2]}</p>
+      {/* D14：同房主卡片的冷啟動誠實說明 */}
+      <p className="text-xs text-fg-muted">檔位依成員的同席紀錄調整機率；大家開始用這裡抽餐廳後才會逐漸生效</p>
+      {/* 開啟時你的料理偏好直接決定哪些店留下，要讓成員知道後果 */}
+      {room.cuisine_filter && (
+        <p className="text-xs text-fg-muted">菜系過濾：只保留符合成員菜系偏好的店；大家都沒選菜系時不會作用</p>
+      )}
+    </section>
+  )
   return (
     <>
       <section className="card animate-rise">
         <h2 className="mb-1 text-sm font-semibold text-fg-muted">探索檔位</h2>
         <p className="mb-3 text-xs text-fg-muted">
           {EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[2]}
-          {!isHost && '（由房主設定）'}
         </p>
         {/* D14：冷啟動誠實說明 —— 檔位靠同席紀錄運作，沒紀錄前三檔等效 */}
         <p className="mb-3 text-xs text-fg-muted">
@@ -42,8 +60,8 @@ export function RoomSettings({ room, isHost, searching, settings,
         <div className={`grid grid-cols-3 ${SEGMENTED}`}>
           {EXPLORATION_OPTIONS.map(([key, label]) => (
             <button key={key} type="button" aria-pressed={room.exploration === key}
-              disabled={!isHost || searching}
-              className={`${segment(room.exploration === key)} disabled:cursor-default`}
+              disabled={searching}
+              className={segment(room.exploration === key)}
               onClick={() => settings.saveRoomSetting({ exploration: key }, '探索檔位更新失敗')}>
               {label}
             </button>
@@ -54,7 +72,6 @@ export function RoomSettings({ room, isHost, searching, settings,
         <h2 className="mb-1 text-sm font-semibold text-fg-muted">用餐時間</h2>
         <p className="mb-3 text-xs text-fg-muted">
           {formatMealTime(room.meal_time)}
-          {!isHost && '（由房主設定）'}
         </p>
         {isHost && (
           <div className="space-y-2">
@@ -113,13 +130,12 @@ export function RoomSettings({ room, isHost, searching, settings,
         <h2 className="mb-1 text-sm font-semibold text-fg-muted">菜系過濾</h2>
         <p className="mb-3 text-xs text-fg-muted">
           開啟後只保留符合成員菜系偏好的店；大家都沒選菜系時不會作用
-          {!isHost && '（由房主設定）'}
         </p>
         <div className={`grid grid-cols-2 ${SEGMENTED}`}>
           {([[false, '關閉'], [true, '開啟']] as const).map(([value, label]) => (
             <button key={label} type="button" aria-pressed={room.cuisine_filter === value}
-              disabled={!isHost || searching}
-              className={`${segment(room.cuisine_filter === value)} disabled:cursor-default`}
+              disabled={searching}
+              className={segment(room.cuisine_filter === value)}
               onClick={() => settings.saveRoomSetting({ cuisine_filter: value }, '菜系過濾更新失敗')}>
               {label}
             </button>

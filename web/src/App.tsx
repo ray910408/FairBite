@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 // HashRouter：GitHub Pages 是純靜態，/room/:id 深連結在 BrowserRouter 下會 404，
 // 站內連結一律 hash URL，手打的路徑形式深連結由 public/404.html 轉回 hash 路由。
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { HashRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
 import { Spinner } from './components/icons'
@@ -41,6 +41,13 @@ function Guard({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// /room/A → /room/B（多房籍退房框的「回到 X」）不換元件實例的話，上一房的 state、ref
+// （useRoom 快照、凍結的投票順序、上一個階段）會帶進新房；以房號當 key 強制重新掛載
+function RoomRoute() {
+  const { id } = useParams()
+  return <RoomPage key={id} />
+}
+
 export default function App() {
   return (
     <HashRouter>
@@ -49,7 +56,7 @@ export default function App() {
         <Route path="/join/:code" element={<JoinPage />} />
         <Route path="/" element={<Guard><HomePage /></Guard>} />
         <Route path="/history" element={<Guard><HistoryPage /></Guard>} />
-        <Route path="/room/:id" element={<Guard><RoomPage /></Guard>} />
+        <Route path="/room/:id" element={<Guard><RoomRoute /></Guard>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </HashRouter>
