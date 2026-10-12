@@ -28,7 +28,7 @@ export function LeaveConfirm({ title, onClose, actions, actionsClassName, childr
   return (
     // Esc 掛外層：焦點由 autoFocus 進到按鈕，keydown 從 dialog 內冒泡上來。
     // 遮罩用 black 而非 fg：fg 在深色主題是米白，會變成一層亮霧
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-3"
+    <div className="fixed inset-0 z-30 flex animate-fade items-center justify-center bg-black/50 p-3"
       onKeyDown={onClose && (e => { if (e.key === 'Escape') onClose() })}>
       <div role="dialog" aria-modal="true" aria-labelledby="leave-title"
         className="card flex max-h-full w-full max-w-sm animate-rise flex-col space-y-3">

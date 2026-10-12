@@ -44,6 +44,8 @@
   --shadow-card: none;
 
   --animate-rise: rise 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  /* dialog 遮罩：只淡入不位移，卡片本身另用 rise */
+  --animate-fade: fade 0.2s ease-out both;
   /* 關鍵時刻才動：候選逐行浮現、點線延伸、蓋印。全域 reduced-motion 規則會把它們收成瞬間完成 */
   --animate-row-in: row-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   --animate-lead: lead 0.6s ease-out both;
@@ -129,6 +131,12 @@
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
   }
 }
 
@@ -276,6 +284,25 @@
   }
 }
 
+/* <details> 展開／收合：::details-content 配 interpolate-size 才能從 0 過渡到 auto。
+   只有支援的瀏覽器（Chromium 131+）會動，其他照舊瞬間開合；放在 no-preference 裡，
+   因為下方全域 reduced-motion 規則的 * 選不到 ::details-content 這種偽元素 */
+@media (prefers-reduced-motion: no-preference) {
+  :root {
+    interpolate-size: allow-keywords;
+  }
+  details::details-content {
+    block-size: 0;
+    overflow-y: clip;
+    transition:
+      block-size 0.2s ease-out,
+      content-visibility 0.2s allow-discrete;
+  }
+  details[open]::details-content {
+    block-size: auto;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -285,5 +312,11 @@
     animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+  /* 換主題的 View Transition（ThemeMenu）：偽元素不在上面 * 的範圍內，要另外關 */
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }
