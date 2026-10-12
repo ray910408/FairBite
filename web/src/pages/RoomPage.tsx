@@ -12,6 +12,7 @@ import { isVetoDeadEnd } from '../lib/deadEnd'
 import { buildInviteUrl } from '../lib/invite'
 import { EXPLORATION_OPTIONS, ROOM_STATUS_LABEL } from '../lib/labels'
 import { formatMealTime } from '../lib/mealTime'
+import { loadSeenStage, saveSeenStage } from '../lib/seenStage'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import {
   SHORTLIST_PICK_MIN, hasMyPick, keptPickCounts, membersBelowMin, pickCounts, shortlistOpen,
@@ -138,18 +139,31 @@ export default function RoomPage() {
   const stageRef = useRef<HTMLDivElement>(null)
   const stageHeadingRef = useRef<HTMLHeadingElement>(null)
   const shownStatus = useRef<Room['status'] | undefined>(undefined)
+  const shownVersion = useRef<number | undefined>(undefined)
   const status = room?.status
+  const searchVersion = room?.search_version
   // 換階段：舊階段的按鈕跟著整段卸載、焦點掉回 body，捲動也停在原位（常落在新階段中段）。
   // 捲回新階段開頭；焦點沒有別的去處時移到階段標題，螢幕閱讀器才會念出換到哪一步
   useEffect(() => {
-    const prev = shownStatus.current
+    // 剛掛載（重整、重開分頁）時沒有上一個階段：拿這台裝置記下的來比，排光後才回來的成員也看得到原因
+    const fresh = shownStatus.current === undefined
+    const seen = fresh ? loadSeenStage(id) : undefined
+    const prev = fresh ? seen?.status : shownStatus.current
+    const prevVersion = fresh ? seen?.searchVersion : shownVersion.current
     shownStatus.current = status
-    if (!prev || !status || prev === status) return
+    shownVersion.current = searchVersion
+    if (!status) return
+    saveSeenStage(id, status, searchVersion)
+    if (!prev || prev === status) return
     // pending 回 lobby 只有一條路：重轉／確認時候選排光（pending.go resetExhaustedBatch），全房都要知道為什麼。
+    // 看到的上一個階段可能落後好幾步（剛載入時記下的、或手機鎖屏喚醒後 Realtime 一次補上的：排光後
+    // 又搜尋、修改條件才回 lobby）：search_version 每次進 lobby 和換地點各 +1、搜尋不加，
+    // 剛好 +1 才代表最後一次回 lobby 是排光。
     // 換到別的階段就收掉這則（只收這則，搜尋的快取警告不動）：成員那邊沒有別的動作會清 actionWarning
-    setActionWarning(w => prev === 'pending' && status === 'lobby' ? EXHAUSTED_NOTICE
-      : w === EXHAUSTED_NOTICE ? '' : w)
+    const exhausted = prev === 'pending' && status === 'lobby' && searchVersion === (prevVersion ?? NaN) + 1
+    setActionWarning(w => exhausted ? EXHAUSTED_NOTICE : w === EXHAUSTED_NOTICE ? '' : w)
     setConfirmAsk(null) // 開框時看到的後果已經不是現在這一步了
+    if (fresh) return // 剛載入的頁面只補說明：使用者沒按任何東西，不捲到階段開頭、不搶焦點
     const stage = stageRef.current
     if (!stage) return
     // 候選出爐／初選／投票之間是同一份清單換按鈕：別人推進階段時不拉走正在讀第幾家的人
@@ -163,7 +177,7 @@ export default function RoomPage() {
     requestAnimationFrame(() => {
       if (document.activeElement === document.body) stageHeadingRef.current?.focus({ preventScroll: true })
     })
-  }, [status])
+  }, [status, searchVersion, id])
   if (!room) {
     if (loadError) return (
       <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
