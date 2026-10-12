@@ -150,3 +150,36 @@ describe('useRoom refetch 房間消失', () => {
     expect(mocks.setters[0]).not.toHaveBeenCalled()
   })
 })
+
+// 動作成功後 await refetch() 才解鎖按鈕：Realtime 剛好觸發新的一輪時，舊輪若提早 resolve，
+// 按鈕會在新資料寫入前就解鎖，按下去伺服器回「房間狀態已變更」
+describe('useRoom refetch 被新一輪取代', () => {
+  beforeEach(() => {
+    mocks.stateIndex = 0
+    mocks.setters = []
+    mocks.effects = []
+    mocks.gates = []
+  })
+
+  it('舊輪等到新一輪把資料寫進 state 才 resolve', async () => {
+    const first = deferred()
+    const second = deferred()
+    mocks.gates = [first.promise, second.promise]
+    mocks.room = room('voting')
+    mocks.from.mockReset().mockImplementation(query)
+    const { refetch } = useRoom('room-1')
+    let setRoomCallsWhenADone: number | undefined
+    const a = refetch().then(() => { setRoomCallsWhenADone = mocks.setters[0].mock.calls.length })
+    const b = refetch()
+
+    first.resolve()
+    await new Promise(r => setTimeout(r, 0))
+    expect(setRoomCallsWhenADone).toBeUndefined() // A 的結果作廢，但不能先 resolve
+    expect(mocks.setters[0]).not.toHaveBeenCalled()
+
+    second.resolve()
+    await Promise.all([a, b])
+    expect(mocks.setters[0]).toHaveBeenCalledExactlyOnceWith(mocks.room)
+    expect(setRoomCallsWhenADone).toBe(1)
+  })
+})

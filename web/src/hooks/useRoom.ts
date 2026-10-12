@@ -23,9 +23,9 @@ export function useRoom(roomId: string) {
   const [notFound, setNotFound] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const refetchGen = useRef(0)
+  const latestRefetch = useRef<Promise<void>>(Promise.resolve())
 
-  const refetch = useCallback(async () => {
-    const gen = ++refetchGen.current
+  const loadRoom = useCallback(async (gen: number): Promise<void> => {
     const [r, m, c, d, v, lv, sv, sp] = await Promise.all([
       // 欄位得寫明：select('*') 會展開成全欄位，撞上 0015 的欄級 grant（center_* 只給
       // service role）會整包 permission denied
@@ -42,7 +42,9 @@ export function useRoom(roomId: string) {
       supabase.from('shortlist_votes').select('*').eq('room_id', roomId),
       supabase.from('shortlist_picks').select('*').eq('room_id', roomId),
     ])
-    if (gen !== refetchGen.current) return // 有更新一輪在跑，這輪結果作廢
+    // 有更新一輪在跑，這輪結果作廢；但要等新一輪寫完 state 才 resolve：動作成功後 await refetch()
+    // 才解鎖按鈕，提早 resolve 會在新資料寫入前就解鎖，按下去伺服器回「房間狀態已變更」
+    if (gen !== refetchGen.current) return latestRefetch.current
     // 讀不到房間要讓 UI 停止無限「載入中」；DB/網路錯誤與查無列分開呈現（QA ISSUE-002）
     // 任一查詢失敗都算 loadError；失敗的資料集不覆寫既有 state。
     const state = classifyRoomLoad(r.data, r.error)
@@ -61,6 +63,7 @@ export function useRoom(roomId: string) {
     if (!sv.error) setShortlistVotes((sv.data ?? []) as ShortlistVoteRow[])
     if (!sp.error) setShortlistPicks((sp.data ?? []) as ShortlistPickRow[])
   }, [roomId])
+  const refetch = useCallback(() => latestRefetch.current = loadRoom(++refetchGen.current), [loadRoom])
 
   useEffect(() => {
     getUid().then(uid => setMyUserId(uid ?? ''))
