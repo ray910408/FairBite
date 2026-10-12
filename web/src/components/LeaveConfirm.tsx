@@ -3,24 +3,25 @@ import { Link } from 'react-router-dom'
 import { leaveNotice } from '../lib/leaveNotice'
 import type { LeaveTarget } from '../lib/roomMembership'
 
-// 「回首頁＝離席」（ADR-0007）確認框的共用外殼，三個呼叫端共用：RoomPage 的 header
-// logo、HistoryPage 的兩個回首頁入口、HomePage 的 mount 攔截。RoomPage 的站內確認框
-// （修改條件、取消初選、最後一家重轉）也借用這個外殼。
+// 「回首頁＝離席」（ADR-0007）確認框的共用外殼：RoomPage 的 header logo、HistoryPage 的
+// 兩個回首頁入口、HomePage 的 mount 攔截。其他「先離房」的確認也借用這個外殼：JoinPage 加入
+// 新房前、AuthPage 切換到既有帳號前，以及 RoomPage 的站內確認框（修改條件、取消初選、最後一家重轉）。
 //
 // 這段版面不是裝飾：多房籍在 320x568 會長到超出畫面，垂直置中時上下一起溢出、
 // 「取消」與「確認」都點不到。卡片限高在視窗內（max-h-full + flex-col），只讓中段
 // 捲動（min-h-0 flex-1 overflow-y-auto——沒有 min-h-0 這個 flex item 不肯縮），
 // 標題與按鈕組 shrink-0 永遠在位。實機量測驗過，第三次手抄必走鐘，故抽出。
 //
-// 按鈕組由呼叫端帶入：三處的鈕數、順序與 320px 排法都不同（RoomPage 在 sm 以上並排，
-// 另兩處一律直排）。autoFocus 與關閉後的焦點還原也留在呼叫端——觸發元素只有呼叫端
-// 知道，HomePage 的 mount 攔截根本沒有觸發元素。
+// 按鈕組由呼叫端帶入：各處的鈕數、順序與 320px 排法都不同（RoomPage、JoinPage、AuthPage
+// 在 sm 以上並排，HistoryPage、HomePage 一律直排）。autoFocus 與關閉後的焦點還原也留在呼叫端
+// ——觸發元素只有呼叫端知道，HomePage 的 mount 攔截根本沒有觸發元素。
 //
-// 以函式呼叫（LeaveConfirm({...})）而非 <LeaveConfirm />：本外殼沒有自己的狀態，
-// 直接回傳元素樹，三頁的測試（把 page 當純函式呼叫）看到的結構才不變。
+// 以函式呼叫（LeaveConfirm({...})）而非 <LeaveConfirm />：本外殼沒有自己的狀態，直接回傳元素樹。
+// HomePage、JoinPage、AuthPage 的測試仍把頁面當純函式呼叫、依呼叫順序 mock hook，要在回傳的
+// 元素樹裡摸到框內的按鈕（RoomPage、HistoryPage 的測試已改成行為導向，不受這個限制）。
 // 所以這裡禁止用 hook：hook 會記在呼叫端頁面上，而各頁都是 dialog 開著才呼叫，開關一次 hook 數量
 // 就變、整頁崩潰，oxlint 的 rules-of-hooks 抓不到這種寫法。完整修法是改回 <LeaveConfirm />，
-// 要等 RoomPage.test.ts 等把頁面當純函式呼叫的測試改成行為導向（TODOS #14）。
+// 要等那三頁的測試也改成行為導向（TODOS #14）。
 export function LeaveConfirm({ title, onClose, actions, actionsClassName, children }: {
   title: string
   // Esc 關閉；HomePage 的 mount 攔截沒有「留在首頁但不決定」的合法終態，故不給
@@ -53,8 +54,9 @@ export function LeaveConfirm({ title, onClose, actions, actionsClassName, childr
 // HomePage 的 mount 攔截不共用這段：它已經在首頁（時態不同），而且回房入口必須是
 // <button>——React 的 autoFocus 只對表單控制項生效，焦點要落在安全那顆。
 //
-// 同 LeaveConfirm 以函式呼叫（LeaveRoomsBody({...})）渲染，禁止用 hook：dialog 開著才呼叫，
-// hook 數量一變整頁崩潰，oxlint 抓不到。改回 <LeaveRoomsBody /> 要等 RoomPage.test.ts 改成行為導向（TODOS #14）。
+// RoomPage、HistoryPage 同 LeaveConfirm 以函式呼叫（LeaveRoomsBody({...})）渲染（JoinPage 已用
+// <LeaveRoomsBody />），所以禁止用 hook：dialog 開著才呼叫，hook 數量一變整頁崩潰，oxlint 抓不到。
+// 這兩頁的測試已改成行為導向，改回 <LeaveRoomsBody /> 已經沒有阻礙（TODOS #14）。
 export function LeaveRoomsBody({ target }: { target: LeaveTarget }) {
   const rooms = target.kind === 'rooms' ? target.rooms : []
   const multi = rooms.length > 1

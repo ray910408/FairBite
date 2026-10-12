@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { pendingLeave } from '../lib/api'
+import { Link } from 'react-router-dom'
+import { useLeaveDialog } from '../hooks/useLeaveDialog'
 import { supabase } from '../lib/supabase'
 import { formatDay, groupByMonth, knownCuisineLabels, summarize, trendRatings, type FootprintRow } from '../lib/footprint'
-import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import { Logo, Spinner, Star } from '../components/icons'
 import { LeaveConfirm, LeaveRoomsBody } from '../components/LeaveConfirm'
 import StarRow from '../components/StarRow'
@@ -21,15 +20,9 @@ export default function HistoryPage() {
   // 未評列補評 chip 的展開狀態（一次一列，design review D4）
   const [expandedId, setExpandedId] = useState<string | null>(null)
   // 足跡頁也是「房內可達頁」：回首頁＝離席（ADR-0007），離開前要問
-  const [leaveDialog, setLeaveDialog] = useState<LeaveTarget | null>(null)
-  const [leaveChecking, setLeaveChecking] = useState(false)
+  const { leaveDialog, leaveChecking, askLeave, closeLeave } = useLeaveDialog()
   const expandedLiRef = useRef<HTMLLIElement | null>(null)
-  const leaveTriggerRef = useRef<HTMLAnchorElement | null>(null)
   const requestGen = useRef(0)
-  // 房籍查詢自己的世代（與 load 分開：兩者互不作廢，否則按一次「重試」就會讓
-  // in-flight 的離席查詢靜默消失，使用者按「回首頁」等於沒反應）
-  const leaveGen = useRef(0)
-  const nav = useNavigate()
 
   const load = useCallback(async () => {
     const request = ++requestGen.current
@@ -53,42 +46,6 @@ export default function HistoryPage() {
     void load()
     return () => { requestGen.current++ } // unmount 作廢 in-flight 回應
   }, [load])
-
-  // 一律攔下來當場查，不留任何房籍快照：本頁久留是預期用法，而且房籍會在別的分頁被改
-  //（多分頁是 ADR-0007 自己承認的情境）。「進頁時沒房」不能拿來放行——那筆快照到點擊
-  // 當下可能已經過期，賭錯的代價是靜默退掉別的分頁剛建的房。代價是每次多一次查詢。
-  async function askLeave(e: React.MouseEvent<HTMLAnchorElement>) {
-    e.preventDefault()
-    leaveTriggerRef.current = e.currentTarget // 兩個入口共用一個 dialog，記住是誰開的
-    // 首頁的退房還在飛：這裡等它落地，按鈕會無聲卡到 50 秒（冷啟動）。直接回首頁，
-    // 由首頁 mount 等（fetchLeaveRooms），等待中的狀態列看得見
-    if (pendingLeave()) {
-      leaveGen.current++ // 較早一次點擊還在查的回應作廢，不再導航第二次
-      nav('/')
-      return
-    }
-    // 舊回應作廢（load 同款模式）：aria-busy 擋不住點擊，兩次點擊之間房籍還可能在別的
-    // 分頁被改。第一次查到「沒房」若晚於第二次回來，就會 nav('/') 跳過剛開好的 dialog，
-    // 把新房籍靜默退掉——只有最後一次點擊的回應能生效。
-    const request = ++leaveGen.current
-    setLeaveChecking(true)
-    const rooms = await fetchLeaveRooms()
-    if (request !== leaveGen.current) return // 更新的一次在跑，checking 由它負責關掉
-    setLeaveChecking(false)
-    if (rooms && rooms.length === 0) { // 真的沒房可離：沒有後果可講，照原本的導覽走
-      nav('/')
-      return
-    }
-    setLeaveDialog(rooms ? { kind: 'rooms', rooms } : { kind: 'unknown' })
-  }
-
-  function closeLeave() {
-    setLeaveDialog(null)
-    // 背景整塊帶著 inert：setLeaveDialog 不同步 flush，同一輪呼叫 focus() 時觸發元素
-    // 仍在 inert 子樹內，瀏覽器直接忽略、焦點掉回 body。排到移除 inert 的那次 commit
-    // 之後才還原（比照下面 onRated 的同款 rAF）。
-    requestAnimationFrame(() => leaveTriggerRef.current?.focus())
-  }
 
   const onRated = useCallback((id: string, n: number) => {
     setState(prev => prev.phase === 'ready'
