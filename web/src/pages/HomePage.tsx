@@ -10,6 +10,7 @@ import { loadLastDeparture, saveLastDeparture, saveRoomDeparture, type Departure
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import { getUid } from '../lib/uid'
 import { applyDefaultPrefs } from '../lib/defaultPrefs'
+import { inviteCodeFromLink } from '../lib/invite'
 import { Alert, Logo, LogOut, Spinner } from '../components/icons'
 import { LeaveConfirm } from '../components/LeaveConfirm'
 import { ThemeMenu } from '../components/ThemeMenu'
@@ -341,6 +342,13 @@ export default function HomePage() {
             <input className="field flex-1 font-mono text-lg tracking-[0.3em] uppercase"
               aria-label="邀請碼" placeholder="A1B2C3D4E5F6" autoCapitalize="characters"
               value={code} onChange={e => { setCode(e.target.value); setJoinError('') }}
+              onPaste={e => {
+                const pasted = inviteCodeFromLink(e.clipboardData.getData('text'))
+                if (!pasted) return
+                e.preventDefault()
+                setCode(pasted)
+                setJoinError('')
+              }}
               required minLength={12} maxLength={12} pattern="[0-9A-Fa-f]{12}" />
             <button className="btn btn-quiet px-5" type="submit" disabled={busy || leavePending}>加入</button>
           </form>

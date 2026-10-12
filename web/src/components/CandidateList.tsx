@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import type { CandidateRow } from '../lib/types'
 import { buildGoogleMapsPlaceUrl } from '../lib/maps'
 import { isGoogleSourced } from '../lib/placesSource'
@@ -23,13 +24,33 @@ type PickingProps = {
   onToggle: (restaurantId: string) => void
 }
 
+// 被否決的店（可能同時有別的排除原因）：投票中留在原位，不收進「被排除」
+const isVetoed = (c: CandidateRow) => c.status === 'excluded' && c.exclusion_kinds?.includes('veto')
+
 export default function CandidateList({ rows, voting, picking }: {
   rows: CandidateRow[]; voting?: VotingProps; picking?: PickingProps
 }) {
   const kept = sortKept(rows)
   const oddsKnown = kept.every(c => c.probability != null)
   const percents = formatPercents(kept.map(c => c.probability ?? 0))
-  const excluded = sortExcluded(rows)
+  const percentOf = new Map(kept.map((c, i) => [c.restaurant_id, percents[i]]))
+  // 投票中順序固定：機率隨贊成即時變、被否決的店離開清單，各列一挪動，下一下就按到別家。
+  // 順序在進入投票時定下（換階段時 RoomPage 會重新掛載本元件），之後只有沒見過的店排到最後。
+  // 重整後會依當下機率重新定序，這時已被否決的店排在最後。
+  // 候選還沒載到（空清單）時不定序：凍結成空陣列就再也不會重定，所有店都變成「沒見過」
+  const votingOrder = useRef<string[] | null>(null)
+  if (voting && !votingOrder.current?.length) {
+    votingOrder.current = [...kept, ...rows.filter(isVetoed)].map(c => c.restaurant_id)
+  }
+  const rank = (c: CandidateRow) => {
+    const i = votingOrder.current?.indexOf(c.restaurant_id) ?? -1
+    return i < 0 ? Infinity : i
+  }
+  const listed = voting
+    ? rows.filter(c => c.status === 'kept' || isVetoed(c))
+      .sort((a, b) => rank(a) - rank(b) || (b.probability ?? 0) - (a.probability ?? 0))
+    : kept
+  const excluded = sortExcluded(rows).filter(c => !voting || !isVetoed(c))
   const max = Math.max(...kept.map(c => c.probability ?? 0), 0.0001)
   const decisive = decisiveFactors(kept)
   const showGoogleAttribution = rows.some(c => isGoogleSourced(c.restaurants.source))
@@ -55,7 +76,30 @@ export default function CandidateList({ rows, voting, picking }: {
           )}
         </div>
         <ul className="mt-3">
-          {kept.map((c, ci) => {
+          {listed.map((c, ci) => {
+            // 和候選列共用同一個 <li>（同 key、同位置）：animate-row-in 與 delay 也要一樣，
+            // animation-name 不變，否決／收回時這一列才不會先透明再重新浮現
+            if (voting && isVetoed(c)) return (
+              <li key={c.restaurant_id} data-testid="vetoed-row"
+                className="flex animate-row-in flex-col gap-1.5 border-t border-border px-1 py-3.5 text-fg-muted"
+                style={{ animationDelay: `${stagger(ci)}ms` }}>
+                <div className="flex items-baseline gap-2 font-serif">
+                  <span aria-hidden="true" className="text-[13px] font-bold">{String(ci + 1).padStart(2, '0')}</span>
+                  <span className="min-w-0 text-[17px] font-bold line-through decoration-brand decoration-[1.5px]">
+                    {c.restaurants.name}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+                  <span className="mr-auto text-xs">{c.exclusion_reason}</span>
+                  {voting.hasMyVote(c.restaurant_id, 'veto') && (
+                    <button type="button" className={`${actionBtn} btn-quiet`}
+                      onClick={() => voting.onToggle(c.restaurant_id, 'veto')}>
+                      收回否決
+                    </button>
+                  )}
+                </div>
+              </li>
+            )
             const google = isGoogleSourced(c.restaurants.source)
             const facts = restaurantFacts(c.restaurants)
             const factors = c.weight_breakdown.filter(decisive)
@@ -76,7 +120,7 @@ export default function CandidateList({ rows, voting, picking }: {
                   <span aria-hidden="true" className="leader origin-left animate-lead"
                     style={{ animationDelay: `${stagger(ci) + 200}ms` }} />
                   <span className={`shrink-0 font-bold ${oddsKnown ? 'text-[17px]' : 'text-sm text-fg-muted'}`}>
-                    {oddsKnown ? percents[ci] : '機率未提供'}
+                    {oddsKnown ? percentOf.get(c.restaurant_id) : '機率未提供'}
                   </span>
                 </div>
                 {oddsKnown && <div aria-hidden="true" className="h-[3px] bg-brand-soft">
@@ -141,7 +185,7 @@ export default function CandidateList({ rows, voting, picking }: {
           })}
         </ul>
         {excluded.length > 0 && (
-          <details className="border-t border-border px-1 pb-2" open={voting != null}>
+          <details className="border-t border-border px-1 pb-2">
             <summary className="flex min-h-11 list-none items-center gap-2 font-serif text-sm font-bold text-fg-muted [&::-webkit-details-marker]:hidden">
               <Chevron className="disclosure-chevron h-4 w-4" />
               被排除的 {excluded.length} 家
@@ -152,12 +196,6 @@ export default function CandidateList({ rows, voting, picking }: {
                 <li key={c.restaurant_id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[13px] text-fg-muted">
                   <span className="font-serif line-through decoration-brand decoration-[1.5px]">{c.restaurants.name}</span>
                   <span className="ml-auto text-right text-xs">{c.exclusion_reason}</span>
-                  {voting && voting.hasMyVote(c.restaurant_id, 'veto') && (
-                    <button type="button" className="btn btn-quiet shrink-0 px-2 py-1 text-xs"
-                      onClick={() => voting.onToggle(c.restaurant_id, 'veto')}>
-                      收回否決
-                    </button>
-                  )}
                 </li>
               ))}
             </ul>

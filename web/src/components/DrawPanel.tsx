@@ -1,15 +1,17 @@
 import { isGoogleSourced } from '../lib/placesSource'
 import { snapshotCandidates } from '../lib/probability'
 import type { CandidateRow, DrawRow, MemberRow, Room } from '../lib/types'
+import { markWheelSeen, wheelSeen } from '../lib/wheelSeen'
 import { GuestRegistrationPrompt } from './GuestRegistrationPrompt'
 import RatingPrompt from './RatingPrompt'
 import ResultCard from './ResultCard'
 import Wheel from './Wheel'
 import { Spinner } from './icons'
 
-// 抽中待確認／定案：先轉盤，轉完換結果卡；待確認時房主可確認或排除這家重轉
+// 抽中待確認／定案：先轉盤，轉完換結果卡；待確認時房主可確認或排除這家重轉。
+// 這次抽選在這台裝置看過就不重播（wheelSeen）
 export default function DrawPanel({ room, draw, candidates, spun, onSpun, me, myUserId, isHost, isGuest,
-  pendingAction, onRedraw, onConfirm }: {
+  pendingAction, lastCandidate, onRedraw, onConfirm }: {
   room: Room
   draw: DrawRow
   candidates: CandidateRow[]
@@ -20,15 +22,17 @@ export default function DrawPanel({ room, draw, candidates, spun, onSpun, me, my
   isHost: boolean
   isGuest: boolean
   pendingAction: 'draw' | 'confirm' | 'redraw' | null
-  onRedraw: () => void
+  // 只剩抽中的這一家：重轉會排光候選、全房回準備階段，按鈕要直說
+  lastCandidate: boolean
+  onRedraw: (e: React.MouseEvent<HTMLButtonElement>) => void
   onConfirm: () => void
 }) {
   const drawCandidates = snapshotCandidates(candidates, draw.probabilities)
   return (
     <div className="space-y-4">
-      {!spun && draw.probabilities[draw.winner_restaurant_id] != null ? (
+      {!spun && !wheelSeen(room.id, draw.version) && draw.probabilities[draw.winner_restaurant_id] != null ? (
         <Wheel key={draw.version} rows={drawCandidates} winnerId={draw.winner_restaurant_id}
-          onDone={onSpun} />
+          onDone={() => { markWheelSeen(room.id, draw.version); onSpun() }} />
       ) : (
         <>
           <ResultCard draw={draw} candidates={drawCandidates} me={me}
@@ -42,7 +46,8 @@ export default function DrawPanel({ room, draw, candidates, spun, onSpun, me, my
               <button type="button" className="btn btn-secondary w-full"
                 disabled={pendingAction !== null} aria-busy={pendingAction === 'redraw'}
                 onClick={onRedraw}>
-                {pendingAction === 'redraw' ? <><Spinner className="h-5 w-5" />重轉中…</> : '排除這家並重轉'}
+                {pendingAction === 'redraw' ? <><Spinner className="h-5 w-5" />重轉中…</>
+                  : lastCandidate ? '排除並回到準備階段' : '排除這家並重轉'}
               </button>
               <button type="button" className="btn btn-primary w-full"
                 disabled={pendingAction !== null} aria-busy={pendingAction === 'confirm'}
