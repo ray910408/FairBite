@@ -35,20 +35,18 @@ export default function CandidateList({ rows, voting, picking }: {
   const percents = formatPercents(kept.map(c => c.probability ?? 0))
   const percentOf = new Map(kept.map((c, i) => [c.restaurant_id, percents[i]]))
   // 投票中順序固定：機率隨贊成即時變、被否決的店離開清單，各列一挪動，下一下就按到別家。
-  // 順序在進入投票時定下（換階段時 RoomPage 會重新掛載本元件），之後只有沒見過的店排到最後。
-  // 重整後會依當下機率重新定序，這時已被否決的店排在最後。
-  // 候選還沒載到（空清單）時不定序：凍結成空陣列就再也不會重定，所有店都變成「沒見過」
-  const votingOrder = useRef<string[] | null>(null)
-  if (voting && !votingOrder.current?.length) {
-    votingOrder.current = [...kept, ...rows.filter(isVetoed)].map(c => c.restaurant_id)
-  }
-  const rank = (c: CandidateRow) => {
-    const i = votingOrder.current?.indexOf(c.restaurant_id) ?? -1
-    return i < 0 ? Infinity : i
+  // 每家店第一次出現時依當下機率接到順序最後，之後位置就不再變：進入投票時（換階段時 RoomPage
+  // 會重新掛載本元件）一次排好全部；投票中有人退房、重算後放回的店也一樣接到最後，不會彼此按機率換位。
+  // 候選還沒載到（空清單）時什麼都不記，載到時再一起排。重整後依當下機率重排，已被否決的店排在最後
+  const votingOrder = useRef<string[]>([])
+  if (voting) {
+    for (const c of [...kept, ...rows.filter(isVetoed)]) {
+      if (!votingOrder.current.includes(c.restaurant_id)) votingOrder.current.push(c.restaurant_id)
+    }
   }
   const listed = voting
     ? rows.filter(c => c.status === 'kept' || isVetoed(c))
-      .sort((a, b) => rank(a) - rank(b) || (b.probability ?? 0) - (a.probability ?? 0))
+      .sort((a, b) => votingOrder.current.indexOf(a.restaurant_id) - votingOrder.current.indexOf(b.restaurant_id))
     : kept
   const excluded = sortExcluded(rows).filter(c => !voting || !isVetoed(c))
   const max = Math.max(...kept.map(c => c.probability ?? 0), 0.0001)

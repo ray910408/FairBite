@@ -278,6 +278,14 @@ describe('RoomPage voting controls', () => {
     mocks.refIndex = 0
     expect(rowNames(CandidateList({ rows: [row('a', 0.9), row('b', 0.05), row('c', 0.05)], voting })))
       .toEqual(['店b', '店a', '店c'])
+
+    // 投票中有人退房、重算後放回的店：第一次出現時依機率接到最後，之後機率再變也不彼此換位
+    mocks.refIndex = 0
+    // rows 裡 e 排在 d 前面：接到最後的順序要看機率（d 0.4 > e 0.1），不是看 rows
+    CandidateList({ rows: [row('a', 0.3), row('b', 0.5), row('c', 0.2), row('e', 0.1), row('d', 0.4)], voting })
+    mocks.refIndex = 0
+    expect(rowNames(CandidateList({ rows: [row('a', 0.2), row('b', 0.2), row('c', 0.2), row('d', 0.05), row('e', 0.35)], voting })))
+      .toEqual(['店b', '店a', '店c', '店d', '店e'])
   })
 })
 
@@ -848,6 +856,23 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
     await findButton(tree, '熟悉').props!.onClick!()
     await findButton(tree, '開始搜尋餐廳').props!.onClick!()
     expect(mocks.searchRoom).toHaveBeenCalledTimes(1)
+  })
+
+  it('錯誤和警告同時出現（降級的 422）：兩則橫幅都捲到最上面那則錯誤，不捲警告自己', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+    mocks.stateValues[1] = '找不到符合條件的餐廳，請放寬條件'
+    mocks.stateValues[2] = '外部搜尋暫時失敗，本次使用 30 天內的快取資料'
+    const tree = await renderRoomPage()
+    const banners = [findNode(tree, el => el.props?.role === 'alert' && el.props?.['data-action-banner'] === true)!,
+      findNode(tree, el => el.type === 'p' && el.props?.role === 'status' && el.props?.['data-action-banner'] === true)!]
+    const topmost = { scrollIntoView: vi.fn() }
+    for (const banner of banners) {
+      const self = { scrollIntoView: vi.fn(), parentElement: { querySelector: () => topmost } }
+      ;(banner.props!.ref as (el: unknown) => void)(self)
+      expect(self.scrollIntoView).not.toHaveBeenCalled()
+    }
+    expect(topmost.scrollIntoView).toHaveBeenCalledTimes(2)
+    expect(topmost.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', behavior: 'smooth' })
   })
 
   it('搜尋 POST 超過三秒時顯示 truthful status copy', async () => {
