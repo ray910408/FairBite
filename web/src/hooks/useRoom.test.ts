@@ -182,4 +182,63 @@ describe('useRoom refetch 被新一輪取代', () => {
     expect(mocks.setters[0]).toHaveBeenCalledExactlyOnceWith(mocks.room)
     expect(setRoomCallsWhenADone).toBe(1)
   })
+
+  // supabase-js 沒有預設 timeout：行動網路半開連線時，中間那一輪可能永遠不回來
+  it('取代它的那一輪卡住時，舊輪等到之後任何一輪寫進 state 就 resolve', async () => {
+    const first = deferred()
+    const third = deferred()
+    mocks.gates = [first.promise, new Promise<void>(() => {}), third.promise]
+    mocks.room = room('voting')
+    mocks.from.mockReset().mockImplementation(query)
+    const { refetch } = useRoom('room-1')
+    let aDone = false
+    void refetch().then(() => { aDone = true })
+    void refetch() // B 卡住
+
+    first.resolve()
+    await new Promise(r => setTimeout(r, 0))
+    expect(aDone).toBe(false) // A 完成時已被 B 取代
+
+    const c = refetch() // A 完成之後才開始的 C
+    third.resolve()
+    await c
+    await new Promise(r => setTimeout(r, 0))
+    expect(mocks.setters[0]).toHaveBeenCalledExactlyOnceWith(mocks.room)
+    expect(aDone).toBe(true)
+  })
+
+  it('舊輪比新一輪晚完成：新一輪已寫進 state，舊輪直接 resolve 不空等', async () => {
+    const first = deferred()
+    mocks.gates = [first.promise]
+    mocks.room = room('voting')
+    mocks.from.mockReset().mockImplementation(query)
+    const { refetch } = useRoom('room-1')
+    let aDone = false
+    void refetch().then(() => { aDone = true })
+    await refetch()
+
+    first.resolve()
+    await new Promise(r => setTimeout(r, 0))
+    expect(mocks.setters[0]).toHaveBeenCalledExactlyOnceWith(mocks.room)
+    expect(aDone).toBe(true)
+  })
+
+  it('取代它的那一輪失敗時，舊輪一起 reject（runAction 才會說重新載入失敗）', async () => {
+    const first = deferred()
+    let failB!: (error: Error) => void
+    mocks.gates = [first.promise, new Promise<void>((_, reject) => { failB = reject })]
+    mocks.room = room('voting')
+    mocks.from.mockReset().mockImplementation(query)
+    const { refetch } = useRoom('room-1')
+    const a = refetch()
+    const b = refetch()
+
+    first.resolve()
+    await new Promise(r => setTimeout(r, 0))
+    const offline = new Error('offline')
+    failB(offline)
+    expect(await Promise.allSettled([a, b])).toEqual([
+      { status: 'rejected', reason: offline }, { status: 'rejected', reason: offline },
+    ])
+  })
 })

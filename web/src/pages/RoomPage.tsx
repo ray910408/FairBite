@@ -310,7 +310,13 @@ export default function RoomPage() {
     setBusy(true)
     setActionError('')
     try {
-      const msg = await send().catch(() => `${label}失敗：無法連線到伺服器`)
+      // try/await 而非 send().catch：send 同步拋錯（例如 room! 為 null）也要接到
+      let msg: string | null | false
+      try {
+        msg = await send()
+      } catch {
+        msg = `${label}失敗：無法連線到伺服器`
+      }
       if (msg === false) return
       if (msg) {
         setActionError(msg)

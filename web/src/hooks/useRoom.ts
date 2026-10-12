@@ -23,9 +23,13 @@ export function useRoom(roomId: string) {
   const [notFound, setNotFound] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const refetchGen = useRef(0)
-  const latestRefetch = useRef<Promise<void>>(Promise.resolve())
+  // 最近一輪以當前輪次身分完成的輪次與結果（寫完 state 是 resolve，查詢拋錯是 reject）
+  const lastDone = useRef({ gen: 0, outcome: Promise.resolve() })
+  // 被取代、等之後某一輪以當前輪次身分完成的輪次
+  const refetchWaiters = useRef<Array<(outcome: Promise<void>) => void>>([])
 
-  const loadRoom = useCallback(async (gen: number): Promise<void> => {
+  // 回傳這輪有沒有把結果寫進 state
+  const loadRoom = useCallback(async (gen: number): Promise<boolean> => {
     const [r, m, c, d, v, lv, sv, sp] = await Promise.all([
       // 欄位得寫明：select('*') 會展開成全欄位，撞上 0015 的欄級 grant（center_* 只給
       // service role）會整包 permission denied
@@ -42,9 +46,7 @@ export function useRoom(roomId: string) {
       supabase.from('shortlist_votes').select('*').eq('room_id', roomId),
       supabase.from('shortlist_picks').select('*').eq('room_id', roomId),
     ])
-    // 有更新一輪在跑，這輪結果作廢；但要等新一輪寫完 state 才 resolve：動作成功後 await refetch()
-    // 才解鎖按鈕，提早 resolve 會在新資料寫入前就解鎖，按下去伺服器回「房間狀態已變更」
-    if (gen !== refetchGen.current) return latestRefetch.current
+    if (gen !== refetchGen.current) return false // 有更新一輪在跑，這輪結果作廢
     // 讀不到房間要讓 UI 停止無限「載入中」；DB/網路錯誤與查無列分開呈現（QA ISSUE-002）
     // 任一查詢失敗都算 loadError；失敗的資料集不覆寫既有 state。
     const state = classifyRoomLoad(r.data, r.error)
@@ -62,12 +64,40 @@ export function useRoom(roomId: string) {
     if (!lv.error) setLocationVotes(lv.data ?? [])
     if (!sv.error) setShortlistVotes(sv.data ?? [])
     if (!sp.error) setShortlistPicks(sp.data ?? [])
+    return true
   }, [roomId])
-  const refetch = useCallback(() => latestRefetch.current = loadRoom(++refetchGen.current), [loadRoom])
+
+  const refetch = useCallback(async (): Promise<void> => {
+    const gen = ++refetchGen.current
+    let outcome = Promise.resolve()
+    try {
+      if (!await loadRoom(gen)) {
+        // 被取代：結果作廢，但要等新資料寫進 state 才 resolve（動作成功後 await refetch() 才解鎖按鈕，
+        // 提早 resolve 會在新資料前解鎖，按下去伺服器回「房間狀態已變更」）。不綁死取代它的那一輪：
+        // 那輪的 fetch 卡住時（supabase-js 沒有預設 timeout），之後別輪寫入也要解得開。
+        // 換 roomId 時排隊的輪次等到新房那輪寫入才 resolve，等的人只在乎別在新資料前解鎖；unmount 後
+        // 等最新那輪，它卡住的話排隊的 resolve 只掛在這個 ref 上、跟著元件一起被回收，沒有 timer 要清
+        if (lastDone.current.gen === refetchGen.current) return lastDone.current.outcome // 最新一輪已完成
+        return new Promise<void>(resolve => { refetchWaiters.current.push(resolve) })
+      }
+    } catch (error) {
+      if (gen !== refetchGen.current) throw error // 被取代的輪次失敗只影響自己
+      // 當前輪次失敗：排隊的輪次一起 reject。它們的結果早已作廢、state 停在更舊的資料，
+      // 回報成功會在舊資料上解鎖按鈕；reject 讓 runAction 照實顯示「重新載入失敗」
+      outcome = Promise.reject(error)
+      outcome.catch(() => undefined) // 沒人排隊時不算 unhandled；呼叫端照樣從 return 收到 reject
+    }
+    lastDone.current = { gen, outcome }
+    for (const settle of refetchWaiters.current.splice(0)) settle(outcome)
+    return outcome
+  }, [loadRoom])
 
   useEffect(() => {
     getUid().then(uid => setMyUserId(uid ?? ''))
-    refetch()
+    // 背景重抓不往外丟 reject：網路／DB 錯誤 postgrest-js 會轉成 { error }、由 loadError 呈現，
+    // reject 只剩程式錯誤（本來也只是 console 的 unhandled rejection）；await refetch() 的 runAction 照樣收得到
+    const refetchQuietly = () => { void refetch().catch(() => undefined) }
+    refetchQuietly()
     // ponytail: 任何相關表變更就整包重抓，P1 資料量小；量大再改增量更新
     const tables = [
       { table: 'rooms', filter: `id=eq.${roomId}` },
@@ -85,7 +115,7 @@ export function useRoom(roomId: string) {
     let refetchTimer: ReturnType<typeof setTimeout> | undefined
     const scheduleRefetch = () => {
       clearTimeout(refetchTimer)
-      refetchTimer = setTimeout(refetch, 150)
+      refetchTimer = setTimeout(refetchQuietly, 150)
     }
     let ch = supabase.channel(`room-${roomId}`)
     for (const t of tables) {
@@ -99,7 +129,7 @@ export function useRoom(roomId: string) {
       if (!live) return
       if (status === 'SUBSCRIBED') {
         setConnected(true)
-        refetch()
+        refetchQuietly()
       } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
         setConnected(false)
       }
