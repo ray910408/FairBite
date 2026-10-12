@@ -247,7 +247,7 @@ export default function HistoryPage() {
                 className="btn w-full bg-danger text-on-danger">仍要回首頁</Link>
             </>
           ),
-          children: LeaveRoomsBody({ target: leaveDialog }),
+          children: <LeaveRoomsBody target={leaveDialog} />,
         })
       })()}
     </>

@@ -22,7 +22,7 @@ export function useLeaveDialog({ onOpen }: { onOpen?: () => void } = {}) {
   const nav = useNavigate()
   const [leaveDialog, setLeaveDialog] = useState<LeaveTarget | null>(null)
   const [leaveChecking, setLeaveChecking] = useState(false)
-  // 開框的入口：足跡頁有兩個入口共用一個 dialog，點擊時當場記下是誰開的
+  // 開框的入口，關框後焦點還給它：點擊時當場記下（足跡頁有兩個入口共用一個 dialog），只在關框時讀
   const leaveTriggerRef = useRef<HTMLAnchorElement | null>(null)
   // 房籍查詢自己的世代：aria-busy 擋不住點擊，兩次點擊之間房籍還可能在別的分頁被改。
   // 第一次查到「沒房」若晚於第二次回來，就會 nav('/') 跳過剛開好的 dialog，把新房籍靜默退掉——
@@ -61,5 +61,5 @@ export function useLeaveDialog({ onOpen }: { onOpen?: () => void } = {}) {
     requestAnimationFrame(() => leaveTriggerRef.current?.focus())
   }
 
-  return { leaveDialog, leaveChecking, leaveTriggerRef, askLeave, closeLeave }
+  return { leaveDialog, leaveChecking, askLeave, closeLeave }
 }
