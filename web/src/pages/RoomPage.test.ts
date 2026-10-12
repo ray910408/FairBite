@@ -439,16 +439,60 @@ describe('RoomPage pending selection controls', () => {
     expect(mocks.redrawRoom).toHaveBeenCalledWith('room-1', 4)
   })
 
+  it('重整／重開分頁時拿這台記下的階段來比：離開時在抽中待確認、回來時 search_version 剛好 +1 才補說明，且不搶焦點不捲動', async () => {
+    const state = pendingState('member')
+    const scrollBy = vi.fn()
+    vi.stubGlobal('scrollBy', scrollBy)
+    for (const [stored, warned] of [
+      ['pending@3', true], // 排光回 lobby：3 → 4
+      ['pending@2', false], // 排光後又搜尋、修改條件才回 lobby：2 → 4，最後一次回 lobby 不是排光
+      ['candidates@3', false],
+      [null, false],
+    ] as const) {
+      const store = new Map<string, string>(stored ? [['room-stage:room-1', stored]] : [])
+      vi.stubGlobal('localStorage', {
+        getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v) } })
+      const focus = vi.fn()
+      // 焦點在 body、階段開頭被標頭蓋住：換成一般換階段會捲動也會移焦點，剛載入時兩者都不該發生
+      const BODY = {}
+      vi.stubGlobal('document', { body: BODY, activeElement: BODY,
+        querySelector: () => ({ getBoundingClientRect: () => ({ bottom: 96 }) }) })
+      vi.stubGlobal('matchMedia', () => ({ matches: false }))
+      // 真實的兩段掛載：先是房間還沒載到（room 為 null），之後才是 lobby
+      mocks.refs = []; mocks.stateIndex = 0; mocks.effects = []
+      mocks.useRoom.mockReturnValue({ ...state, room: null, draw: null })
+      await renderRoomPage()
+      mocks.effects.at(-1)!()
+      mocks.stateIndex = 0; mocks.effects = []
+      mocks.useRoom.mockReturnValue({ ...state, room: { ...state.room, status: 'lobby', search_version: 4 }, draw: null })
+      const tree = await renderRoomPage()
+      ;(findNode(tree, el => el.type === 'h1')!.props!.ref as { current: unknown }).current = { focus }
+      const stage = findNode(tree, el => el.type === 'div' && Array.isArray(el.props?.children) &&
+        (el.props.children as NodeLike[]).some(ch => ch?.type === 'h1'))!
+      ;(stage.props!.ref as { current: unknown }).current = { getBoundingClientRect: () => ({ top: 40 }) }
+      const setActionWarning = mocks.stateSetters[2]
+      mocks.effects.at(-1)!()
+      await new Promise(r => setTimeout(r, 0))
+      expect(store.get('room-stage:room-1')).toBe('lobby@4')
+      if (warned) expect((setActionWarning.mock.calls[0][0] as (w: string) => string)('')).toContain('候選已經全部排除')
+      else if (stored) expect((setActionWarning.mock.calls[0][0] as (w: string) => string)('')).toBe('')
+      else expect(setActionWarning).not.toHaveBeenCalled()
+      expect(focus).not.toHaveBeenCalled()
+      expect(scrollBy).not.toHaveBeenCalled()
+    }
+  })
+
   it('從抽中待確認回到準備階段時告訴全房原因；別的換階段只收掉這則、不動其他警告', async () => {
     const state = pendingState('member')
     // 跑一次 from→to 的階段 effect，回傳它交給 setActionWarning 的 updater
-    async function transition(from: string, to: string) {
+    // search_version：進 lobby 時 +1（trigger），其他換階段不變
+    async function transition(from: string, to: string, fromVersion = 3, toVersion = to === 'lobby' ? 4 : 3) {
       mocks.refs = []; mocks.stateIndex = 0; mocks.effects = []
-      mocks.useRoom.mockReturnValue({ ...state, room: { ...state.room, status: from } })
+      mocks.useRoom.mockReturnValue({ ...state, room: { ...state.room, status: from, search_version: fromVersion } })
       await renderRoomPage()
       mocks.effects.at(-1)!() // 階段 effect 排最後：記下前一個 status
       mocks.stateIndex = 0; mocks.effects = []
-      mocks.useRoom.mockReturnValue({ ...state, room: { ...state.room, status: to }, draw: null })
+      mocks.useRoom.mockReturnValue({ ...state, room: { ...state.room, status: to, search_version: toVersion }, draw: null })
       await renderRoomPage()
       const setActionWarning = mocks.stateSetters[2]
       mocks.effects.at(-1)!()
@@ -457,6 +501,8 @@ describe('RoomPage pending selection controls', () => {
     }
     const exhausted = (await transition('pending', 'lobby'))('')
     expect(exhausted).toContain('候選已經全部排除')
+    // 沒重新掛載、但一次跳過好幾步（手機鎖屏後喚醒）：排光後又搜尋、修改條件才回 lobby，不是排光
+    expect((await transition('pending', 'lobby', 2, 4))('')).toBe('')
 
     const editBack = await transition('candidates', 'lobby') // 修改條件回準備階段：不講
     expect(editBack('')).toBe('')
