@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -30,19 +29,11 @@ func (e shortlistRejected) Error() string { return string(e) }
 
 func shortlistError(w http.ResponseWriter, err error) {
 	var rejected shortlistRejected
-	switch {
-	case errors.As(err, &rejected):
+	if errors.As(err, &rejected) {
 		jsonError(w, http.StatusConflict, string(rejected))
-	case errors.Is(err, ErrNotHost):
-		jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
-	case errors.Is(err, ErrNotMember):
-		jsonError(w, http.StatusForbidden, "你不是這個房間的成員")
-	case errors.Is(err, ErrConflict), errors.Is(err, pgx.ErrNoRows):
-		jsonError(w, http.StatusConflict, "房間狀態已更新，請重新整理")
-	default:
-		log.Printf("shortlist: %v", err)
-		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		return
 	}
+	writeError(w, err, "房間狀態已更新，請重新整理")
 }
 
 // keptPicksSQL：某成員目前仍可抽（kept）的圈選數；被退房重算排除的店不算數
@@ -57,7 +48,7 @@ func lockRoomForMember(ctx context.Context, tx pgx.Tx, roomID, uid string, versi
 	var current int64
 	if err := tx.QueryRow(ctx, `select status, search_version from rooms where id=$1 for update`,
 		roomID).Scan(&status, &current); err != nil {
-		return "", err
+		return "", roomRowErr(err)
 	}
 	var member bool
 	if err := tx.QueryRow(ctx, `select exists(select 1 from room_members where room_id=$1 and user_id=$2)`,

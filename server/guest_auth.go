@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -69,6 +70,7 @@ func handleValidateUpgradeEmail(w http.ResponseWriter, r *http.Request, store gu
 	}
 	saved, err := store.SaveValidation(r.Context(), uid, email)
 	if err != nil {
+		log.Printf("upgrade email validation save failed: %v", err)
 		jsonError(w, http.StatusServiceUnavailable, "upgrade_validation_unavailable")
 		return
 	}

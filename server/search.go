@@ -98,7 +98,10 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	defer inFlight.Delete(room.ID)
 	members, err := LoadMembers(ctx, pool, room.ID)
 	if err != nil || len(members) == 0 {
-		jsonError(w, http.StatusInternalServerError, "讀取成員失敗")
+		if err == nil {
+			err = errors.New("room has no members")
+		}
+		serverError(w, err, "讀取成員失敗")
 		return
 	}
 	// 付費 provider 前先擋 old/direct client；freeze transaction 會再鎖定重查一次競態。
@@ -118,6 +121,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 			w.Header().Set("Retry-After", "60")
 			jsonError(w, http.StatusTooManyRequests, "搜尋額度已用完或系統忙碌，請稍後再試")
 		} else {
+			log.Printf("search quota check failed: %v", err)
 			jsonError(w, http.StatusServiceUnavailable, "搜尋額度檢查失敗，請稍後再試")
 		}
 		return
@@ -239,21 +243,21 @@ func cacheSearchRestaurants(w http.ResponseWriter, ctx context.Context, pool *pg
 	if !fetched.degraded && (len(fetched.found) > 0 || len(fetched.closedIDs) > 0 || len(fetched.rejectedIDs) > 0) {
 		txCache, err := pool.Begin(ctx)
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+			serverError(w, err, "資料庫錯誤，請稍後再試")
 			return nil, false
 		}
 		defer txCache.Rollback(ctx)
 		staleIDs := append(fetched.closedIDs, fetched.rejectedIDs...)
 		if err := StaleOutRestaurants(ctx, txCache, staleIDs); err != nil {
-			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
+			serverError(w, err, "寫入餐廳快取失敗")
 			return nil, false
 		}
 		if found, err = UpsertRestaurants(ctx, txCache, fetched.found, places.Source()); err != nil {
-			jsonError(w, http.StatusInternalServerError, "寫入餐廳快取失敗")
+			serverError(w, err, "寫入餐廳快取失敗")
 			return nil, false
 		}
 		if err := txCache.Commit(ctx); err != nil {
-			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+			serverError(w, err, "資料庫錯誤，請稍後再試")
 			return nil, false
 		}
 	}
@@ -299,7 +303,7 @@ func freezeSearchCandidates(w http.ResponseWriter, r *http.Request, pool *pgxpoo
 	ctx := r.Context()
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		serverError(w, err, "資料庫錯誤，請稍後再試")
 		return EngineResult{}, false
 	}
 	defer tx.Rollback(ctx)
@@ -309,7 +313,7 @@ func freezeSearchCandidates(w http.ResponseWriter, r *http.Request, pool *pgxpoo
 			jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
 			return EngineResult{}, false
 		}
-		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		serverError(w, err, "資料庫錯誤，請稍後再試")
 		return EngineResult{}, false
 	}
 	members, found, err := freezeAndLoadMembers(ctx, tx, &room, fetchedRadius, fetchedCuisines, fetched.found)
@@ -324,24 +328,23 @@ func freezeSearchCandidates(w http.ResponseWriter, r *http.Request, pool *pgxpoo
 		case errors.Is(err, ErrNotReady):
 			jsonError(w, http.StatusConflict, searchNotReadyMessage)
 		default:
-			log.Printf("search freeze failed: %v", err)
-			jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+			serverError(w, err, "資料庫錯誤，請稍後再試")
 		}
 		return EngineResult{}, false
 	}
 	recency, err := LoadRecency(ctx, tx, memberIDs(members), restaurantIDs(found))
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "讀取同席紀錄失敗")
+		serverError(w, err, "讀取同席紀錄失敗")
 		return EngineResult{}, false
 	}
 	exposure, err := LoadExposure(ctx, tx, memberIDs(members), restaurantIDs(found))
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "讀取曝光統計失敗")
+		serverError(w, err, "讀取曝光統計失敗")
 		return EngineResult{}, false
 	}
 	satisfaction, err := LoadSatisfaction(ctx, tx, memberIDs(members))
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "讀取滿足度失敗")
+		serverError(w, err, "讀取滿足度失敗")
 		return EngineResult{}, false
 	}
 	evalAt, departNow := roomEvalMoment(room)
@@ -374,16 +377,16 @@ func freezeSearchCandidates(w http.ResponseWriter, r *http.Request, pool *pgxpoo
 		exposureCounted[c.Restaurant.ID] = true
 	}
 	if err := ReplaceCandidates(ctx, tx, room.ID, result, exposureCounted); err != nil {
-		jsonError(w, http.StatusInternalServerError, "寫入候選失敗")
+		serverError(w, err, "寫入候選失敗")
 		return EngineResult{}, false
 	}
 	// 順序不變式：LoadExposure → Evaluate → RecordExposure，避免本次 +1 汙染新店判定。
 	if err := RecordExposure(ctx, tx, memberIDs(members), keptIDs); err != nil {
-		jsonError(w, http.StatusInternalServerError, "寫入曝光統計失敗")
+		serverError(w, err, "寫入曝光統計失敗")
 		return EngineResult{}, false
 	}
 	if err := tx.Commit(ctx); err != nil {
-		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		serverError(w, err, "資料庫錯誤，請稍後再試")
 		return EngineResult{}, false
 	}
 	return result, true
@@ -397,8 +400,7 @@ func rejectChangedSearchSnapshot(w http.ResponseWriter, ctx context.Context, q q
 	if errors.Is(err, ErrSearchChanged) {
 		jsonError(w, http.StatusConflict, "搜尋位置已更新，請重新搜尋")
 	} else {
-		log.Printf("search snapshot check failed: %v", err)
-		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+		serverError(w, err, "資料庫錯誤，請稍後再試")
 	}
 	return true
 }

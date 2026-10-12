@@ -50,7 +50,7 @@ func handleLocationVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Po
 	var status string
 	var version int64
 	if err := tx.QueryRow(ctx, `select status, search_version from rooms where id=$1 for update`, roomID).Scan(&status, &version); err != nil {
-		pendingError(w, err)
+		pendingError(w, roomRowErr(err))
 		return
 	}
 	var member bool
@@ -117,7 +117,7 @@ func handleChooseLocation(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 	var host, status string
 	var version int64
 	if err := tx.QueryRow(ctx, `select host_id,status,search_version from rooms where id=$1 for update`, roomID).Scan(&host, &status, &version); err != nil {
-		pendingError(w, err)
+		pendingError(w, roomRowErr(err))
 		return
 	}
 	if host != UserID(r) {

@@ -2,8 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
-	"log"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -49,7 +47,7 @@ func currentWinner(r *http.Request, tx pgx.Tx, roomID string, version int64) (st
 func lockPendingRoom(r *http.Request, tx pgx.Tx, roomID string, version int64) (RoomRow, error) {
 	room, err := scanRoom(tx.QueryRow(r.Context(), `select `+roomColumns+` from rooms where id=$1 for update`, roomID))
 	if err != nil {
-		return room, err
+		return room, roomRowErr(err)
 	}
 	if room.HostID != UserID(r) {
 		return room, ErrNotHost
@@ -76,14 +74,7 @@ func writePendingSnapshot(r *http.Request, tx pgx.Tx, room RoomRow, result Engin
 }
 
 func pendingError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, ErrNotHost):
-		jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
-	case errors.Is(err, ErrConflict), errors.Is(err, pgx.ErrNoRows):
-		jsonError(w, http.StatusConflict, "抽選結果已更新，請重新整理")
-	default:
-		jsonError(w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
-	}
+	writeError(w, err, "抽選結果已更新，請重新整理")
 }
 
 func handleRedraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weather WeatherProvider) {
@@ -119,8 +110,7 @@ func handleRedraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, we
 	wx := loadWeatherCached(weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
 	result, _, err := rescoreRoom(r.Context(), tx, room, wx)
 	if err != nil {
-		log.Printf("redraw rescore failed: %v", err)
-		jsonError(w, 500, "重算失敗，請稍後再試")
+		serverError(w, err, "重算失敗，請稍後再試")
 		return
 	}
 	if len(result.Kept) == 0 {
@@ -181,8 +171,7 @@ func handleConfirmDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 	wx := loadWeatherCached(weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
 	result, members, err := rescoreRoom(r.Context(), tx, room, wx)
 	if err != nil {
-		log.Printf("confirm rescore failed: %v", err)
-		jsonError(w, 500, "重算失敗，請稍後再試")
+		serverError(w, err, "重算失敗，請稍後再試")
 		return
 	}
 	if len(result.Kept) == 0 {
@@ -217,7 +206,7 @@ func handleConfirmDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 		return
 	}
 	if err := RecordDecision(r.Context(), tx, room.ID, members, winnerRest); err != nil {
-		jsonError(w, 500, "寫入同席紀錄失敗")
+		serverError(w, err, "寫入同席紀錄失敗")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {

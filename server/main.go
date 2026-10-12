@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -15,6 +16,16 @@ func jsonError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// serverErrorLog 帶 file:line：使用者只看到「資料庫錯誤」這類文案，Render log 要查得到是哪一步、為什麼。
+var serverErrorLog = log.New(os.Stderr, "", log.LstdFlags|log.Lshortfile)
+
+// serverError 記下 err 再回 500，log 位置是呼叫端那一行。只記 err，不記 request
+// （token、Authorization、使用者輸入都不進 log）。
+func serverError(w http.ResponseWriter, err error, msg string) {
+	serverErrorLog.Output(2, fmt.Sprint(err))
+	jsonError(w, http.StatusInternalServerError, msg)
 }
 
 func jsonOK(w http.ResponseWriter, v any) {
