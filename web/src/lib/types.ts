@@ -78,9 +78,15 @@ export type ShortlistPickRow = { room_id: string; user_id: string; restaurant_id
 
 // supabase client 用的 Database 型別：產生的 database.types.ts 裡 text＋CHECK 欄位只到 string、
 // jsonb 欄位只到 Json，這裡只把前端讀的這幾欄收窄成上面的手寫型別（只動 Row，寫入照產生型別）。
-// 其餘欄位都照產生型別：欄位改名或型別改變時，編譯器會在查詢結果交給手寫型別的地方報錯
+// NarrowRow 的約束要求收窄的欄位存在於產生型別、收窄後的型別也指派得回產生型別：被收窄的欄位
+// 改名、刪除或改成不相容的型別時，這裡報 TS2344（少了約束的話 Omit 會略過不存在的 key、& Cols 又把
+// 欄位加回去，改名照樣編譯過）。其餘欄位照產生型別：改名或改型別時，查詢結果交給手寫型別的地方報錯。
+// 收窄成陣列的 jsonb 欄位（cuisines、dietary 等）用 eq／contains 過濾時別直接傳陣列：eq 會把 [] 變成
+// 空字串、contains 會把陣列轉成 Postgres 陣列字面 {…}，都不是 jsonb 要的 JSON；要送 JSON 字面字串，例如 defaultPrefs.ts 的 '[]'
 type Tables = GeneratedDatabase['public']['Tables']
-type NarrowRow<T extends keyof Tables, Cols> = Omit<Tables[T], 'Row'> & { Row: Omit<Tables[T]['Row'], keyof Cols> & Cols }
+type NarrowRow<T extends keyof Tables, Cols extends {
+  [K in keyof Cols]: K extends keyof Tables[T]['Row'] ? Tables[T]['Row'][K] : never
+}> = Omit<Tables[T], 'Row'> & { Row: Omit<Tables[T]['Row'], keyof Cols> & Cols }
 export type Database = {
   public: Omit<GeneratedDatabase['public'], 'Tables'> & {
     Tables: Omit<Tables, 'rooms' | 'room_members' | 'room_candidates' | 'restaurants' | 'draws' | 'votes'> & {
