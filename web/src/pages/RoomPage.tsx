@@ -4,8 +4,8 @@ import { useMidnightRerender } from '../hooks/useMidnightRerender'
 import { useRoom } from '../hooks/useRoom'
 import { useRoomSettingsWrites } from '../hooks/useRoomSettingsWrites'
 import {
-  cancelShortlist, chooseLocation, confirmDraw, drawRoom, editConditions, pendingLeave, redrawRoom, startVoting,
-  voteLocation, voteShortlist,
+  cancelShortlist, chooseLocation, confirmDraw, drawRoom, editConditions, pendingLeave, redrawRoom, searchRoom,
+  startVoting, voteLocation, voteShortlist,
 } from '../lib/api'
 import { loadRoomDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
 import { isVetoDeadEnd } from '../lib/deadEnd'
@@ -266,8 +266,6 @@ export default function RoomPage() {
         settings.flushRoomWrites(),
       ])
       if (!isCurrent() || !conditionsOK || !roomSettingsOK || !guestsReadyRef.current) return
-      const { searchRoom } = await import('../lib/api')
-      if (!isCurrent()) return
       const o = await searchRoom(room!.id, {
         signal: controller.signal,
         onRequestStart: () => {
@@ -415,8 +413,8 @@ export default function RoomPage() {
   }
 
   // 一律攔下來當場查（比照 HistoryPage），不讀本頁任何本地狀態：
-  // 1. useRoom 的 room 在 rooms 查詢失敗時會停在舊物件（useRoom.ts:46 只在 r.data 為真
-  //    時 setRoom，失敗只亮 loadError）——lobby→candidates 期間 refresh 失敗或 Realtime
+  // 1. useRoom 的 room 在 rooms 查詢失敗時會停在舊物件（useRoom 的 refetch 只在查到列時更新 room、
+  //    查無列才清成 null，暫時性錯誤只亮 loadError）——lobby→candidates 期間 refresh 失敗或 Realtime
   //    斷線，拿過期 status 就會承諾「之後可用邀請碼重新加入」，而 join_room 早就不匹配。
   // 2. POST /api/leave 是全退不挑房，殘留房籍（leave 逾時後又建新房）也會一起退掉，
   //    只講當前這一間就是漏報。
@@ -541,7 +539,7 @@ export default function RoomPage() {
         {room.status === 'candidates' && (
           <>
             {/* 門檻開放時候選清單必然很長，表決放在清單前面才看得到 */}
-            {shortlistOpen(candidates.filter(c => c.status === 'kept').length, members.length) && (
+            {shortlistOpen(keptCount, members.length) && (
               <ShortlistVotePanel wantShortlist={shortlistVotes.some(v => v.user_id === myUserId)}
                 yesCount={shortlistVotes.length} memberCount={members.length} busy={shortlistBusy}
                 onVote={onShortlistVote} />
@@ -601,7 +599,7 @@ export default function RoomPage() {
           <>
             <CandidateList rows={candidates}
               voting={{ hasMyVote, ups, vetoesRemaining, onToggle: onToggleVote }} />
-            {candidates.some(c => c.status === 'kept') ? null : (
+            {keptCount > 0 ? null : (
               // D16：「全否決」和「全打烊」是兩種死路——用結構化 exclusion_kinds 分辨（deadEnd.ts）
               <p role="status" className="banner bg-warn-soft text-warn">
                 <Alert className="h-5 w-5 shrink-0" />
@@ -612,7 +610,7 @@ export default function RoomPage() {
             )}
             {isHost && (
               <button className="btn btn-primary w-full"
-                disabled={!candidates.some(c => c.status === 'kept') || pendingAction !== null}
+                disabled={keptCount === 0 || pendingAction !== null}
                 aria-busy={pendingAction === 'draw'} onClick={onDraw}>
                 {pendingAction === 'draw' ? <><Spinner className="h-5 w-5" />抽選中…</> : '啟動轉盤'}
               </button>

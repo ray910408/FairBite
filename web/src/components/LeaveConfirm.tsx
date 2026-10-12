@@ -18,6 +18,9 @@ import type { LeaveTarget } from '../lib/roomMembership'
 //
 // 以函式呼叫（LeaveConfirm({...})）而非 <LeaveConfirm />：本外殼沒有自己的狀態，
 // 直接回傳元素樹，三頁的測試（把 page 當純函式呼叫）看到的結構才不變。
+// 所以這裡禁止用 hook：hook 會記在呼叫端頁面上，而各頁都是 dialog 開著才呼叫，開關一次 hook 數量
+// 就變、整頁崩潰，oxlint 的 rules-of-hooks 抓不到這種寫法。完整修法是改回 <LeaveConfirm />，
+// 要等 RoomPage.test.ts 等把頁面當純函式呼叫的測試改成行為導向（TODOS #14）。
 export function LeaveConfirm({ title, onClose, actions, actionsClassName, children }: {
   title: string
   // Esc 關閉；HomePage 的 mount 攔截沒有「留在首頁但不決定」的合法終態，故不給
@@ -44,11 +47,14 @@ export function LeaveConfirm({ title, onClose, actions, actionsClassName, childr
 // 房內可達頁（RoomPage / HistoryPage）的後果內文：兩處字句完全相同，且 `POST /api/leave`
 // 是全退不挑房——只講「當前這一間」會漏報殘留房籍（P2-A 在足跡頁修過的同一個洞）。
 // 資料一律來自點擊當下的 fetchLeaveRooms()，不讀任何本地快照：useRoom 的 room 在查詢
-// 失敗時會保留舊物件（useRoom.ts:46 只在 r.data 為真時 setRoom），拿它的 status 講
+// 失敗時會保留舊物件（useRoom 的 refetch 只在查到列時更新 room、查無列才清成 null），拿它的 status 講
 // 「之後可用邀請碼重新加入」時 join_room 可能早就不匹配了。
 //
 // HomePage 的 mount 攔截不共用這段：它已經在首頁（時態不同），而且回房入口必須是
 // <button>——React 的 autoFocus 只對表單控制項生效，焦點要落在安全那顆。
+//
+// 同 LeaveConfirm 以函式呼叫（LeaveRoomsBody({...})）渲染，禁止用 hook：dialog 開著才呼叫，
+// hook 數量一變整頁崩潰，oxlint 抓不到。改回 <LeaveRoomsBody /> 要等 RoomPage.test.ts 改成行為導向（TODOS #14）。
 export function LeaveRoomsBody({ target }: { target: LeaveTarget }) {
   const rooms = target.kind === 'rooms' ? target.rooms : []
   const multi = rooms.length > 1

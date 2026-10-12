@@ -17,7 +17,9 @@ function pickBadge(count: number) {
 }
 
 // 以函式呼叫（MemberList({...})）而非 <MemberList />：比照 LeaveConfirm，本元件沒有自己的狀態，
-// RoomPage.test.ts 把頁面當純函式呼叫，要在回傳的元素樹裡讀到各成員的狀態文字
+// RoomPage.test.ts 把頁面當純函式呼叫，要在回傳的元素樹裡讀到各成員的狀態文字。
+// 所以這裡禁止用 hook：hook 會記在 RoomPage 上，房間載入前頁面提早 return、不會呼叫本元件，hook 數量
+// 一變整頁崩潰，oxlint 的 rules-of-hooks 抓不到。改回 <MemberList /> 要等 RoomPage.test.ts 改成行為導向（TODOS #14）
 export function MemberList({ room, members, picksByMember }: {
   room: Room
   members: MemberRow[]

@@ -1371,8 +1371,8 @@ describe('回首頁離席確認', () => {
     expect(mocks.stateSetters[19]).toHaveBeenCalledWith(null)
   })
 
-  // useRoom.ts:46 只在 r.data 為真時 setRoom——rooms 查詢失敗／Realtime 斷線時 room
-  // 會停在過期物件。文案若讀它，lobby→voting 之後仍會承諾「可用邀請碼重新加入」
+  // useRoom 的 refetch 只在查到列時更新 room（查無列才清成 null）——rooms 查詢暫時失敗／Realtime 斷線時
+  // room 會停在過期物件。文案若讀它，lobby→voting 之後仍會承諾「可用邀請碼重新加入」
   it('文案用查回來的 status，不用 useRoom 的過期 room 快照', async () => {
     mocks.members = { data: [row('room-1', 'ABC123', 'voting'), row('room-1', 'ABC123', 'voting')], error: null }
     const tree = await mount() // useRoom 仍宣稱 status = 'lobby'

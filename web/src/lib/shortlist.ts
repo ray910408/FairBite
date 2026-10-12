@@ -10,6 +10,12 @@ export function shortlistOpen(keptCount: number, memberCount: number): boolean {
   return keptCount > memberCount * SHORTLIST_GATE_PER_MEMBER
 }
 
+// 全體成員（含房主）嚴格過半所需票數：初選表決與改地點表決門檻相同（CONTEXT.md），
+// 同 server shortlist.go／relocation.go 的 yes > members/2
+export function strictMajority(memberCount: number): number {
+  return Math.floor(memberCount / 2) + 1
+}
+
 export function hasMyPick(picks: ShortlistPickRow[], uid: string, rid: string): boolean {
   return picks.some(p => p.user_id === uid && p.restaurant_id === rid)
 }

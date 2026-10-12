@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import {
   SHORTLIST_GATE_PER_MEMBER, SHORTLIST_PICK_MAX, SHORTLIST_PICK_MIN,
-  applyPickMirror, hasMyPick, keptPickCounts, membersBelowMin, pickCounts, shortlistOpen,
+  applyPickMirror, hasMyPick, keptPickCounts, membersBelowMin, pickCounts, shortlistOpen, strictMajority,
 } from './shortlist'
 import type { CandidateRow, ShortlistPickRow } from './types'
 
@@ -22,6 +22,10 @@ test('shortlistOpen 要嚴格多於成員數 × 3', () => {
   expect(shortlistOpen(7, 2)).toBe(true)
   expect(shortlistOpen(3, 1)).toBe(false)
   expect(shortlistOpen(4, 1)).toBe(true)
+})
+
+test('strictMajority 是全體成員嚴格過半：剛好一半不算', () => {
+  expect([1, 2, 3, 4, 5].map(strictMajority)).toEqual([1, 2, 2, 3, 3])
 })
 
 test('pickCounts 依店聚合所有成員的圈選', () =>

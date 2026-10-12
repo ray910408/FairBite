@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { DeparturePoint } from '../lib/departure'
+import { strictMajority } from '../lib/shortlist'
 import LocationPicker from './LocationPicker'
 
 type Props = {
@@ -31,7 +32,7 @@ export default function RelocationPanel({
   // mount 時讀一次：current 每次 render 都是新 parse 的物件，直接往下傳會讓
   // LocationPicker 的 [value] effect 在每次 Realtime refetch 把展開中的地圖拉回原點
   const [initial] = useState(current)
-  const majority = Math.floor(memberCount / 2) + 1
+  const majority = strictMajority(memberCount)
 
   if (status === 'voting') {
     return (
