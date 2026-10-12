@@ -1,4 +1,4 @@
-import { SHORTLIST_PICK_MAX, SHORTLIST_PICK_MIN } from '../lib/shortlist'
+import { SHORTLIST_PICK_MAX, SHORTLIST_PICK_MIN, strictMajority } from '../lib/shortlist'
 
 type Props = {
   wantShortlist: boolean
@@ -11,7 +11,7 @@ type Props = {
 // 初選表決（CONTEXT.md）：RoomPage 只在候選出爐且可抽候選多於成員數三倍時掛上。
 // 嚴格過半由伺服器在同一交易內把房間轉進初選，這裡只負責表達／收回意願
 export default function ShortlistVotePanel({ wantShortlist, yesCount, memberCount, busy, onVote }: Props) {
-  const majority = Math.floor(memberCount / 2) + 1
+  const majority = strictMajority(memberCount)
   return (
     <section className="card space-y-2" aria-labelledby="shortlist-vote-title">
       <h2 id="shortlist-vote-title" className="text-base font-semibold">候選太多？先初選再投票</h2>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useMidnightRerender } from '../hooks/useMidnightRerender'
+import { leaveRooms } from '../lib/api'
 import { supabase } from '../lib/supabase'
 import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
 import { leaveNotice } from '../lib/leaveNotice'
@@ -117,7 +118,7 @@ export default function HomePage() {
 
   // 退房是所有路徑的共同終點：leavePending 直到 settle 才解除，期間建房/加入維持禁用
   const doLeave = useCallback(() => {
-    void import('../lib/api').then(m => m.leaveRooms())
+    void leaveRooms()
       .catch(() => { /* 首頁維持 best-effort；下次進首頁再確認房籍。 */ })
       .finally(() => setLeavePending(false))
   }, [])
