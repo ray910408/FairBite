@@ -167,10 +167,13 @@ describe('editConditions', () => {
   it('保留 API error，無 JSON error 時用修改條件 fallback', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: '房間狀態已變更' }), { status: 409 }))
-      .mockResolvedValueOnce(new Response('down', { status: 500 })))
+      .mockResolvedValueOnce(new Response('down', { status: 500 }))
+      .mockResolvedValueOnce(new Response('gone', { status: 404 })))
 
     await expect(editConditions('room-1')).resolves.toBe('房間狀態已變更')
-    await expect(editConditions('room-1')).resolves.toBe('修改條件失敗（500）')
+    // 5xx（冷啟動、閘道錯誤）不秀狀態碼；4xx 沒帶訊息時才留狀態碼給回報用
+    await expect(editConditions('room-1')).resolves.toBe('修改條件失敗：伺服器暫時沒有回應，請稍後再試')
+    await expect(editConditions('room-1')).resolves.toBe('修改條件失敗（404）')
   })
 })
 

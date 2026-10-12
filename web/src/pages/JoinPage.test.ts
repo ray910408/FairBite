@@ -280,3 +280,24 @@ describe('join after confirmed departure', () => {
     expect(children.props.children[0].props.children).toBe('原房間離席失敗')
   })
 })
+
+describe('invite error recovery', () => {
+  it('錯誤畫面除了重試，也有回首頁的路', () => {
+    vi.clearAllMocks()
+    mocks.stateIndex = 0
+    mocks.effects = []
+    mocks.values = ['', false, null, false, '邀請碼無效或房間已開始']
+    const labels: Record<string, () => void> = {}
+    const walk = (n: unknown): void => {
+      if (Array.isArray(n)) return n.forEach(walk)
+      if (!n || typeof n !== 'object') return
+      const el = n as { type?: unknown; props?: { children?: unknown; onClick?: () => void } }
+      if (el.type === 'button' && typeof el.props?.children === 'string' && el.props.onClick) labels[el.props.children] = el.props.onClick
+      walk(el.props?.children)
+    }
+    walk(JoinPage())
+    expect(Object.keys(labels)).toEqual(expect.arrayContaining(['重新嘗試', '回首頁']))
+    labels['回首頁']()
+    expect(mocks.navigate).toHaveBeenCalledWith('/')
+  })
+})
