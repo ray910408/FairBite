@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { getThemePref, setThemePref, type ThemePref } from '../lib/theme'
 import { Check, Monitor, Moon, Sun } from './icons'
 
@@ -52,9 +53,14 @@ export function ThemeMenu() {
             <button key={p} type="button" aria-pressed={p === pref}
               className="flex min-h-11 w-full items-center gap-2 rounded-btn px-3 text-sm hover:bg-brand-soft"
               onClick={() => {
-                setThemePref(p)
-                setPref(p)
-                setOpen(false)
+                // 整頁交叉淡化（View Transition），不支援的瀏覽器直接切換。flushSync：回呼結束時
+                // DOM 就要是選單收起、勾勾換好的樣子，否則新快照還開著選單，淡化完才突然收起
+                const apply = () => {
+                  setThemePref(p)
+                  flushSync(() => { setPref(p); setOpen(false) })
+                }
+                if ('startViewTransition' in document) document.startViewTransition(apply)
+                else apply()
                 triggerRef.current?.focus()
               }}>
               <Icon className="h-4 w-4" />

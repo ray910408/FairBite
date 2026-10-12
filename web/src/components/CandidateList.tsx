@@ -80,7 +80,7 @@ export default function CandidateList({ rows, voting, picking }: {
                   </span>
                 </div>
                 {oddsKnown && <div aria-hidden="true" className="h-[3px] bg-brand-soft">
-                  <div className="h-full bg-brand"
+                  <div className="h-full bg-brand transition-[width] duration-300 ease-out"
                     style={{ width: `${((c.probability ?? 0) / max) * 100}%` }} />
                 </div>}
                 {facts.length > 0 && <p className="text-[13px]">{facts.join('・')}</p>}

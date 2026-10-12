@@ -24,13 +24,14 @@ export default function ResultCard({ draw, candidates, me, confirmed = true }: {
   return (
     // overflow-hidden：印章 delay 期間停在 scale(2.4) 的起始幀，不裁的話會撐出約 47px 水平捲動
     <div className="card menu-frame relative flex animate-rise flex-col gap-2.5 overflow-hidden rounded-btn px-4.5 pt-5 pb-4">
-      {/* 朱印：定案時「今天就吃」就是標題前的那行字（不 aria-hidden）；待確認時只是裝飾，文字留給下方 eyebrow */}
+      {/* 朱印：定案時「今天就吃」就是標題前的那行字（不 aria-hidden）；待確認時只是裝飾，文字留給下方 eyebrow。
+          兩個 key 不同：確認時 React 才會換掉節點、重蓋一次印，而不是原地把「抽中」改成「今天就吃」 */}
       {confirmed ? (
-        <span className={`${STAMP} size-18`} style={STAMP_STYLE}>
+        <span key="final" className={`${STAMP} size-18`} style={STAMP_STYLE}>
           <span className="h-11 text-xl leading-[1.05] [writing-mode:vertical-rl]">今天就吃</span>
         </span>
       ) : (
-        <span aria-hidden="true" className={`${STAMP} size-[62px] text-[22px] leading-none tracking-[0.05em] [writing-mode:vertical-rl]`}
+        <span key="pending" aria-hidden="true" className={`${STAMP} size-[62px] text-[22px] leading-none tracking-[0.05em] [writing-mode:vertical-rl]`}
           style={STAMP_STYLE}>抽中</span>
       )}
       {/* min-h 與 pr-20 讓店名和下方內容都避開印章（含 -10deg 旋轉後的外擴） */}
