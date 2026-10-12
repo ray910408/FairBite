@@ -19,7 +19,7 @@ export default function DrawPanel({ room, draw, candidates, spun, onSpun, me, my
   myUserId: string
   isHost: boolean
   isGuest: boolean
-  pendingAction: 'confirm' | 'redraw' | null
+  pendingAction: 'draw' | 'confirm' | 'redraw' | null
   onRedraw: () => void
   onConfirm: () => void
 }) {
