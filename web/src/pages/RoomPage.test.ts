@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   editConditions: vi.fn(),
   confirmDraw: vi.fn(),
   redrawRoom: vi.fn(),
+  drawRoom: vi.fn(),
   chooseLocation: vi.fn(async () => null),
   startVoting: vi.fn(async (): Promise<string | null> => null),
   cancelShortlist: vi.fn(async (): Promise<string | null> => null),
@@ -64,6 +65,7 @@ vi.mock('../lib/api', () => ({
   editConditions: mocks.editConditions,
   confirmDraw: mocks.confirmDraw,
   redrawRoom: mocks.redrawRoom,
+  drawRoom: mocks.drawRoom,
   chooseLocation: mocks.chooseLocation,
   startVoting: mocks.startVoting,
   cancelShortlist: mocks.cancelShortlist,
@@ -272,6 +274,45 @@ describe('RoomPage pending selection controls', () => {
     expect(mocks.stateSetters[14]).toHaveBeenLastCalledWith(null)
   })
 
+  it('啟動轉盤：連點只送一次，成功後等 refetch 完成才解除 busy、不留錯誤', async () => {
+    const reload = deferred<void>()
+    const base = pendingState('host')
+    const state = { ...base, room: { ...base.room, status: 'voting' }, draw: null }
+    state.refetch.mockReturnValue(reload.promise)
+    mocks.drawRoom.mockResolvedValue(null)
+    mocks.useRoom.mockReturnValue(state)
+    const tree = await renderRoomPage()
+    // findButton 會展開 CandidateList，子元件的 useState 會覆寫 stateSetters[1..]，先抓住頁面的 setter
+    const setActionError = mocks.stateSetters[1]
+    const setPendingAction = mocks.stateSetters[14]
+    const click = findButton(tree, '啟動轉盤').props?.onClick
+    if (!click) throw new Error('找不到啟動轉盤')
+
+    const first = click()
+    const second = click()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mocks.drawRoom).toHaveBeenCalledOnce()
+    expect(mocks.drawRoom).toHaveBeenCalledWith('room-1')
+    expect(state.refetch).toHaveBeenCalledOnce()
+    expect(setPendingAction).toHaveBeenCalledWith('draw')
+    expect(setPendingAction).not.toHaveBeenCalledWith(null)
+
+    reload.resolve(undefined)
+    await Promise.all([first, second])
+    expect(setPendingAction).toHaveBeenLastCalledWith(null)
+    expect(setActionError.mock.calls).toEqual([['']])
+  })
+
+  it('抽選進行中：啟動轉盤 disabled 並顯示「抽選中…」', async () => {
+    const base = pendingState('host')
+    mocks.useRoom.mockReturnValue({ ...base, room: { ...base.room, status: 'voting' }, draw: null })
+    mocks.stateValues[14] = 'draw'
+    const tree = await renderRoomPage()
+    expect(findButton(tree, '抽選中…').props?.disabled).toBe(true)
+    expect(findButton(tree, '啟動轉盤').type).toBeUndefined()
+  })
+
   it('確認回傳候選耗盡時，Realtime 斷線仍重新載入並回到準備畫面', async () => {
     const api = await vi.importActual<typeof import('../lib/api')>('../lib/api')
     mocks.getSession.mockResolvedValue({ data: { session: { access_token: 'token' } } })
@@ -407,7 +448,7 @@ describe('房主免準備與搜尋 loading（Round 3）', () => {
       connected: true,
       notFound: false,
       loadError: false,
-      refetch: vi.fn(),
+      refetch: vi.fn(async (): Promise<void> => undefined),
       toggleVote: vi.fn(),
       myVote: () => null,
       ups: {},
@@ -810,7 +851,7 @@ describe('初選（Shortlist）', () => {
         exploration: 'balanced', meal_time: null, cuisine_filter: false, search_version: 3 },
       members: [member('host-1', '房主'), member('user-b', '小B')],
       candidates: rids.map(kept), draw: null, myUserId: 'host-1',
-      connected: true, notFound: false, loadError: false, refetch: vi.fn(),
+      connected: true, notFound: false, loadError: false, refetch: vi.fn(async (): Promise<void> => undefined),
       toggleVote: vi.fn(), togglePick: vi.fn(async (): Promise<string | null> => null),
       hasMyVote: vi.fn(), ups: {}, vetoesRemaining: 2, shortlistVotes: [], shortlistPicks: [],
       ...overrides,
@@ -873,13 +914,26 @@ describe('初選（Shortlist）', () => {
     expect(findButton(waiting, '還有 1 人沒圈滿 3 家').props?.disabled).toBe(true)
     expect(findButton(waiting, '開始投票').type).toBeUndefined()
 
+    const reload = deferred<void>()
+    const refetch = vi.fn((): Promise<void> => reload.promise)
     const ready = await render('shortlisting', {
+      refetch,
       shortlistPicks: [...picks('host-1', ['r1', 'r2', 'r3']), ...picks('user-b', ['r1', 'r4', 'r5'])],
     })
+    // findButton 會展開子元件並覆寫 stateSetters，先抓住 setStartingVoting
+    const setStartingVoting = mocks.stateSetters[8]
     const start = findButton(ready, '開始投票')
     expect(start.props?.disabled).toBe(false)
-    await start.props!.onClick!()
+    const request = start.props!.onClick!()
+    await Promise.resolve()
+    await Promise.resolve()
     expect(mocks.startVoting).toHaveBeenCalledWith('room-1')
+    expect(refetch).toHaveBeenCalledOnce()
+    // 成功後先 refetch 才解鎖：Realtime 到之前按鈕不能再按
+    expect(setStartingVoting).not.toHaveBeenCalledWith(false)
+    reload.resolve(undefined)
+    await request
+    expect(setStartingVoting).toHaveBeenLastCalledWith(false)
     expect(findButton(ready, '修改條件').type).toBe('button')
   })
 

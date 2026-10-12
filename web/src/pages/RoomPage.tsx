@@ -4,8 +4,8 @@ import { useMidnightRerender } from '../hooks/useMidnightRerender'
 import { useRoom } from '../hooks/useRoom'
 import { useRoomSettingsWrites } from '../hooks/useRoomSettingsWrites'
 import {
-  cancelShortlist, chooseLocation, confirmDraw, editConditions, pendingLeave, redrawRoom, startVoting, voteLocation,
-  voteShortlist,
+  cancelShortlist, chooseLocation, confirmDraw, drawRoom, editConditions, pendingLeave, redrawRoom, startVoting,
+  voteLocation, voteShortlist,
 } from '../lib/api'
 import { loadRoomDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
 import { isVetoDeadEnd } from '../lib/deadEnd'
@@ -52,7 +52,7 @@ export default function RoomPage() {
   const [roomSettingsBlocked, setRoomSettingsBlocked] = useState(false)
   const [editingConditions, setEditingConditions] = useState(false)
   const [searchSlow, setSearchSlow] = useState(false)
-  const [pendingAction, setPendingAction] = useState<'confirm' | 'redraw' | null>(null)
+  const [pendingAction, setPendingAction] = useState<'draw' | 'confirm' | 'redraw' | null>(null)
   const [relocationBusy, setRelocationBusy] = useState(false)
   const [isGuest, setIsGuest] = useState(false)
   // 初選表決／取消初選共用（兩者不會同時出現：表決只在 candidates、取消只在 shortlisting）
@@ -238,10 +238,15 @@ export default function RoomPage() {
     startVotingInFlight.current = true
     setStartingVoting(true)
     setActionError('')
-    const msg = await startVoting(room!.id)
-      .catch(() => '開始投票失敗：無法連線到伺服器')
-      .finally(() => { startVotingInFlight.current = false; setStartingVoting(false) })
-    if (msg) setActionError(msg)
+    // 成功後等 refetch 完成才解鎖：否則 Realtime 到之前按鈕又能按，第二下回 409
+    try {
+      const msg = await startVoting(room!.id)
+        .catch(() => '開始投票失敗：無法連線到伺服器')
+      if (msg) setActionError(msg)
+      else await refetch().catch(() => setActionError('已開始投票，但重新載入失敗，請重新整理頁面'))
+    } finally {
+      startVotingInFlight.current = false; setStartingVoting(false)
+    }
   }
 
   async function onShortlistVote(want: boolean) {
@@ -319,7 +324,20 @@ export default function RoomPage() {
     finally { setRelocationBusy(false) }
   }
 
-  // 抽中待確認的兩個房主動作：成功後等 refetch 完成才解除 busy
+  // 抽選與抽中待確認的兩個房主動作共用一把鎖：成功後等 refetch 完成才解除 busy
+  async function onDraw() {
+    if (pendingActionInFlight.current) return
+    pendingActionInFlight.current = true; setPendingAction('draw'); setActionError('')
+    try {
+      const msg = await drawRoom(room!.id)
+        .catch(() => '抽選失敗：無法連線到伺服器')
+      if (msg) setActionError(msg)
+      else await refetch().catch(() => setActionError('抽選成功，但重新載入失敗，請重新整理頁面'))
+    } finally {
+      pendingActionInFlight.current = false; setPendingAction(null)
+    }
+  }
+
   async function onRedraw() {
     if (pendingActionInFlight.current) return
     pendingActionInFlight.current = true; setPendingAction('redraw'); setActionError('')
@@ -531,14 +549,9 @@ export default function RoomPage() {
             )}
             {isHost && (
               <button className="btn btn-primary w-full"
-                disabled={!candidates.some(c => c.status === 'kept')}
-                onClick={() => {
-                  setActionError('')
-                  import('../lib/api').then(m => m.drawRoom(room.id))
-                    .then(msg => setActionError(msg ?? ''))
-                    .catch(() => setActionError('抽選失敗：無法連線到伺服器'))
-                }}>
-                啟動轉盤
+                disabled={!candidates.some(c => c.status === 'kept') || pendingAction !== null}
+                aria-busy={pendingAction === 'draw'} onClick={onDraw}>
+                {pendingAction === 'draw' ? <><Spinner className="h-5 w-5" />抽選中…</> : '啟動轉盤'}
               </button>
             )}
           </>
