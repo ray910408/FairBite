@@ -143,9 +143,10 @@ const inStage = (status: Room['status'], me = HOST, over: Partial<RoomState> = {
   roomState({ status }, { myUserId: me, members: [hostMember, guestMember({ ready: true })],
     candidates: [candidate('r1'), candidate('r2')], ...over })
 
+// data-key：每次導航都換新的 location key，看得出有沒有被導航第二次
 function Home() {
-  const { state } = useLocation()
-  return <p>首頁{state ? ` ${JSON.stringify(state)}` : ''}</p>
+  const { state, key } = useLocation()
+  return <p data-key={key}>首頁{state ? ` ${JSON.stringify(state)}` : ''}</p>
 }
 
 // 讓 mock 的 promise（getUser、房籍查詢、動作、寫入）在 act 裡落地
@@ -1347,6 +1348,20 @@ describe('回首頁離席確認', () => {
     await settle()
     expect(dialog().textContent).toContain('NEW999')
     expect(homeLink().getAttribute('aria-busy')).toBe('false')
+  })
+
+  it('首頁退房還在飛時的那一下也作廢較早還在查的點擊：舊回應不再導航第二次', async () => {
+    const first = deferred<SelectResult>()
+    mocks.memberRows.mockReturnValueOnce(first.promise)
+    await renderRoom(lobby())
+    fireEvent.click(homeLink()) // 查房籍中
+    vi.mocked(api.pendingLeave).mockReturnValue(new Promise<void>(() => {}))
+    fireEvent.click(homeLink()) // 這時首頁的退房在飛：直接回首頁
+    const key = (await screen.findByText('首頁')).dataset.key
+
+    await act(async () => first.resolve({ data: [], error: null })) // 第一下的「沒房」才回來
+    await settle()
+    expect(screen.getByText('首頁').dataset.key).toBe(key)
   })
 
   // PR #17 回歸：背景整塊帶著 inert（fixed 遮罩對 tab 順序沒用，只好整塊 inert），
