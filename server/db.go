@@ -36,13 +36,18 @@ type RoomRow struct {
 	SearchVersion int64
 }
 
-func LoadRoom(ctx context.Context, q querier, roomID string) (RoomRow, error) {
+// roomColumns 與 scanRoom 成對：每個讀出整列 RoomRow 的查詢都用這份欄位清單，
+// RoomRow 加欄位時只改這兩處，不會有哪個查詢漏改而默默讀到零值。
+const roomColumns = `id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), exploration, meal_time, cuisine_filter, draw_version, search_version`
+
+func scanRoom(row pgx.Row) (RoomRow, error) {
 	var r RoomRow
-	err := q.QueryRow(ctx,
-		`select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), exploration, meal_time, cuisine_filter, draw_version, search_version
-		 from rooms where id = $1`, roomID).
-		Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.Exploration, &r.MealTime, &r.CuisineFilter, &r.DrawVersion, &r.SearchVersion)
+	err := row.Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.Exploration, &r.MealTime, &r.CuisineFilter, &r.DrawVersion, &r.SearchVersion)
 	return r, err
+}
+
+func LoadRoom(ctx context.Context, q querier, roomID string) (RoomRow, error) {
+	return scanRoom(q.QueryRow(ctx, `select `+roomColumns+` from rooms where id = $1`, roomID))
 }
 
 // user_id 排序是鎖順序 pin：room_members FOR UPDATE 與後續 exposure_stats upsert 都沿用。

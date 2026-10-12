@@ -47,11 +47,7 @@ func currentWinner(r *http.Request, tx pgx.Tx, roomID string, version int64) (st
 }
 
 func lockPendingRoom(r *http.Request, tx pgx.Tx, roomID string, version int64) (RoomRow, error) {
-	var room RoomRow
-	err := tx.QueryRow(r.Context(), `select id, host_id, status, coalesce(center_lat,0), coalesce(center_lng,0),
-		exploration, meal_time, cuisine_filter, draw_version, search_version from rooms where id=$1 for update`, roomID).
-		Scan(&room.ID, &room.HostID, &room.Status, &room.CenterLat, &room.CenterLng,
-			&room.Exploration, &room.MealTime, &room.CuisineFilter, &room.DrawVersion, &room.SearchVersion)
+	room, err := scanRoom(tx.QueryRow(r.Context(), `select `+roomColumns+` from rooms where id=$1 for update`, roomID))
 	if err != nil {
 		return room, err
 	}

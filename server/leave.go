@@ -77,13 +77,7 @@ func leaveOneRoom(ctx context.Context, pool *pgxpool.Pool, weather WeatherProvid
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var room RoomRow
-	err = tx.QueryRow(ctx, `
-		select id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0),
-		       exploration, meal_time, cuisine_filter, draw_version, search_version
-		from rooms where id = $1 for update`, roomID).
-		Scan(&room.ID, &room.HostID, &room.Status, &room.CenterLat, &room.CenterLng,
-			&room.Exploration, &room.MealTime, &room.CuisineFilter, &room.DrawVersion, &room.SearchVersion)
+	room, err := scanRoom(tx.QueryRow(ctx, `select `+roomColumns+` from rooms where id = $1 for update`, roomID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // 並發退房已刪房：冪等
 	}
