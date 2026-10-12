@@ -612,6 +612,22 @@ describe('RoomPage pending selection controls', () => {
   })
 
   it.each([
+    ['確認就吃這家', mocks.confirmDraw, '確認失敗：無法連線到伺服器'],
+    ['排除這家並重轉', mocks.redrawRoom, '重轉失敗：無法連線到伺服器'],
+  ] as const)('%s 送出時同步拋錯也顯示無法連線、不 refetch 並解除 busy', async (label, action, message) => {
+    const state = pendingState('host')
+    action.mockImplementation(() => { throw new TypeError('sync throw') })
+    mocks.useRoom.mockReturnValue(state)
+    const tree = await renderRoomPage()
+
+    await findButton(tree, label).props!.onClick!()
+
+    expect(mocks.stateSetters[1]).toHaveBeenCalledWith(message)
+    expect(state.refetch).not.toHaveBeenCalled()
+    expect(mocks.stateSetters[14]).toHaveBeenLastCalledWith(null)
+  })
+
+  it.each([
     ['確認就吃這家', '確認成功，但重新載入失敗，請重新整理頁面'],
     ['排除這家並重轉', '重轉成功，但重新載入失敗，請重新整理頁面'],
   ] as const)('%s 成功但 refetch 拋錯時如實回報並解除 busy', async (label, message) => {
