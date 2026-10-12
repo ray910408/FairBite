@@ -189,7 +189,7 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
       <label className="block space-y-1">
         <span className="flex items-baseline justify-between">
           {/* 「距離偏好」不是「可接受距離」：半徑取全員平均，這個值不是個人的硬上限，
-              設得再緊也可能收到更遠的候選（見 handlers.go averageMemberRadius） */}
+              設得再緊也可能收到更遠的候選（見 search.go averageMemberRadius） */}
           <span className="label">距離偏好</span>
           <span className="font-mono text-sm font-semibold text-brand">{form.max_distance_m} 公尺</span>
         </span>
