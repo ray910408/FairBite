@@ -39,7 +39,14 @@ type ElementLike = {
   }
 }
 
-// 星星按鈕內只有 icon 沒有文字，改用 aria-label 尋找
+function textContent(node: unknown): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(textContent).join('')
+  if (node && typeof node === 'object') return textContent((node as ElementLike).props?.children)
+  return ''
+}
+
+// 星星按鈕內只有 icon 沒有文字，用 aria-label 找；其他按鈕用文字找
 function findStar(node: unknown, label: string): ElementLike {
   if (Array.isArray(node)) {
     for (const child of node) {
@@ -50,7 +57,7 @@ function findStar(node: unknown, label: string): ElementLike {
   }
   if (!node || typeof node !== 'object') return {}
   const element = node as ElementLike
-  if (element.type === 'button' && element.props?.['aria-label'] === label) return element
+  if (element.type === 'button' && (element.props?.['aria-label'] ?? textContent(element.props?.children)) === label) return element
   return findStar(element.props?.children, label)
 }
 
@@ -65,17 +72,28 @@ describe('StarRow 評分寫入防線', () => {
     mocks.from.mockReset().mockReturnValue({ update: mocks.update })
   })
 
-  async function clickStar(onRated: (n: number) => void) {
+  // 已選 3 顆（selected 是第四個 useState）後按送出
+  async function submitThree(onRated: (n: number) => void) {
     const { default: StarRow } = await import('./StarRow')
+    mocks.stateValues[3] = 3
     const tree = StarRow({ historyId: 'h-1', onRated })
-    const star = findStar(tree, '3 顆星')
-    if (!star.props?.onClick) throw new Error('找不到星星按鈕')
-    await star.props.onClick()
+    const submit = findStar(tree, '送出評分')
+    if (!submit.props?.onClick) throw new Error('找不到送出按鈕')
+    await submit.props.onClick()
   }
 
-  it('點星鎖定 id 且僅寫入未評分列', async () => {
+  it('點星只選不寫；沒選之前送出鈕 disabled', async () => {
+    const { default: StarRow } = await import('./StarRow')
+    const tree = StarRow({ historyId: 'h-1', onRated: vi.fn() })
+    expect((findStar(tree, '送出評分').props as { disabled?: boolean }).disabled).toBe(true)
+    await findStar(tree, '3 顆星').props!.onClick!()
+    expect(mocks.stateSetters[3]).toHaveBeenCalledWith(3)
+    expect(mocks.from).not.toHaveBeenCalled()
+  })
+
+  it('送出時鎖定 id 且僅寫入未評分列', async () => {
     const onRated = vi.fn()
-    await clickStar(onRated)
+    await submitThree(onRated)
     expect(mocks.update).toHaveBeenCalledWith({ rating: 3 }, { count: 'exact' })
     expect(mocks.eq).toHaveBeenCalledWith('id', 'h-1')
     expect(mocks.is).toHaveBeenCalledWith('rating', null)
@@ -85,7 +103,7 @@ describe('StarRow 評分寫入防線', () => {
   it('count 0（已評過）時顯示錯誤、解除 busy 且不觸發 onRated', async () => {
     mocks.is.mockResolvedValue({ error: null, count: 0 })
     const onRated = vi.fn()
-    await clickStar(onRated)
+    await submitThree(onRated)
     expect(mocks.stateSetters[0]).toHaveBeenCalledWith('評分未儲存：這筆可能已評過，請重新整理')
     expect(mocks.stateSetters[1]).toHaveBeenCalledWith(false)
     expect(onRated).not.toHaveBeenCalled()
@@ -110,6 +128,15 @@ describe('StarRow 累計高亮預覽', () => {
     })
     expect(rendered.map(r => r.filled)).toEqual([true, true, true, false, false])
     expect(rendered.map(r => r.brand)).toEqual([true, true, true, false, false])
+  })
+
+  it('選了 4 顆、沒有 hover 時 1..4 維持亮起，送出鈕可按', async () => {
+    const { default: StarRow } = await import('./StarRow')
+    mocks.stateValues[3] = 4
+    const tree = StarRow({ historyId: 'h-1', onRated: vi.fn() })
+    const filled = [1, 2, 3, 4, 5].map(n => (findStar(tree, `${n} 顆星`).props!.children as ElementLike).props!.filled)
+    expect(filled).toEqual([true, true, true, true, false])
+    expect((findStar(tree, '送出評分').props as { disabled?: boolean }).disabled).toBe(false)
   })
 
   it('未評分時 5 顆全空心且非品牌色', async () => {

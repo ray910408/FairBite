@@ -680,6 +680,7 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     // 《店名》全文——prompt 查詢必然發生在退房 commit 之後，且 fallback「上一餐」
     // 騙不過全文比對，這才是 0022 RLS 條款的 E2E 證據。
     await leaveViaHome(b) // 確認後才退房、settle 才繼續
+    await b.getByRole('button', { name: '送出評分' }).click()
     await b.reload()
     await expect(b.getByText(`上次吃的《${winnerName}》滿意嗎？`)).toBeVisible()
     await b.getByRole('button', { name: '5 顆星' }).click()
@@ -693,6 +694,7 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await expect(a.getByRole('heading', { name: '足跡' })).toBeVisible()
     const firstRow = a.getByRole('listitem').first()
     await expect(firstRow).toContainText(winnerName)
+    await firstRow.getByRole('button', { name: '送出評分' }).click()
     // 未評列預設收合為 chip，點擊展開 StarRow（design review D4）
     await firstRow.getByRole('button', { name: '尚未評分 · 補評' }).click()
     await firstRow.getByRole('button', { name: '3 顆星' }).click()
