@@ -112,6 +112,13 @@ review 用 mutation 找到、新舊測試都不會發現的改壞方式。不是
 - **JoinPage:** 換邀請碼後，舊那一輪晚到的錯誤顯示在新邀請上（數道守衛各自都沒守住）；只填空白的暱稱照樣送出；忙碌中也顯示重試；換邀請時沒收掉暱稱表單。
 - **HomePage:** 用邀請碼加入成功後的導頁；切換用餐時間模式時沒清掉建房錯誤。
 
+### 封鎖網站資料與加入頁的舊問題（修讀碼問題時 review 發現，2026-10-13，未修）
+
+- **封鎖網站資料的瀏覽器，正式會員建不了房:** `HomePage.tsx` 的 `loadAuthState` 讀 `guest-upgrade:<uid>` 丟錯，被 catch 接成 `authState='error'`，建房鈕換成一顆永遠失敗的「重新檢查」。supabase-js 在 storage 被封鎖時會退回記憶體儲存，登入本身可用，所以影響比原本以為的大。`HomePage.test.tsx` 的「localStorage error 時 fail closed 並可重試」把這當成預期行為：讀不到升級標記就分不出訪客或會員。要改得先決定 fail closed 是否仍是想要的。
+- **AuthPage 讀升級標記丟錯時狀態沒更新:** `applyUser` 在 `setUser` 之後讀 `guest-upgrade:<uid>`，丟錯被 `refreshUser` 的 `.catch` 吞掉，後面的升級狀態與模式都沒套用。
+- **GuestRegistrationPrompt 記回房路徑沒包 try:** 「註冊並保留紀錄」的 onClick 直接 `sessionStorage.setItem`，丟錯時回房路徑記不下來，click handler 也中斷。
+- **加入頁的多房確認框:** `LeaveRoomsBody` 多房文案寫「回首頁會一次全部離開」，但加入頁按的是「離開並加入」；按下「離開並加入」送出中（busy）時，各房的回房鈕仍可點。
+
 ## /qa-only 線上站 QA + PR #17 review 殘留（2026-08-16）
 
 QA 對象 https://ray910408.github.io/FairBite/#/auth（headless，test 帳號）。ISSUE 編號對應 `.gstack/qa-reports/qa-report-fairbite-2026-08-16.md`（該目錄被 .gitignore 蓋住，只在本機）。PR #17 已修 ISSUE-001（回首頁離席確認）與 ISSUE-003（星排視覺）；ISSUE-005／006／008 已修，見封存。
