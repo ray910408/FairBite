@@ -44,8 +44,7 @@ export function LeaveConfirm({ title, onClose, actions, actionsClassName, childr
 // 失敗時會保留舊物件（useRoom 的 refetch 只在查到列時更新 room、查無列才清成 null），拿它的 status 講
 // 「之後可用邀請碼重新加入」時 join_room 可能早就不匹配了。
 //
-// HomePage 的 mount 攔截不共用這段：它已經在首頁（時態不同），而且回房入口必須是
-// <button>——React 的 autoFocus 只對表單控制項生效，焦點要落在安全那顆。
+// HomePage 的 mount 攔截不共用這段：它已經在首頁，時態不同。
 //
 // 不同於上面的外殼，各頁（RoomPage、HistoryPage、JoinPage）都以 <LeaveRoomsBody /> 渲染：它是真元件，可以用 hook。
 //
