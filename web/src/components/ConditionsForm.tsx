@@ -114,8 +114,12 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
     const next = !form.ready
     if (next) {
       setFlushingForReady(true)
-      const flushed = await flushPending()
-      setFlushingForReady(false) // 與下面的 setForm(ready) 同批 commit，中間沒有解凍的一幀
+      let flushed = false
+      try {
+        flushed = await flushPending()
+      } finally {
+        setFlushingForReady(false) // 與下面的 setForm(ready) 同批 commit，中間沒有解凍的一幀
+      }
       if (!flushed) return
     }
     if (currentVersion.current !== searchVersion) return
