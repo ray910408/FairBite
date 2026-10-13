@@ -90,7 +90,7 @@ feat/phase-1 全分支 final review 的 DEFER-P2 批次。原本優先的前三�
 - **#11** 並發 draw 的 23505 / transition conflict 無實測（僅狀態前置檢查覆蓋）。
 - **#12** `[]` / `null` 契約無測試斷言（現有測試 excluded/kept 皆非空）。
 - **#13** createRoom 錯誤訊息透傳 raw message，與 join 不對稱。
-- **#14** **UI 元件測試基建（@testing-library + jsdom）一次性補全** — slider label、toggle `aria-pressed`、auth/home `aria-label` 已於 2026-08-06 /qa 處理；殘留料理/禁忌群組的程式化關聯，與 RatingPrompt、RecentRatingPrompt、偏好建議橫幅、`applyDefaultPrefs` 的元件層零自動化覆蓋一次補全。偏好建議橫幅 UI 膠水依既有 test-plan artifact 手動 QA，不另上 E2E（P3 eng review D14/D15）。Round 2 足跡頁新增缺口一併納入：HistoryPage 載入／錯誤＋重試／空狀態／>500 footer 四態，與清單列 StarRow 錯誤分支；另 Round 2 E2E 重排後，房內 RatingPrompt 的互動寫入分支（點星後 onRated=setRating 即時切靜態文案的膠水）E2E 覆蓋歸零，批次補全時一併恢復。Round 4 新增：RoomPage 搜尋中（searching）房間設定控制 disabled 的元件斷言一併納入批次。2026-10-11 新增：RoomPage 拆檔後 18 個 state 仍集中在頁面，因為 `RoomPage.test.ts` 依呼叫順序 mock `useState`／`useEffect`（子元件多開一個 state 就擠動索引）；這支測試改成行為導向後，state 才能下放到 `RoomSettings`、`DrawPanel` 等子元件。2026-10-12：RoomPage 與 HistoryPage 的測試已改成行為導向（`RoomPage.test.tsx`／`HistoryPage.test.tsx`：@testing-library/react＋jsdom，檔頭 `// @vitest-environment jsdom`，共用設定在 `web/src/test/dom.ts`，全域 environment 仍是 node），Round 4 的 searching 停用房間設定斷言一併補上；`RoomHeader`／`MemberList`／`RoomSettings` 已改回 JSX，兩頁的離席流程抽成 `hooks/useLeaveDialog.ts`，RoomPage 的 state 現在可以下放。上面列的缺口裡，已有行為測試的：足跡頁空狀態（「回首頁開一場」入口）、清單列補評送出後焦點回到該列、StrictMode 雙掛載時晚到的舊載入不蓋掉新結果，以及房內定案後依 `is_anonymous` 顯示的訪客註冊提示；仍無覆蓋的：HistoryPage 載入中／錯誤＋重試／>500 footer、清單列 StarRow 的錯誤分支、房內 RatingPrompt 的互動寫入分支。2026-10-13：其餘 mock react hook 的測試也改成行為導向，`web/src` 已無 `vi.mock('react')`——HomePage／JoinPage／AuthPage／ConditionsForm／StarRow 改成 `.test.tsx` 真的 render，`hooks/useRoom.test.ts`、`hooks/useMidnightRerender.test.ts` 改用 `renderHook`，`Wheel.recovery.test.tsx`、`GuestRegistrationPrompt.test.tsx` 改真的 render；`LeaveConfirm` 各頁已改回 `<LeaveConfirm />`。`useRoomSettingsWrites` 只開 ref、閘門與用餐時間草稿放在 RoomPage 是當初遷就舊測試的寫法，現在可以收進 hook。
+- **#14** **UI 元件測試基建（@testing-library + jsdom）一次性補全** — slider label、toggle `aria-pressed`、auth/home `aria-label` 已於 2026-08-06 /qa 處理；殘留料理/禁忌群組的程式化關聯，與 RatingPrompt、RecentRatingPrompt、偏好建議橫幅、`applyDefaultPrefs` 的元件層零自動化覆蓋一次補全。偏好建議橫幅 UI 膠水依既有 test-plan artifact 手動 QA，不另上 E2E（P3 eng review D14/D15）。Round 2 足跡頁新增缺口一併納入：HistoryPage 載入／錯誤＋重試／空狀態／>500 footer 四態，與清單列 StarRow 錯誤分支；另 Round 2 E2E 重排後，房內 RatingPrompt 的互動寫入分支（點星後 onRated=setRating 即時切靜態文案的膠水）E2E 覆蓋歸零，批次補全時一併恢復。Round 4 新增：RoomPage 搜尋中（searching）房間設定控制 disabled 的元件斷言一併納入批次。2026-10-11 新增：RoomPage 拆檔後 18 個 state 仍集中在頁面，因為 `RoomPage.test.ts` 依呼叫順序 mock `useState`／`useEffect`（子元件多開一個 state 就擠動索引）；這支測試改成行為導向後，state 才能下放到 `RoomSettings`、`DrawPanel` 等子元件。2026-10-12：RoomPage 與 HistoryPage 的測試已改成行為導向（`RoomPage.test.tsx`／`HistoryPage.test.tsx`：@testing-library/react＋jsdom，檔頭 `// @vitest-environment jsdom`，共用設定在 `web/src/test/dom.ts`，全域 environment 仍是 node），Round 4 的 searching 停用房間設定斷言一併補上；`RoomHeader`／`MemberList`／`RoomSettings` 已改回 JSX，兩頁的離席流程抽成 `hooks/useLeaveDialog.ts`，RoomPage 的 state 現在可以下放。上面列的缺口裡，已有行為測試的：足跡頁空狀態（「回首頁開一場」入口）、清單列補評送出後焦點回到該列、StrictMode 雙掛載時晚到的舊載入不蓋掉新結果，以及房內定案後依 `is_anonymous` 顯示的訪客註冊提示；仍無覆蓋的：HistoryPage 載入中／錯誤＋重試／>500 footer、清單列 StarRow 的錯誤分支、房內 RatingPrompt 的互動寫入分支。2026-10-13：其餘 mock react hook 的測試也改成行為導向，`web/src` 已無 `vi.mock('react')`——HomePage／JoinPage／AuthPage／ConditionsForm／StarRow 改成 `.test.tsx` 真的 render，`hooks/useRoom.test.ts`、`hooks/useMidnightRerender.test.ts` 改用 `renderHook`，`Wheel.recovery.test.tsx`、`GuestRegistrationPrompt.test.tsx` 改真的 render；`LeaveConfirm` 各頁已改回 `<LeaveConfirm />`。首頁評分卡（RecentRatingPrompt → StarRow 寫入 → `onRated` 重新載入建議）與偏好建議橫幅的文字也已由 `HomePage.test.tsx` 實際跑過；mutation 找到、新舊測試都沒守住的分支見下方「行為測試仍未守住的分支」。`useRoomSettingsWrites` 只開 ref、閘門與用餐時間草稿放在 RoomPage 是當初遷就舊測試的寫法，現在可以收進 hook。
 - **#15** unmount 未清 debounce timer。
 - **#18** `Wheel` 的 `!s` 分支是 dead-end（實務不可達）。
 
@@ -99,6 +99,24 @@ feat/phase-1 全分支 final review 的 DEFER-P2 批次。原本優先的前三�
 - **What:** 搜尋進行中房間被刪（例如唯一成員的房主在 Places 呼叫期間從另一個分頁退房），仍回 500「資料庫錯誤」。有餐廳時，`freezeSearchCandidates` 的 `assertHostInTx` 回 `ErrRoomNotFound`，它不是 `ErrNotHost`，於是走 `serverError`，log 記 "room not found"；零筆時，`rejectChangedSearchSnapshot` 從 `checkSearchSnapshot` 拿到 `pgx.ErrNoRows`，log 記 "no rows in result set"。
 - **Why:** 改之前也是 500，不算回歸；要測就得編排搜尋競態，成本高，所以延後。其他房間動作在房間被刪後已回 404「房間不存在」。
 - **修法:** 在 `server/search.go` 的 `assertHostInTx` 錯誤分支先判斷 `ErrRoomNotFound`，回 404「房間不存在」；`checkSearchSnapshot`（`relocation.go`）讀房間列的 `ErrNoRows` 也用 `roomRowErr` 轉成同一個 sentinel。光轉 sentinel 仍是 500，因為 `rejectChangedSearchSnapshot` 只分 `ErrSearchChanged` 與其他：`rejectChangedSearchSnapshot` 也要加 `ErrRoomNotFound` → 404 的分支。它的兩個呼叫端要一併檢查：零筆的 `respondNoRestaurants`，以及 provider 失敗且沒有快取的那條路徑（`fetchSearchRestaurants`，回 502 之前）。
+
+### 行為測試仍未守住的分支（測試轉換 review，2026-10-13）
+
+review 用 mutation 找到、新舊測試都不會發現的改壞方式。不是這次轉換造成的退步，逐條補即可。
+
+- **useRoom:** 拿掉 `live` 旗標（舊 channel 晚到的 CLOSED 蓋掉新連線）；CLOSED／CHANNEL_ERROR 時不把 `connected` 設成 false；旁表查詢錯誤沒算進 `loadError`；旁表出錯時照樣覆寫既有 state。`useRoom.test.ts` 已有 channel status 的替身，補起來便宜。
+- **ConditionsForm:** 拖曳中 debounce 不重新起算。
+- **StarRow:** 預覽與已選誰優先對調；重試前沒先清掉舊錯誤。
+- **GuestRegistrationPrompt:** 註冊連結沒帶 `?mode=register`。
+- **AuthPage:** 匿名使用者在註冊模式也顯示顯示名稱欄；匿名使用者也套用升級標記；`applyUser` 的 else 分支沒把 resume 重設。預熱 `fetch` 的 `.catch` 在目前寫法下測不到：`vi.fn` 回傳的 promise 本身就算有人接。
+- **JoinPage:** 換邀請碼後，舊那一輪晚到的錯誤顯示在新邀請上（數道守衛各自都沒守住）；只填空白的暱稱照樣送出；忙碌中也顯示重試；換邀請時沒收掉暱稱表單。
+- **HomePage:** 用邀請碼加入成功後的導頁；已忽略的建議仍顯示；切換用餐時間模式時沒清掉建房錯誤。
+
+### 讀碼發現的舊問題（測試轉換時發現，2026-10-13，未修）
+
+- **HomePage 讀忽略清單沒包 try:** `loadSuggestions` 讀 `prefs-suggest-dismissed:<uid>` 時，storage 被封鎖會丟錯，整個載入變成 unhandled rejection：建議靜默消失，也不顯示「口味建議暫時載入失敗」。「忽略」鈕的 `setItem` 也會在 click handler 裡丟錯。這種瀏覽器連 Supabase 登入都有問題，影響小。
+- **ConditionsForm 按「我準備好了」到條件寫完之間沒鎖滑桿:** `toggleReady` 先 `await flushPending()` 才 `setForm(ready)`，這一個來回期間滑桿還能拖；拖出的那筆排進 400ms debounce，會在 ready 成立後才寫入。
+- **JoinPage 多房時「取消並回原房」固定回 `rooms[0]`:** `LeaveRoomsBody` 已經每間各給「回到 XXX」，這顆鈕卻替使用者猜回哪一間，和 HistoryPage／HomePage「不替使用者猜」的做法不一致。
 
 ## /qa-only 線上站 QA + PR #17 review 殘留（2026-08-16）
 
