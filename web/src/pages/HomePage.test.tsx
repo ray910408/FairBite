@@ -165,6 +165,20 @@ function rememberDeparture(point: DeparturePoint, uid = ME) {
   localStorage.setItem(`last-departure:${uid}`, JSON.stringify(point))
 }
 
+// 瀏覽器封鎖網站資料時 localStorage 一碰就丟錯。只封鎖指定前綴的 key，其他讀寫照常
+function blockStorage(prefix: string) {
+  const readItem = Storage.prototype.getItem
+  const writeItem = Storage.prototype.setItem
+  vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
+    if (key.startsWith(prefix)) throw new Error('storage blocked')
+    return readItem.call(this, key)
+  })
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+    if (key.startsWith(prefix)) throw new Error('storage blocked')
+    writeItem.call(this, key, value)
+  })
+}
+
 function expectNotice(text: string | null, ...args: Parameters<typeof leaveNotice>) {
   for (const line of leaveNotice(...args)) expect(text).toContain(line)
 }
@@ -504,6 +518,60 @@ describe('HomePage 口味建議查詢失敗（Task 11）', () => {
     await settle()
     expect(mocks.write).toHaveBeenCalledWith('dining_history')
     expect(mocks.prefs).toHaveBeenCalledTimes(loads)
+  })
+
+  it('按忽略會記在這台裝置，之後重新載入不再建議同一菜系', async () => {
+    localStorage.setItem(`prefs-suggest-dismissed:${ME}`, 'korean')
+    await renderHome()
+    fireEvent.click(button('忽略'))
+    expect(suggestion()).toBeNull()
+    expect(localStorage.getItem(`prefs-suggest-dismissed:${ME}`)).toBe('korean,japanese')
+
+    const loads = mocks.prefs.mock.calls.length
+    await rateRecentMeal()
+    expect(mocks.prefs.mock.calls.length).toBeGreaterThan(loads) // 確實重新載入過
+    expect(suggestion()).toBeNull()
+  })
+
+  it('忽略清單讀寫都丟錯：建議照常顯示，按忽略照樣收起', async () => {
+    blockStorage('prefs-suggest-dismissed:')
+    await renderHome()
+    expect(suggestion()).toContain('你常吃：日式。')
+    expect(screen.queryByText(LOAD_ERROR)).toBeNull()
+
+    fireEvent.click(button('忽略'))
+    expect(suggestion()).toBeNull()
+  })
+})
+
+describe('HomePage 評分卡的略過', () => {
+  const ratingCard = () => screen.queryByText(/滿意嗎/)?.textContent ?? null
+
+  beforeEach(() => {
+    mocks.recent.mockResolvedValue({ data: [{ id: 'h1', rating: null, restaurants: { name: '拉麵店' } }], error: null })
+  })
+
+  it('略過記在這台裝置：同一筆之後不再出現', async () => {
+    localStorage.setItem(`rating-dismissed:${ME}`, 'h0')
+    const view = await renderHome()
+    expect(ratingCard()).toBe('上次吃的《拉麵店》滿意嗎？')
+    fireEvent.click(button('略過'))
+    expect(ratingCard()).toBeNull()
+    expect(localStorage.getItem(`rating-dismissed:${ME}`)).toBe('h0,h1')
+
+    view.unmount()
+    await renderHome()
+    expect(mocks.recent).toHaveBeenCalledTimes(2) // 確實又查了一次
+    expect(ratingCard()).toBeNull()
+  })
+
+  it('略過清單讀寫都丟錯：評分卡照常出現，按略過照樣收起', async () => {
+    blockStorage('rating-dismissed:')
+    await renderHome()
+    expect(ratingCard()).toBe('上次吃的《拉麵店》滿意嗎？')
+
+    fireEvent.click(button('略過'))
+    expect(ratingCard()).toBeNull()
   })
 })
 

@@ -326,6 +326,18 @@ describe('確認離房後才加入', () => {
     expect(leaveRooms).not.toHaveBeenCalled()
     expect(joinCalls()).toHaveLength(0)
   })
+
+  it('多房時不替使用者猜回哪一間：沒有「取消並回原房」，從各房的回房鈕回去', async () => {
+    vi.mocked(fetchLeaveRooms).mockResolvedValueOnce([leaveRoom('first-room', 'FIRST1'), leaveRoom('second-room', 'SECND2')])
+    await renderJoin()
+    expect(within(dialog()).queryByRole('button', { name: '取消並回原房' })).toBeNull()
+    // 預設落在不會離房的那顆
+    expect(document.activeElement).toBe(within(dialog()).getByRole('button', { name: '回到 FIRST1' }))
+
+    fireEvent.click(within(dialog()).getByRole('button', { name: '回到 SECND2' }))
+    expect(landed()).toBe('到了 /room/second-room（REPLACE）') // 上一頁不再回到加入頁
+    expect(leaveRooms).not.toHaveBeenCalled()
+  })
 })
 
 // 每一輪路由（:code）各自擁有自己的非同步工作：離頁或換邀請碼後，舊的那一輪晚到也不得再動作

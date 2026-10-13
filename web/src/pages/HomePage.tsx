@@ -12,6 +12,7 @@ import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import { getUid } from '../lib/uid'
 import { applyDefaultPrefs } from '../lib/defaultPrefs'
 import { inviteCodeFromLink } from '../lib/invite'
+import { addDismissed, readDismissed } from '../lib/dismissed'
 import { Alert, Logo, LogOut, Spinner } from '../components/icons'
 import { LeaveConfirm } from '../components/LeaveConfirm'
 import { ThemeMenu } from '../components/ThemeMenu'
@@ -81,7 +82,7 @@ export default function HomePage() {
     const current = Array.isArray(dp.cuisines) ? (dp.cuisines as string[]) : []
     const tags = suggestCuisines([...(lowRows ?? []), ...(history ?? [])], current,
       CUISINE_OPTIONS.map(([k]) => k))
-    const dismissed = (localStorage.getItem(`prefs-suggest-dismissed:${uid}`) ?? '').split(',')
+    const dismissed = readDismissed(`prefs-suggest-dismissed:${uid}`)
     setMyUserId(uid)
     setPrefs(dp)
     setSuggestion(tags.filter(t => !dismissed.includes(t)))
@@ -378,10 +379,7 @@ export default function HomePage() {
                 else setPrefsError('偏好儲存失敗，請稍後再試')
               }}>加入預設偏好</button>
               <button className="btn btn-quiet" onClick={() => {
-                const dismissedKey = `prefs-suggest-dismissed:${myUserId}`
-                const prev = (localStorage.getItem(dismissedKey) ?? '').split(',')
-                localStorage.setItem(dismissedKey,
-                  [...new Set([...prev, ...suggestion])].filter(Boolean).join(','))
+                addDismissed(`prefs-suggest-dismissed:${myUserId}`, suggestion)
                 setSuggestion([])
               }}>忽略</button>
             </div>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { getUid } from '../lib/uid'
+import { addDismissed, readDismissed } from '../lib/dismissed'
 import StarRow from './StarRow'
 
 // 餐後評分（spec §5 滿足度）：輕量、永遠可跳過。跳過 = 不寫任何東西，
@@ -61,8 +62,7 @@ export function RecentRatingPrompt({ onRated }: { onRated?: () => void } = {}) {
         .limit(1)
       const r = data?.[0]
       if (!live || !r) return
-      const dismissed = (localStorage.getItem(`rating-dismissed:${uid}`) ?? '').split(',')
-      if (dismissed.includes(r.id)) return
+      if (readDismissed(`rating-dismissed:${uid}`).includes(r.id)) return
       setUserId(uid)
       setRow({ id: r.id, name: r.restaurants?.name ?? '上一餐' })
     })()
@@ -76,10 +76,7 @@ export function RecentRatingPrompt({ onRated }: { onRated?: () => void } = {}) {
       <StarRow historyId={row.id} onRated={() => { setRated(true); onRated?.() }} />
       <button type="button" className="text-sm text-fg-muted underline"
         onClick={() => {
-          const dismissedKey = `rating-dismissed:${userId}`
-          const dismissed = (localStorage.getItem(dismissedKey) ?? '').split(',')
-          localStorage.setItem(dismissedKey,
-            [...new Set([...dismissed, row.id])].filter(Boolean).join(','))
+          addDismissed(`rating-dismissed:${userId}`, [row.id])
           setRow(null)
         }}>
         略過
