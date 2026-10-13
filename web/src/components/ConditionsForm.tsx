@@ -11,6 +11,8 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
     onFlushAvailable?: (flush: (() => Promise<boolean>) | null) => void }) {
   const [form, setForm] = useState(me)
   const [saveError, setSaveError] = useState('')
+  // 按下準備後要先等條件寫完：這段期間拖出的值會在準備成立後才寫入，其他人就看到已準備的人條件還在變
+  const [flushingForReady, setFlushingForReady] = useState(false)
   const savedRef = useRef(me)   // 最後一次確認寫入成功的值（失敗時還原用）
   const editGeneration = useRef(0)
   const durableGeneration = useRef(0)
@@ -18,9 +20,9 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
   const writesValid = useRef(true)
   const pendingWrite = useRef<{ generation: number; value: MemberRow } | null>(null)
   const writeChain = useRef(Promise.resolve(true))
-  // 凍結（CONTEXT.md「準備」）：房主端搜尋 in-flight（disabled prop）或成員已按準備。
+  // 凍結（CONTEXT.md「準備」）：房主端搜尋 in-flight（disabled prop）或成員已按準備（含等條件寫完那段）。
   // ready 鈕不受 frozen 影響——取消準備即解凍。
-  const frozen = disabled || (!isHost && form.ready)
+  const frozen = disabled || flushingForReady || (!isHost && form.ready)
   const pushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const currentVersion = useRef(searchVersion)
   currentVersion.current = searchVersion
@@ -110,7 +112,12 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
   // 夾帶 stale ready。RPC 在 room lock 內核對點擊時的版本，換地點後舊請求不得恢復準備。
   async function toggleReady() {
     const next = !form.ready
-    if (next && !await flushPending()) return
+    if (next) {
+      setFlushingForReady(true)
+      const flushed = await flushPending()
+      setFlushingForReady(false) // 與下面的 setForm(ready) 同批 commit，中間沒有解凍的一幀
+      if (!flushed) return
+    }
     if (currentVersion.current !== searchVersion) return
     setForm(f => ({ ...f, ready: next }))
     let saved = false

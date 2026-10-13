@@ -294,8 +294,8 @@ describe('ConditionsForm 條件寫入防線', () => {
     expect(mocks.rpc).toHaveBeenCalledTimes(1)
   })
 
-  // 準備要先等條件寫完，這段時間還沒凍結、手指還在拖：晚到的條件寫入成功，
-  // 不能把 ready RPC 已確認的「已準備」從 durable snapshot 裡倒退掉
+  // 晚到的條件寫入成功，不能把 ready RPC 已確認的「已準備」從 durable snapshot 裡倒退掉。
+  // 畫面在等條件寫完時已凍結（見下方凍結測試），這裡直接對 slider 派 change，只為了讓條件寫入夾住 ready RPC
   it('pending 條件寫入成功不會倒退 ready 專用寫入保存的值', async () => {
     const first = deferred<WriteResult>()
     const second = deferred<WriteResult>()
@@ -370,6 +370,7 @@ describe('ConditionsForm 條件寫入防線', () => {
 
     expect(mocks.rpc).not.toHaveBeenCalled()
     expect(pressed(button('我準備好了'))).toBe('false')
+    expect(budget().disabled).toBe(false)
   })
 
   it('舊準備回應晚於新地點，不把新地點畫面改回已準備', async () => {
@@ -410,6 +411,8 @@ describe('ConditionsForm 條件寫入防線', () => {
 })
 
 describe('ConditionsForm 凍結（準備／搜尋中）', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+
   it('成員 ready 時所有條件輸入凍結、ready 鈕仍可點', () => {
     render(form({ me: { ...me, ready: true } }))
     expect(screen.getAllByRole('slider')).toHaveLength(2)
@@ -425,6 +428,35 @@ describe('ConditionsForm 凍結（準備／搜尋中）', () => {
   it('未準備且未搜尋時可編輯', () => {
     render(form())
     expect(controls().length).toBeGreaterThan(0)
+    expect(controls().filter(el => el.disabled)).toEqual([])
+  })
+
+  // 按下準備要先等條件寫完：這段期間拖出的值會在準備成立後才寫入，其他人就看到已準備的人條件還在變
+  it('按準備後條件還在寫：還沒成為已準備，輸入就先凍結', async () => {
+    const condition = deferred<WriteResult>()
+    mocks.eqUser.mockReturnValueOnce(condition.promise)
+    render(form())
+
+    drag(900)
+    fireEvent.click(button('我準備好了'))
+    await settle()
+    expect(mocks.rpc).not.toHaveBeenCalled()
+    expect(controls().filter(el => !el.disabled)).toEqual([button('我準備好了')])
+
+    await act(async () => condition.resolve({ error: null, count: 1 }))
+    await settle()
+    expect(controls().filter(el => !el.disabled)).toEqual([button('已準備（點擊取消）')])
+  })
+
+  it('按準備時條件寫入失敗：不送準備，輸入解凍讓人改', async () => {
+    mocks.eqUser.mockResolvedValueOnce(FAILED)
+    render(form())
+
+    drag(900)
+    fireEvent.click(button('我準備好了'))
+    await settle()
+    expect(alertText()).toBe(CONDITION_ERROR)
+    expect(mocks.rpc).not.toHaveBeenCalled()
     expect(controls().filter(el => el.disabled)).toEqual([])
   })
 })
