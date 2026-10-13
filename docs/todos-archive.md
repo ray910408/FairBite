@@ -70,6 +70,12 @@
 - **#16** ~~搜尋鈕無 in-flight guard（可連按）~~ — 已解決：`RoomPage.tsx` 的 `searchInFlight` ref 擋連按（7e322c4），伺服器端另有 per-room single-flight（`TestSearchSingleFlightPerRoom`），E2E 斷言快速連點只送一次 request。
 - **#17** ~~首次掛載期的暫時性讀取失敗會閃「找不到房間」頁 — 應三態化（loading / notFound / ok）~~ — 已解決：`useRoom.ts` 回傳 `notFound`，`RoomPage.tsx:53` 僅在 `notFound` 為真時顯示該頁。
 
+### 讀碼發現的舊問題（測試轉換時發現，2026-10-13）
+
+- ~~**HomePage 讀忽略清單沒包 try:** `loadSuggestions` 讀 `prefs-suggest-dismissed:<uid>` 時，storage 被封鎖會丟錯，整個載入變成 unhandled rejection：建議靜默消失，也不顯示「口味建議暫時載入失敗」。「忽略」鈕的 `setItem` 也會在 click handler 裡丟錯。這種瀏覽器連 Supabase 登入都有問題，影響小。~~ 已結案（2026-10-13）：讀寫收進 `lib/dismissed.ts` 並包 try，讀不到當作沒忽略過，寫不進去仍先收起。首頁評分卡的「略過」清單是同一寫法，一起改用。
+- ~~**ConditionsForm 按「我準備好了」到條件寫完之間沒鎖滑桿:** `toggleReady` 先 `await flushPending()` 才 `setForm(ready)`，這一個來回期間滑桿還能拖；拖出的那筆排進 400ms debounce，會在 ready 成立後才寫入。~~ 已結案（2026-10-13）：等條件寫完的期間也算凍結；寫入失敗或地點改變時解凍。
+- ~~**JoinPage 多房時「取消並回原房」固定回 `rooms[0]`:** `LeaveRoomsBody` 已經每間各給「回到 XXX」，這顆鈕卻替使用者猜回哪一間，和 HistoryPage／HomePage「不替使用者猜」的做法不一致。~~ 已結案（2026-10-13）：這顆鈕只在單房時出現，多房時從各房的「回到 XXX」回去。
+
 ## /qa-only 線上站 QA + PR #17 review 殘留（2026-08-16）
 
 - ~~**ISSUE-005（Low）足跡頁把 3/5 星畫成 3 顆滿星** — `HistoryPage.tsx` 的清單列只渲染 N 顆實心星、沒有空心星做 5 星刻度，3 分讀起來像滿分。摘要區的「平均 3.0 ★」正確，只有列表圖示缺刻度。`icons.tsx` 的 `Star` 已有 `filled` prop（PR #17 加的），補刻度是小改。~~ — 已修（c8d9c57，2026-08-22）：清單列固定畫 5 顆星，未達分數者為空心；2026-10-08 查證。

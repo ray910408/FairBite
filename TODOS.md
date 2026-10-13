@@ -110,13 +110,7 @@ review 用 mutation 找到、新舊測試都不會發現的改壞方式。不是
 - **GuestRegistrationPrompt:** 註冊連結沒帶 `?mode=register`。
 - **AuthPage:** 匿名使用者在註冊模式也顯示顯示名稱欄；匿名使用者也套用升級標記；`applyUser` 的 else 分支沒把 resume 重設。預熱 `fetch` 的 `.catch` 在目前寫法下測不到：`vi.fn` 回傳的 promise 本身就算有人接。
 - **JoinPage:** 換邀請碼後，舊那一輪晚到的錯誤顯示在新邀請上（數道守衛各自都沒守住）；只填空白的暱稱照樣送出；忙碌中也顯示重試；換邀請時沒收掉暱稱表單。
-- **HomePage:** 用邀請碼加入成功後的導頁；已忽略的建議仍顯示；切換用餐時間模式時沒清掉建房錯誤。
-
-### 讀碼發現的舊問題（測試轉換時發現，2026-10-13，未修）
-
-- **HomePage 讀忽略清單沒包 try:** `loadSuggestions` 讀 `prefs-suggest-dismissed:<uid>` 時，storage 被封鎖會丟錯，整個載入變成 unhandled rejection：建議靜默消失，也不顯示「口味建議暫時載入失敗」。「忽略」鈕的 `setItem` 也會在 click handler 裡丟錯。這種瀏覽器連 Supabase 登入都有問題，影響小。
-- **ConditionsForm 按「我準備好了」到條件寫完之間沒鎖滑桿:** `toggleReady` 先 `await flushPending()` 才 `setForm(ready)`，這一個來回期間滑桿還能拖；拖出的那筆排進 400ms debounce，會在 ready 成立後才寫入。
-- **JoinPage 多房時「取消並回原房」固定回 `rooms[0]`:** `LeaveRoomsBody` 已經每間各給「回到 XXX」，這顆鈕卻替使用者猜回哪一間，和 HistoryPage／HomePage「不替使用者猜」的做法不一致。
+- **HomePage:** 用邀請碼加入成功後的導頁；切換用餐時間模式時沒清掉建房錯誤。
 
 ## /qa-only 線上站 QA + PR #17 review 殘留（2026-08-16）
 
