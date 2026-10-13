@@ -48,7 +48,10 @@ export function LeaveConfirm({ title, onClose, actions, actionsClassName, childr
 // <button>——React 的 autoFocus 只對表單控制項生效，焦點要落在安全那顆。
 //
 // 不同於上面的外殼，各頁（RoomPage、HistoryPage、JoinPage）都以 <LeaveRoomsBody /> 渲染：它是真元件，可以用 hook。
-export function LeaveRoomsBody({ target }: { target: LeaveTarget }) {
+//
+// onReturn（JoinPage）：多房時加入頁沒有「取消」接住焦點，回房入口改成 <button> 才能 autoFocus；
+// 怎麼導航由呼叫端決定（加入頁用 replace，上一頁才不會回到加入頁再跑一次加入）
+export function LeaveRoomsBody({ target, onReturn }: { target: LeaveTarget; onReturn?: (roomId: string) => void }) {
   const rooms = target.kind === 'rooms' ? target.rooms : []
   const multi = rooms.length > 1
   return (
@@ -67,14 +70,16 @@ export function LeaveRoomsBody({ target }: { target: LeaveTarget }) {
           你目前在 {rooms.length} 個房間裡，回首頁會一次全部離開：
         </p>
       )}
-      {rooms.map(r => (
+      {rooms.map((r, i) => (
         <div key={r.id} className={multi ? 'space-y-2 rounded-card border border-border p-3' : ''}>
           {multi && <p className="text-sm font-semibold">房間 {r.code}</p>}
           <ul className="list-disc space-y-1 pl-5 text-sm text-fg-muted">
             {leaveNotice(r.status, r.memberCount, r.code, r.isHost).map(p => <li key={p}>{p}</li>)}
           </ul>
-          {multi && (
-            <Link to={`/room/${r.id}`} className="btn btn-quiet w-full">回到 {r.code}</Link>
+          {multi && (onReturn
+            ? <button type="button" autoFocus={i === 0} className="btn btn-quiet w-full"
+                onClick={() => onReturn(r.id)}>回到 {r.code}</button>
+            : <Link to={`/room/${r.id}`} className="btn btn-quiet w-full">回到 {r.code}</Link>
           )}
         </div>
       ))}

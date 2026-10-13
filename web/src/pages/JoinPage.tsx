@@ -183,7 +183,7 @@ export default function JoinPage() {
       {leaveTarget && (
         <LeaveConfirm title="你目前在另一個房間" actionsClassName="sm:flex-row"
           actions={<>
-            {/* 多房時各房區塊各有「回到 XXX」（LeaveRoomsBody），不替使用者猜要回哪一間 */}
+            {/* 多房時各房區塊各有「回到 XXX」（LeaveRoomsBody，焦點落在第一顆），不替使用者猜要回哪一間 */}
             {leaveTarget.kind === 'rooms' && leaveTarget.rooms.length === 1 && (
               <button autoFocus className="btn btn-quiet flex-1" type="button"
                 onClick={() => nav(`/room/${leaveTarget.rooms[0].id}`, { replace: true })}>取消並回原房</button>
@@ -193,7 +193,7 @@ export default function JoinPage() {
           </>}>
           {error && <p role="alert" className="banner bg-danger-soft text-danger">{error}</p>}
           <p className="text-sm text-fg-muted">加入新房前必須先離開目前房間；不會自動切換或保留兩邊房籍。</p>
-          <LeaveRoomsBody target={leaveTarget} />
+          <LeaveRoomsBody target={leaveTarget} onReturn={id => nav(`/room/${id}`, { replace: true })} />
         </LeaveConfirm>
       )}
     </>
