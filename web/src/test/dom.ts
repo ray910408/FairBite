@@ -10,6 +10,8 @@ import { afterEach, beforeEach, vi } from 'vitest'
 
 // jsdom 沒有實作、頁面會呼叫的瀏覽器 API
 Element.prototype.scrollIntoView ??= function scrollIntoView() {}
+// jsdom 有 scrollTo，但呼叫只會印「Not implemented」；要斷言的測試自己 stubGlobal
+window.scrollTo = function scrollTo() {}
 
 beforeEach(() => {
   vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query }))
