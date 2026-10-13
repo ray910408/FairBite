@@ -183,7 +183,8 @@ export default function JoinPage() {
       {leaveTarget && (
         <LeaveConfirm title="你目前在另一個房間" actionsClassName="sm:flex-row"
           actions={<>
-            {leaveTarget.kind === 'rooms' && leaveTarget.rooms.length > 0 && (
+            {/* 多房時各房區塊各有「回到 XXX」（LeaveRoomsBody），不替使用者猜要回哪一間 */}
+            {leaveTarget.kind === 'rooms' && leaveTarget.rooms.length === 1 && (
               <button autoFocus className="btn btn-quiet flex-1" type="button"
                 onClick={() => nav(`/room/${leaveTarget.rooms[0].id}`, { replace: true })}>取消並回原房</button>
             )}
