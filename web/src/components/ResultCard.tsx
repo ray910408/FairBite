@@ -31,7 +31,7 @@ export default function ResultCard({ draw, candidates, me, confirmed = true }: {
           <span className="h-11 text-xl leading-[1.05] [writing-mode:vertical-rl]">今天就吃</span>
         </span>
       ) : (
-        <span key="pending" aria-hidden="true" className={`${STAMP} size-[62px] text-[22px] leading-none tracking-[0.05em] [writing-mode:vertical-rl]`}
+        <span key="pending" aria-hidden="true" className={`${STAMP} size-[3.875rem] text-[1.375rem] leading-none tracking-[0.05em] [writing-mode:vertical-rl]`}
           style={STAMP_STYLE}>抽中</span>
       )}
       {/* min-h 與 pr-20 讓店名和下方內容都避開印章（含 -10deg 旋轉後的外擴） */}
@@ -41,7 +41,7 @@ export default function ResultCard({ draw, candidates, me, confirmed = true }: {
       </div>
       <p className="text-sm text-fg-muted">
         {prob == null ? '歷史機率已隱藏，以保護成員隱私；原抽選結果保留' : <>
-          抽中機率 <span className="font-serif text-[15px] font-bold text-fg">{formatPercent(prob)}</span>
+          抽中機率 <span className="font-serif text-[0.9375rem] font-bold text-fg">{formatPercent(prob)}</span>
         </>}
       </p>
       <a className={`btn ${confirmed ? 'btn-primary' : 'btn-secondary'} mt-1 w-full text-sm tracking-[0.05em]`}

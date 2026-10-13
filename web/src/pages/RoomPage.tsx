@@ -43,13 +43,18 @@ function scrollBehavior(): ScrollBehavior {
 }
 
 // 動作的錯誤／提示只顯示在頁首：手機上按鈕在畫面下方時，訊息出現在畫面外，看起來像沒反應。
-// 橫幅掛載時捲到看得見的地方（scroll-mt-36 讓它停在 sticky 標頭下：320px 時標頭約 124px，
-// 加上浮現動畫起點的 8px 位移還有餘裕）。必須是模組層的穩定函式：
-// inline ref callback 每次 render 都是新函式，React 會每次重跑，Realtime 一更新就把畫面拉回去。
+// 橫幅掛載時被 sticky 標頭蓋住就捲回來，停在標頭下 16px。標頭底緣用量的、不靠固定的 scroll-margin：
+// 印章、步驟列換行（320px、字級放大）都會讓標頭變高。量到的 top 含浮現動畫起點的 8px 位移，要扣掉。
+// 用 scrollTo 捲到絕對位置：同一次 commit 掛上兩則時這裡會跑兩次，相對的 scrollBy 會捲兩倍。
+// 必須是模組層的穩定函式：inline ref callback 每次 render 都是新函式，React 會每次重跑，
+// Realtime 一更新就把畫面拉回去。
 // 一律捲到最上面那則：降級的 422 搜尋同時有錯誤和警告、同一次 commit 掛上，後跑的警告若捲自己，
 // 會把上面該處理的錯誤推到標頭底下
 function revealBanner(el: HTMLElement | null) {
-  el?.parentElement?.querySelector('[data-action-banner]')?.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() })
+  const banner = el?.parentElement?.querySelector('[data-action-banner]')
+  if (!banner) return
+  const hidden = banner.getBoundingClientRect().top - 8 - (document.querySelector('header')?.getBoundingClientRect().bottom ?? 0)
+  if (hidden < 0) scrollTo({ top: scrollY + hidden - 16, behavior: scrollBehavior() })
 }
 
 export default function RoomPage() {
@@ -429,14 +434,14 @@ export default function RoomPage() {
         {/* key：換一則訊息就重新掛載，revealBanner 與浮現動畫才會再跑一次 */}
         {actionError && (
           <p key={actionError} ref={revealBanner} data-action-banner role="alert"
-            className="banner animate-rise scroll-mt-36 bg-danger-soft whitespace-pre-line text-danger">
+            className="banner animate-rise bg-danger-soft whitespace-pre-line text-danger">
             <Alert className="h-5 w-5 shrink-0" />
             <span>{actionError}</span>
           </p>
         )}
         {actionWarning && (
           <p key={actionWarning} ref={revealBanner} data-action-banner role="status"
-            className="banner animate-rise scroll-mt-36 bg-warn-soft text-warn">
+            className="banner animate-rise bg-warn-soft text-warn">
             <Alert className="h-5 w-5 shrink-0" />
             <span>{actionWarning}</span>
           </p>

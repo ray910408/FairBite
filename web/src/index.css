@@ -84,6 +84,15 @@
   --color-ring: #e0725a;
 }
 
+/* 字級：data-font-size 由 lib/theme.ts 設定。全站尺寸都用 rem，改根字級就等比放大字、間距與觸控目標；
+   用百分比才會疊在瀏覽器／系統設定的預設字級上。元件裡別寫 px 字級，否則不會跟著放大 */
+:root[data-font-size="lg"] {
+  font-size: 112.5%;
+}
+:root[data-font-size="xl"] {
+  font-size: 125%;
+}
+
 /* 轉盤 20 色：依排名取色；淺色版深淺交錯（相鄰必有明暗差），深色版相鄰只靠色相與 surface 描邊分隔；ink 是扇形上編號的字色。
    淺色任兩色 ΔE76 ≥17、編號對比 ≥6.0；深色任兩色 ≥15、編號對比 ≥4.83。超過 20 格的處理見 lib/wheelPalette.ts */
 :root {

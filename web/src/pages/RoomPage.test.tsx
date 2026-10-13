@@ -940,7 +940,15 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
   it('錯誤和警告同時出現（降級的 422）：兩則橫幅都捲到最上面那則錯誤，不捲警告自己', async () => {
     vi.mocked(api.searchRoom).mockResolvedValue({
       error: '找不到符合條件的餐廳，請放寬條件', warning: '外部搜尋暫時失敗，本次使用 30 天內的快取資料' })
-    const reveal = vi.spyOn(Element.prototype, 'scrollIntoView')
+    const scrollTo = vi.fn()
+    vi.stubGlobal('scrollTo', scrollTo)
+    vi.stubGlobal('scrollY', 300)
+    // 標頭底緣 124（字級放大、步驟列換行後的高標頭）；錯誤在上、警告在下，都被標頭蓋住
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      if (this.tagName === 'HEADER') return { bottom: 124 } as DOMRect
+      const role = this.getAttribute('role')
+      return { top: role === 'alert' ? 50 : role === 'status' ? 100 : 0 } as DOMRect
+    })
     await renderRoom(lobbyReady())
     fireEvent.click(button('開始搜尋餐廳'))
     await settle()
@@ -948,9 +956,24 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
     const error = screen.getByRole('alert')
     expect(error.textContent).toBe('找不到符合條件的餐廳，請放寬條件')
     expect(screen.getByText('外部搜尋暫時失敗，本次使用 30 天內的快取資料')).toBeTruthy()
-    expect(reveal).toHaveBeenCalledTimes(2)
-    expect(reveal.mock.contexts).toEqual([error, error])
-    expect(reveal).toHaveBeenCalledWith({ block: 'nearest', behavior: 'smooth' })
+    // 兩則各觸發一次、目標都是錯誤那則：300 + (50 - 8 動畫位移 - 124) - 16 留白。絕對位置，跑兩次也不會捲兩倍
+    expect(scrollTo.mock.calls).toEqual([[{ top: 202, behavior: 'smooth' }], [{ top: 202, behavior: 'smooth' }]])
+  })
+
+  it('橫幅沒被標頭蓋住就不捲：扣掉動畫位移後剛好在標頭下方也不動', async () => {
+    vi.mocked(api.searchRoom).mockResolvedValue({ error: '找不到符合條件的餐廳，請放寬條件', warning: null })
+    const scrollTo = vi.fn()
+    vi.stubGlobal('scrollTo', scrollTo)
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      if (this.tagName === 'HEADER') return { bottom: 124 } as DOMRect
+      return { top: 132 } as DOMRect
+    })
+    await renderRoom(lobbyReady())
+    fireEvent.click(button('開始搜尋餐廳'))
+    await settle()
+
+    expect(screen.getByRole('alert').textContent).toBe('找不到符合條件的餐廳，請放寬條件')
+    expect(scrollTo).not.toHaveBeenCalled()
   })
 
   it('搜尋中：搜尋鈕 disabled 顯示「搜尋中…」，房間設定與條件表單一起停用', async () => {

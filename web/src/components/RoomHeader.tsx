@@ -16,9 +16,9 @@ function Stepper({ status }: { status: Room['status'] }) {
   // relocating／shortlisting 不是獨立步驟：借用投票／候選出爐那格並改標籤
   const current = STEPS.findIndex(s => s.key === (
     status === 'relocating' ? 'voting' : status === 'shortlisting' ? 'candidates' : status))
-  // 320px 寬：五格不畫連接線、靠 justify-between 撐開，字距縮到 gap-0.5 才放得下
+  // 320px 寬：五格不畫連接線、靠 justify-between 撐開，字距縮到 gap-0.5 才放得下；字級放大後仍放不下就換行
   return (
-    <ol className="flex items-center justify-between gap-1 text-xs">
+    <ol className="flex flex-wrap items-center justify-between gap-1 text-xs">
       {STEPS.map((s, i) => (
         <li key={s.key} aria-current={i === current ? 'step' : undefined}
           className="flex items-center gap-0.5 whitespace-nowrap">

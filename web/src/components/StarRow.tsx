@@ -30,7 +30,7 @@ export default function StarRow({ historyId, onRated }: { historyId: string; onR
   // 單一欄置中：三個呼叫端的容器排版不同（卡片置中、足跡列靠左），送出鈕都要在星排正下方
   return (
     <div className="flex flex-col items-center gap-2">
-      <div className="flex justify-center gap-1"
+      <div className="flex flex-wrap justify-center gap-1"
         onMouseLeave={() => setPreview(0)} onBlur={() => setPreview(0)}>
         {[1, 2, 3, 4, 5].map(n => (
           <button key={n} type="button" aria-label={`${n} 顆星`} aria-pressed={n === selected}

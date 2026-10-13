@@ -63,7 +63,7 @@ export default function Wheel({ rows, winnerId, onDone }: {
       <p className="text-center font-serif text-sm tracking-[0.3em] text-fg-muted" role="status">轉盤抽選中…</p>
       <div className="relative mx-auto w-56 max-w-full">
         <div className="absolute -top-2 left-1/2 z-10 -translate-x-1/2">
-          <svg viewBox="0 0 24 20" aria-hidden="true" className="h-[18px] w-[22px]">
+          <svg viewBox="0 0 24 20" aria-hidden="true" className="h-[1.125rem] w-[1.375rem]">
             <path d="M12 20 1 0h22z" className="fill-fg" />
           </svg>
         </div>

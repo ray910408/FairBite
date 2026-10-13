@@ -22,15 +22,17 @@ export default function TrendChart({ ratings }: { ratings: number[] }) {
   const hi = Math.max(...ratings)
   const lo = Math.min(...ratings)
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-brand" role="img"
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full overflow-visible text-brand" role="img"
       aria-label={`最近 ${ratings.length} 筆評分走勢：最早 ${first} 星、最新 ${last} 星、最高 ${hi}、最低 ${lo}`}>
       {[5, 1].map(star => {
         const y = PAD + (5 - star) * ((H - PAD * 2) / 4)
+        // 標籤字級用 CSS rem：SVG 裡的 CSS px 就是 user unit，預設字級等同原本的 fontSize 9，
+        // 放大字級時跟著放大；svg 設 overflow-visible，變寬的標籤才不會被左緣裁掉
         return (
           <g key={star} className="text-fg-muted">
             <line x1={PAD} x2={W - PAD} y1={y} y2={y}
               stroke="currentColor" strokeWidth="0.5" opacity="0.4" />
-            <text x={PAD - 3} y={y + 3} textAnchor="end" fontSize="9" fill="currentColor">
+            <text x={PAD - 3} y={y + 3} textAnchor="end" fill="currentColor" className="text-[0.5625rem]">
               ★{star}
             </text>
           </g>

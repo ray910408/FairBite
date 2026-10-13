@@ -230,13 +230,15 @@ export default function HomePage() {
           沒有它鍵盤使用者可以 tab 到「建立房間」按 Enter，繞過還沒決定的退房（Codex P2） */}
       <div className="min-h-screen" inert={!!leaveTarget}>
       <header className="mx-auto w-full max-w-md px-4 pt-4">
-        <div className="flex items-center justify-between">
+        {/* 字級特大時 320px 並排不下：按鈕組換到下一行並靠右，不撐出水平捲動 */}
+        <div className="flex flex-wrap items-center justify-between gap-y-1">
           <div className="flex items-center gap-2">
             <Logo className="h-8 w-8" />
             {/* 320px 要和兩顆按鈕並排：手機 text-lg，sm 以上才放大 */}
             <span className="font-serif text-lg font-black tracking-[0.12em] whitespace-nowrap sm:text-xl">今天吃什麼</span>
           </div>
-          <div className="flex flex-col items-end gap-1">
+          {/* grow：同一行時吃滿標題右邊的空間（狀態文字照舊能排成一行），換行後佔滿整行、按鈕靠右 */}
+          <div className="flex grow flex-col items-end gap-1">
             <div className="flex items-center gap-1 sm:gap-1.5">
               <ThemeMenu />
               <Link to="/history" className="btn btn-quiet min-h-11 px-2 text-sm sm:px-3">足跡</Link>
@@ -253,7 +255,9 @@ export default function HomePage() {
               </button>
             </div>
             {leavePending && (
-              <p role="status" className="max-w-52 text-right text-xs text-fg-muted">
+              // w-0 min-w-full：寬度跟著按鈕欄，不拿自己的字寬撐按鈕欄。否則換行判斷會算進這行字，
+              // 每次進首頁查房籍的那一下，320／360px 預設字級的按鈕就會掉到第二行
+              <p role="status" className="w-0 min-w-full text-right text-xs text-fg-muted">
                 正在確認房間狀態，確認後才能登出
               </p>
             )}
@@ -275,7 +279,7 @@ export default function HomePage() {
           </p>
           {authState === 'member' && <LocationPicker value={departure} onChange={handleDepartureChange} />}
           {authState === 'member' && <div className="space-y-2">
-            <span className="block font-serif text-[15px] font-bold">用餐時間</span>
+            <span className="block font-serif text-[0.9375rem] font-bold">用餐時間</span>
             {/* 墨線框 segmented control：選中反白（同房內設定） */}
             <div className="grid grid-cols-2 divide-x divide-rule rounded-btn border border-rule">
               {([['now', '馬上出發'], ['custom', '自訂時間']] as const).map(([key, label]) => (
