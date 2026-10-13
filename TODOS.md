@@ -121,8 +121,8 @@ review 用 mutation 找到、新舊測試都不會發現的改壞方式。不是
 
 ### 字級放大後的遺留（字級選項 review，2026-10-13，未修）
 
-- **動作橫幅在特大字級會被 sticky 標頭蓋住 6–11px:** `RoomPage.tsx` 的錯誤／警告橫幅靠 `scroll-mt-36` 停在標頭下，註解假設 320px 標頭約 124px。特大時步驟列與印章換行，標頭多出整行（320px 約 178px、375px 換地點中約 183px），`scroll-mt-36` 只放大到 180px，再扣浮現動畫的 8px 位移就不夠。修法：`revealBanner` 比照換階段的捲動，量 header 底緣再 `scrollBy`；`RoomPage.test.tsx` spy `scrollIntoView` 的那條要跟著改。
-- **步驟列換行後最後一格落單:** `RoomHeader.tsx` 的 Stepper 在 320px 大／特大、360px 特大會折成兩行，`justify-between` 讓第二行的「伍 定案」單獨靠左。純外觀。
+- **動作橫幅在大／特大字級會被 sticky 標頭蓋住 6–11px:** `RoomPage.tsx` 的錯誤／警告橫幅靠 `scroll-mt-36` 停在標頭下，註解假設 320px 標頭約 124px。放大後步驟列與印章換行，標頭多出整行：320px 大約 161px（`scroll-mt-36` 是 162px）、320／360px 特大約 178px、375px 特大換地點中約 183px（`scroll-mt-36` 是 180px），再扣浮現動畫的 8px 位移就不夠。修法：`revealBanner` 比照換階段的捲動，量 header 底緣再 `scrollBy`；`RoomPage.test.tsx` spy `scrollIntoView` 的那條要跟著改。
+- **步驟列換行後第二行排得怪:** `RoomHeader.tsx` 的 Stepper 在 320px 大／特大、360px 特大，以及 375px 特大換地點中會折成兩行。多數狀態第二行只剩「伍 定案」單獨靠左；320px 特大換地點中第二行是「待確認／定案」兩格，被 `justify-between` 推到左右兩端。純外觀。
 - **TrendChart 的 ★ 刻度字不跟字級放大:** SVG 的 `fontSize="9"` 是 viewBox 單位，只跟著圖寬縮放。
 
 ## /qa-only 線上站 QA + PR #17 review 殘留（2026-08-16）
