@@ -180,27 +180,21 @@ export default function JoinPage() {
       )}
 
     </main>
-      {leaveTarget && LeaveConfirm({
-        title: '你目前在另一個房間',
-        actionsClassName: 'sm:flex-row',
-        actions: (
-          <>
+      {leaveTarget && (
+        <LeaveConfirm title="你目前在另一個房間" actionsClassName="sm:flex-row"
+          actions={<>
             {leaveTarget.kind === 'rooms' && leaveTarget.rooms.length > 0 && (
               <button autoFocus className="btn btn-quiet flex-1" type="button"
                 onClick={() => nav(`/room/${leaveTarget.rooms[0].id}`, { replace: true })}>取消並回原房</button>
             )}
             <button className="btn btn-primary flex-1" type="button" disabled={busy}
               onClick={confirmLeaveAndJoin}>離開並加入</button>
-          </>
-        ),
-        children: (
-          <>
-            {error && <p role="alert" className="banner bg-danger-soft text-danger">{error}</p>}
-            <p className="text-sm text-fg-muted">加入新房前必須先離開目前房間；不會自動切換或保留兩邊房籍。</p>
-            <LeaveRoomsBody target={leaveTarget} />
-          </>
-        ),
-      })}
+          </>}>
+          {error && <p role="alert" className="banner bg-danger-soft text-danger">{error}</p>}
+          <p className="text-sm text-fg-muted">加入新房前必須先離開目前房間；不會自動切換或保留兩邊房籍。</p>
+          <LeaveRoomsBody target={leaveTarget} />
+        </LeaveConfirm>
+      )}
     </>
   )
 }

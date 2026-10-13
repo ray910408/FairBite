@@ -84,8 +84,9 @@ export function useRoom(roomId: string) {
       if (gen !== refetchGen.current) throw error // 被取代的輪次失敗只影響自己
       // 當前輪次失敗：排隊的輪次一起 reject。它們的結果早已作廢、state 停在更舊的資料，
       // 回報成功會在舊資料上解鎖按鈕；reject 讓 runAction 照實顯示「重新載入失敗」
+      // 不必另掛 catch：下面的 return outcome（與排隊輪次的 settle）在這輪 microtask 清空前就接上 handler，
+      // Node／瀏覽器判定 unhandled rejection 時它已經有人接
       outcome = Promise.reject(error)
-      outcome.catch(() => undefined) // 沒人排隊時不算 unhandled；呼叫端照樣從 return 收到 reject
     }
     if (gen > lastDone.current.gen) lastDone.current = { gen, outcome } // 不倒退；等待者照樣 settle
     for (const settle of refetchWaiters.current.splice(0)) settle(outcome)

@@ -37,8 +37,7 @@ export default function HomePage() {
   const suggestionsMounted = useRef(false)
   // 回首頁＝離席（ADR-0007）：settle 前禁用建房/加入，避免晚到的 leave 誤刪新房
   const [leavePending, setLeavePending] = useState(true)
-  // 離席確認的對象（ADR-0007 2026-08-16 修訂）——新 state 一律接在最後，
-  // HomePage.test.ts 依 useState 呼叫順序 mock
+  // 離席確認的對象（ADR-0007 2026-08-16 修訂）
   const [leaveTarget, setLeaveTarget] = useState<LeaveTarget | null>(null)
   const [suggestionLoadError, setSuggestionLoadError] = useState('')
   const [authState, setAuthState] = useState<'checking' | 'guest' | 'member' | 'error'>('checking')
@@ -152,7 +151,7 @@ export default function HomePage() {
     doLeave()
   }
 
-  useMidnightRerender() // 新 hook 一律接在最後：HomePage.test.ts 依呼叫順序 mock
+  useMidnightRerender()
   // 選好就預告今天/明天：比現在早的時刻會滾到明天，建房前先讓房主看見
   const mealPreview = mealHH && mealMM ? buildMealTimeISO(`${mealHH}:${mealMM}`) : null
 
@@ -414,10 +413,9 @@ export default function HomePage() {
         // 「回到房間」是 button 不是 Link：React 的 autoFocus 只對表單控制項生效，
         // 焦點必須落在安全那顆，不能落在「離開房間」上。
         // 不給 onClose（Esc）：留在首頁又不決定會讓建房/加入永遠禁用，不是合法終態。
-        return LeaveConfirm({
-          title: '你還在房間裡',
-          actions: (
-            <>
+        return (
+          <LeaveConfirm title="你還在房間裡"
+            actions={<>
               {rooms.length === 1 && (
                 <button type="button" autoFocus className="btn btn-primary w-full"
                   onClick={() => nav(`/room/${rooms[0].id}`)}>回到房間</button>
@@ -428,42 +426,38 @@ export default function HomePage() {
               )}
               <button type="button" className="btn w-full bg-danger text-on-danger"
                 onClick={confirmLeave}>離開房間</button>
-            </>
-          ),
-          children: (
-            <>
-              {leaveTarget.kind === 'unknown' && (
-                <p className="text-sm text-fg-muted">
-                  你可能還在房間裡，但房間現況查不到（連線可能不穩），離開後的影響無法確認
-                  ——不確定就先重新整理再試，確定要走再按離開。
-                </p>
-              )}
-              {rooms.length === 1 && (
-                <p className="text-sm text-fg-muted">
-                  你回到首頁了，但你還在房間 {rooms[0].code} 裡。離開後果如下：
-                </p>
-              )}
-              {multi && (
-                <p className="text-sm text-fg-muted">
-                  你回到首頁了，但你還在 {rooms.length} 個房間裡，離開會一次全部離開：
-                </p>
-              )}
-              {rooms.map((r, i) => (
-                <div key={r.id} className={multi ? 'space-y-2 rounded-xl border border-border p-3' : ''}>
-                  {multi && <p className="text-sm font-semibold">房間 {r.code}</p>}
-                  <ul className="list-disc space-y-1 pl-5 text-sm text-fg-muted">
-                    {leaveNotice(r.status, r.memberCount, r.code, r.isHost).map(p => <li key={p}>{p}</li>)}
-                  </ul>
-                  {/* 多房時回房入口掛在各房區塊內，不替使用者猜要回哪一間（比照 HistoryPage） */}
-                  {multi && (
-                    <button type="button" autoFocus={i === 0} className="btn btn-quiet w-full"
-                      onClick={() => nav(`/room/${r.id}`)}>回到 {r.code}</button>
-                  )}
-                </div>
-              ))}
-            </>
-          ),
-        })
+            </>}>
+            {leaveTarget.kind === 'unknown' && (
+              <p className="text-sm text-fg-muted">
+                你可能還在房間裡，但房間現況查不到（連線可能不穩），離開後的影響無法確認
+                ——不確定就先重新整理再試，確定要走再按離開。
+              </p>
+            )}
+            {rooms.length === 1 && (
+              <p className="text-sm text-fg-muted">
+                你回到首頁了，但你還在房間 {rooms[0].code} 裡。離開後果如下：
+              </p>
+            )}
+            {multi && (
+              <p className="text-sm text-fg-muted">
+                你回到首頁了，但你還在 {rooms.length} 個房間裡，離開會一次全部離開：
+              </p>
+            )}
+            {rooms.map((r, i) => (
+              <div key={r.id} className={multi ? 'space-y-2 rounded-xl border border-border p-3' : ''}>
+                {multi && <p className="text-sm font-semibold">房間 {r.code}</p>}
+                <ul className="list-disc space-y-1 pl-5 text-sm text-fg-muted">
+                  {leaveNotice(r.status, r.memberCount, r.code, r.isHost).map(p => <li key={p}>{p}</li>)}
+                </ul>
+                {/* 多房時回房入口掛在各房區塊內，不替使用者猜要回哪一間（比照 HistoryPage） */}
+                {multi && (
+                  <button type="button" autoFocus={i === 0} className="btn btn-quiet w-full"
+                    onClick={() => nav(`/room/${r.id}`)}>回到 {r.code}</button>
+                )}
+              </div>
+            ))}
+          </LeaveConfirm>
+        )
       })()}
     </>
   )

@@ -229,13 +229,11 @@ export default function HistoryPage() {
 
       {leaveDialog && (() => {
         const rooms = leaveDialog.kind === 'rooms' ? leaveDialog.rooms : []
-        return LeaveConfirm({
-          title: '回首頁會離開房間',
-          onClose: closeLeave,
-          // 按鈕在 320px 一律直排。「回到房間」補上 ADR-0007 說的不經首頁入口；
-          // 多房時改掛在各房區塊內（LeaveRoomsBody），不替使用者猜要回哪一間
-          actions: (
-            <>
+        // 按鈕在 320px 一律直排。「回到房間」補上 ADR-0007 說的不經首頁入口；
+        // 多房時改掛在各房區塊內（LeaveRoomsBody），不替使用者猜要回哪一間
+        return (
+          <LeaveConfirm title="回首頁會離開房間" onClose={closeLeave}
+            actions={<>
               {rooms.length === 1 && (
                 <Link to={`/room/${rooms[0].id}`} className="btn btn-primary w-full">回到房間</Link>
               )}
@@ -245,10 +243,10 @@ export default function HistoryPage() {
               {/* 使用者在這裡已經看過後果：帶旗標過去讓 HomePage mount 直接退房，不再問第二次 */}
               <Link to="/" state={{ leaveConfirmed: true }}
                 className="btn w-full bg-danger text-on-danger">仍要回首頁</Link>
-            </>
-          ),
-          children: <LeaveRoomsBody target={leaveDialog} />,
-        })
+            </>}>
+            <LeaveRoomsBody target={leaveDialog} />
+          </LeaveConfirm>
+        )
       })()}
     </>
   )
