@@ -33,8 +33,37 @@ export function setThemePref(pref: ThemePref) {
   applyTheme(pref)
 }
 
+// 字級：md（預設）不存。只放大不縮小：縮小會讓 44px 觸控目標變小、Places 歸屬字跌破 12px 下限
+export type FontSizePref = 'md' | 'lg' | 'xl'
+
+const FONT_KEY = 'fontSize'
+let chosenFontSize: FontSizePref | null = null
+
+export function getFontSizePref(): FontSizePref {
+  if (chosenFontSize) return chosenFontSize
+  try {
+    const v = localStorage.getItem(FONT_KEY)
+    if (v === 'lg' || v === 'xl') return v
+  } catch { /* 讀不到就用標準 */ }
+  return 'md'
+}
+
+export function applyFontSize(pref = getFontSizePref()) {
+  document.documentElement.dataset.fontSize = pref
+}
+
+export function setFontSizePref(pref: FontSizePref) {
+  chosenFontSize = pref
+  try {
+    if (pref === 'md') localStorage.removeItem(FONT_KEY)
+    else localStorage.setItem(FONT_KEY, pref)
+  } catch { /* 存不了就只在這次瀏覽生效 */ }
+  applyFontSize(pref)
+}
+
 // 跟隨系統時，系統切深淺要即時反映；手選時 applyTheme 讀到的偏好不是 system，事件等於 no-op
 export function initTheme() {
   applyTheme()
+  applyFontSize()
   systemDark().addEventListener('change', () => applyTheme())
 }

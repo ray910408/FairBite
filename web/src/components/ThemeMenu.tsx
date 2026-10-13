@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { getThemePref, setThemePref, type ThemePref } from '../lib/theme'
+import {
+  getFontSizePref, getThemePref, setFontSizePref, setThemePref, type FontSizePref, type ThemePref,
+} from '../lib/theme'
 import { Check, Monitor, Moon, Sun } from './icons'
 
 const OPTIONS = [
@@ -9,9 +11,18 @@ const OPTIONS = [
   { pref: 'dark', label: '深色', Icon: Moon },
 ] as const
 
-// 外觀選單：圖示鈕顯示目前的選擇，點開才列出三個選項（disclosure 樣式，選項沿用全站的 aria-pressed）
+const FONT_OPTIONS = [
+  { pref: 'md', label: '標準' },
+  { pref: 'lg', label: '大' },
+  { pref: 'xl', label: '特大' },
+] as const
+
+const ITEM = 'flex min-h-11 w-full items-center gap-2 rounded-btn px-3 text-sm hover:bg-brand-soft'
+
+// 外觀選單：圖示鈕顯示目前的主題，點開才列出主題與字級（disclosure 樣式，選項沿用全站的 aria-pressed）
 export function ThemeMenu() {
   const [pref, setPref] = useState<ThemePref>(getThemePref)
+  const [fontSize, setFontSize] = useState<FontSizePref>(getFontSizePref)
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -50,8 +61,7 @@ export function ThemeMenu() {
       {open && (
         <div id={panelId} className="card absolute top-full right-0 z-30 mt-1 w-36 p-1">
           {OPTIONS.map(({ pref: p, label, Icon }) => (
-            <button key={p} type="button" aria-pressed={p === pref}
-              className="flex min-h-11 w-full items-center gap-2 rounded-btn px-3 text-sm hover:bg-brand-soft"
+            <button key={p} type="button" aria-pressed={p === pref} className={ITEM}
               onClick={() => {
                 // 整頁交叉淡化（View Transition），不支援的瀏覽器直接切換。flushSync：回呼結束時
                 // DOM 就要是選單收起、勾勾換好的樣子，否則新快照還開著選單，淡化完才突然收起
@@ -68,6 +78,17 @@ export function ThemeMenu() {
               {p === pref && <Check className="h-4 w-4 text-brand" />}
             </button>
           ))}
+          {/* 字級選完不收起：整頁會跟著縮放，使用者可以直接比較下一級 */}
+          <div role="group" aria-labelledby={`${panelId}-font`} className="mt-1 border-t border-border pt-1">
+            <p id={`${panelId}-font`} className="px-3 py-1 text-xs text-fg-muted">字級</p>
+            {FONT_OPTIONS.map(({ pref: s, label }) => (
+              <button key={s} type="button" aria-pressed={s === fontSize} className={ITEM}
+                onClick={() => { setFontSizePref(s); setFontSize(s) }}>
+                <span className="flex-1 text-left">{label}</span>
+                {s === fontSize && <Check className="h-4 w-4 text-brand" />}
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>

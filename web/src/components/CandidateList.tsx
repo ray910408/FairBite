@@ -65,7 +65,7 @@ export default function CandidateList({ rows, voting, picking }: {
     <div className="space-y-2">
       <section className="menu-frame px-4 pt-5 pb-1">
         <div className="text-center">
-          <h2 className="font-serif text-[22px] font-black tracking-[0.08em]">候選餐廳（{kept.length}）</h2>
+          <h2 className="font-serif text-[1.375rem] font-black tracking-[0.08em]">候選餐廳（{kept.length}）</h2>
           {voting && (
             <p className="mt-0.5 text-xs text-fg-muted">否決額度 {voting.vetoesRemaining}/{VETO_QUOTA}（可收回）</p>
           )}
@@ -82,8 +82,8 @@ export default function CandidateList({ rows, voting, picking }: {
                 className="flex animate-row-in flex-col gap-1.5 border-t border-border px-1 py-3.5 text-fg-muted"
                 style={{ animationDelay: `${stagger(ci)}ms` }}>
                 <div className="flex items-baseline gap-2 font-serif">
-                  <span aria-hidden="true" className="text-[13px] font-bold">{String(ci + 1).padStart(2, '0')}</span>
-                  <span className="min-w-0 text-[17px] font-bold line-through decoration-brand decoration-[1.5px]">
+                  <span aria-hidden="true" className="text-[0.8125rem] font-bold">{String(ci + 1).padStart(2, '0')}</span>
+                  <span className="min-w-0 text-[1.0625rem] font-bold line-through decoration-brand decoration-[1.5px]">
                     {c.restaurants.name}
                   </span>
                 </div>
@@ -106,18 +106,18 @@ export default function CandidateList({ rows, voting, picking }: {
                 className="flex animate-row-in flex-col gap-2 border-t border-border px-1 py-3.5"
                 style={{ animationDelay: `${stagger(ci)}ms` }}>
                 <div className="flex items-baseline gap-2 font-serif">
-                  <span aria-hidden="true" className="text-[13px] font-bold text-brand">{String(ci + 1).padStart(2, '0')}</span>
-                  <span data-testid="candidate-name" className="min-w-0 text-[17px] font-bold">{c.restaurants.name}</span>
+                  <span aria-hidden="true" className="text-[0.8125rem] font-bold text-brand">{String(ci + 1).padStart(2, '0')}</span>
+                  <span data-testid="candidate-name" className="min-w-0 text-[1.0625rem] font-bold">{c.restaurants.name}</span>
                   {voting?.hasMyVote(c.restaurant_id, 'up') && (
                     <span aria-hidden="true"
-                      className="inline-flex h-5 w-5 shrink-0 animate-stamp-sm items-center justify-center self-center rounded-[2px] border-[1.5px] border-brand text-[11px] font-black text-brand"
+                      className="inline-flex h-5 w-5 shrink-0 animate-stamp-sm items-center justify-center self-center rounded-[2px] border-[1.5px] border-brand text-[0.6875rem] font-black text-brand"
                       style={{ animationDelay: '200ms' }}>
                       贊
                     </span>
                   )}
                   <span aria-hidden="true" className="leader origin-left animate-lead"
                     style={{ animationDelay: `${stagger(ci) + 200}ms` }} />
-                  <span className={`shrink-0 font-bold ${oddsKnown ? 'text-[17px]' : 'text-sm text-fg-muted'}`}>
+                  <span className={`shrink-0 font-bold ${oddsKnown ? 'text-[1.0625rem]' : 'text-sm text-fg-muted'}`}>
                     {oddsKnown ? percentOf.get(c.restaurant_id) : '機率未提供'}
                   </span>
                 </div>
@@ -125,9 +125,9 @@ export default function CandidateList({ rows, voting, picking }: {
                   <div className="h-full bg-brand transition-[width] duration-300 ease-out"
                     style={{ width: `${((c.probability ?? 0) / max) * 100}%` }} />
                 </div>}
-                {facts.length > 0 && <p className="text-[13px]">{facts.join('・')}</p>}
+                {facts.length > 0 && <p className="text-[0.8125rem]">{facts.join('・')}</p>}
                 {factors.length > 0 && (
-                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[12.5px] leading-relaxed">
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[0.78125rem] leading-relaxed">
                     {factors.map((e, i) => (
                       <span key={i}
                         className={`inline-flex items-center gap-[3px] ${
@@ -191,7 +191,7 @@ export default function CandidateList({ rows, voting, picking }: {
             <ul className="space-y-1">
               {excluded.map(c => (
                 // flex-wrap：原因很長（Google 價位層級說明）時整段換到下一行，店名不被擠成一字一行
-                <li key={c.restaurant_id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[13px] text-fg-muted">
+                <li key={c.restaurant_id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[0.8125rem] text-fg-muted">
                   <span className="font-serif line-through decoration-brand decoration-[1.5px]">{c.restaurants.name}</span>
                   <span className="ml-auto text-right text-xs">{c.exclusion_reason}</span>
                 </li>

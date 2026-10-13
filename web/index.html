@@ -6,13 +6,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#f4efe4" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#14110f" media="(prefers-color-scheme: dark)" />
-    <!-- 首次繪製前套主題（邏輯同 src/lib/theme.ts 的 applyTheme）；module script 是 defer，等它跑深色使用者會先閃一下米紙底 -->
+    <!-- 首次繪製前套主題與字級（邏輯同 src/lib/theme.ts 的 applyTheme／applyFontSize）；module script 是 defer，等它跑深色使用者會先閃一下米紙底、大字級使用者會看到版面跳一下 -->
     <script>
       (function () {
-        var pref
-        try { pref = localStorage.getItem('theme') } catch (e) {}
+        var pref, size
+        try { pref = localStorage.getItem('theme'); size = localStorage.getItem('fontSize') } catch (e) {}
         var dark = pref === 'dark' || (pref !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
         document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+        document.documentElement.dataset.fontSize = size === 'lg' || size === 'xl' ? size : 'md'
         document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) {
           m.setAttribute('content', dark ? '#14110f' : '#f4efe4')
         })

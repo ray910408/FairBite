@@ -23,7 +23,7 @@ export function MemberList({ room, members, picksByMember }: {
 }) {
   return (
     <section className="animate-rise">
-      <h2 className="mb-1.5 text-[15px] font-bold">成員（{members.length}）</h2>
+      <h2 className="mb-1.5 text-[0.9375rem] font-bold">成員（{members.length}）</h2>
       <ul>
         {members.map(m => (
           <li key={m.user_id} className="flex items-baseline gap-1.5 py-1.5">
