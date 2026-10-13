@@ -295,7 +295,8 @@ describe('ConditionsForm 條件寫入防線', () => {
   })
 
   // 晚到的條件寫入成功，不能把 ready RPC 已確認的「已準備」從 durable snapshot 裡倒退掉。
-  // 畫面在等條件寫完時已凍結（見下方凍結測試），這裡直接對 slider 派 change，只為了讓條件寫入夾住 ready RPC
+  // 使用者已經走不到這條路：等條件寫完時 slider 已凍結，瀏覽器不會對 disabled 的 slider 發 change。
+  // 這支直接對 disabled slider 派 change（React 不擋），只守 enqueuePending 保留 ready 的那道防線
   it('pending 條件寫入成功不會倒退 ready 專用寫入保存的值', async () => {
     const first = deferred<WriteResult>()
     const second = deferred<WriteResult>()
@@ -308,6 +309,7 @@ describe('ConditionsForm 條件寫入防線', () => {
     drag(900)
     fireEvent.click(button('我準備好了'))
     await settle()
+    expect(budget().disabled).toBe(true)
     drag(1000)
     await debounce() // 1000 排在 900 後面
     drag(1100) // 還在 debounce
