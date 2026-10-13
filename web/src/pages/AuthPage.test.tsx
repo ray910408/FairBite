@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { AuthError } from '@supabase/supabase-js'
+import { StrictMode } from 'react'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { deferred } from '../test/dom'
+import { deferred, Landing, settle } from '../test/dom'
 import AuthPage from './AuthPage'
 
 // 行為測試：真的 React hooks 跑在 jsdom 上，只在模組邊界 mock——lib/supabase 的 auth 介面，
@@ -38,16 +39,6 @@ const signedIn = (user: AuthUser) =>
   auth.getSession.mockResolvedValue({ data: { session: { user, access_token: 'guest-token' } }, error: null })
 const currentUser = (user: AuthUser) => auth.getUser.mockResolvedValue({ data: { user } })
 const invalidCredentials = () => new AuthError('Invalid login credentials', 400, 'invalid_credentials')
-
-// 導頁後落在這裡：路徑加上 push／replace，看得出是不是取代掉登入頁那一筆歷史
-function Landing() {
-  const { pathname } = useLocation()
-  return <p>到了 {pathname}（{useNavigationType()}）</p>
-}
-
-async function settle() {
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-}
 
 async function renderAuth(path = '/auth') {
   const view = render(
@@ -214,11 +205,13 @@ describe('後端預熱', () => {
   })
 })
 
+// 不收前後帶空白的測資：type=email 的值在瀏覽器（jsdom 也一樣）就先去掉頭尾空白，頁面讀到的已經
+// 是乾淨的值，AuthPage 的 email.trim() 從畫面上走不到，放了也只是假裝有測
 describe('註冊 Email 格式', () => {
   it.each([
     '1@1', '23@d.d', 'a@b', 'abc@gmail', 'abc@localhost', 'abc@', '@gmail.com',
     'abc gmail.com', 'abc@@gmail.com', 'abc@example.', 'abc@example.c', 'abc@.com',
-    'abc@example..com', '.abc@gmail.com', 'abc.@gmail.com', 'abc..def@gmail.com', '', '   ',
+    'abc@example..com', '.abc@gmail.com', 'abc.@gmail.com', 'abc..def@gmail.com', '',
     '1\\@1', 'person @example.com', 'person@-example.com', 'person@example-.com',
     'user@example.123', `user@example.${'a'.repeat(64)}`, `${'a'.repeat(65)}@gmail.com`,
     `user@${'a'.repeat(64)}.com`,
@@ -241,7 +234,7 @@ describe('註冊 Email 格式', () => {
   it.each([
     'user@example.com', 'abc@gmail.com', 'student@ttu.edu.tw', 'test.user+1@gmail.com',
     'a@b.co', 'USER@EXAMPLE.COM', 'user123@sub.example.com', 'abc-def@example.com',
-    '23@d.dd', `user@example.${'a'.repeat(63)}`, ' user@example.com ',
+    '23@d.dd', `user@example.${'a'.repeat(63)}`,
     // 上限本身要放行：local part 剛好 64、總長剛好 254
     `${'a'.repeat(64)}@gmail.com`, `${'a'.repeat(64)}@${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(57)}.com`,
   ])('格式正常的 Email 送交 Supabase，由 hook 檢查 MX：%s', async email => {
@@ -251,7 +244,7 @@ describe('註冊 Email 格式', () => {
     await submit()
 
     expect(auth.signUp).toHaveBeenCalledExactlyOnceWith({
-      email: email.trim(), password: 'password123', options: {
+      email, password: 'password123', options: {
         data: { display_name: '顯示名' }, emailRedirectTo: `${window.location.origin}/app/?ref=qr#/auth`,
       },
     })
@@ -501,6 +494,27 @@ describe('訪客升級成正式帳號', () => {
     await act(async () => onChange())
     await settle()
     expect(submitButton().textContent).toBe('完成註冊')
+  })
+
+  // main.tsx 包了 StrictMode：開發模式 effect 跑兩次，第一輪的 getUser 晚到不能蓋掉第二輪的結果
+  it('StrictMode 第一輪的 getUser 晚到不套用，不會被舊結果帶進升級', async () => {
+    const stale = deferred<{ data: { user: AuthUser | null } }>()
+    const fresh = deferred<{ data: { user: AuthUser | null } }>()
+    auth.getUser.mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise)
+    const pending = upgrading('guest@gmail.com', null)
+    marker(pending, 'guest@gmail.com')
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/auth']}>
+          <Routes><Route path="/auth" element={<AuthPage />} /></Routes>
+        </MemoryRouter>
+      </StrictMode>,
+    )
+    expect(auth.getUser).toHaveBeenCalledTimes(2)
+    await act(async () => fresh.resolve({ data: { user: null } }))
+    await act(async () => stale.resolve({ data: { user: pending } }))
+    expect(tab('登入').getAttribute('aria-pressed')).toBe('true')
+    expect(submitButton().textContent).toBe('登入')
   })
 
   it.each([

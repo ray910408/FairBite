@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { deferred } from '../test/dom'
+import { deferred, settle } from '../test/dom'
 import StarRow from './StarRow'
 
 // 行為測試：真的 React hooks 跑在 jsdom 上，只 mock lib/supabase（評分寫入）。
@@ -32,10 +32,6 @@ const stars = () => [1, 2, 3, 4, 5].map(star)
 const filled = () => stars().map(b => b.querySelector('svg')!.getAttribute('fill') === 'currentColor')
 const brand = () => stars().map(b => b.classList.contains('text-brand'))
 
-async function settle() {
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-}
-
 describe('StarRow 評分寫入防線', () => {
   it('點星只選不寫；沒選之前送出鈕 disabled', () => {
     render(<StarRow historyId="h-1" onRated={vi.fn()} />)
@@ -59,6 +55,19 @@ describe('StarRow 評分寫入防線', () => {
     expect(mocks.update).toHaveBeenCalledWith({ rating: 3 }, { count: 'exact' })
     expect(mocks.eq).toHaveBeenCalledWith('id', 'h-1')
     expect(mocks.is).toHaveBeenCalledWith('rating', null)
+    expect(onRated).toHaveBeenCalledWith(3)
+  })
+
+  // 預覽只是亮燈：游標或焦點還停在別顆星上時送出，寫入的是點選的那顆
+  it('選 3 顆後滑鼠停在第 5 顆時送出，寫入的仍是 3', async () => {
+    const onRated = vi.fn()
+    render(<StarRow historyId="h-1" onRated={onRated} />)
+    fireEvent.click(star(3))
+    fireEvent.mouseEnter(star(5))
+    fireEvent.click(submit())
+    await settle()
+
+    expect(mocks.update).toHaveBeenCalledWith({ rating: 3 }, { count: 'exact' })
     expect(onRated).toHaveBeenCalledWith(3)
   })
 

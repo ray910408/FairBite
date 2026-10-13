@@ -7,7 +7,7 @@ import * as api from '../lib/api'
 import { leaveNotice } from '../lib/leaveNotice'
 import type { Room } from '../lib/types'
 import { getUid } from '../lib/uid'
-import { captureFrames, deferred } from '../test/dom'
+import { captureFrames, deferred, settle } from '../test/dom'
 import HistoryPage from './HistoryPage'
 
 // 足跡頁的「回首頁」同樣＝離席（ADR-0007，HomePage mount 無條件 leaveRooms），點下去要先查房籍再確認。
@@ -57,10 +57,6 @@ const rooms = (...rows: ReturnType<typeof leaveRow>[]) => mocks.memberRows.mockR
 function Home() {
   const { state, key } = useLocation()
   return <p data-key={key}>首頁{state ? ` ${JSON.stringify(state)}` : ''}</p>
-}
-
-async function settle() {
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
 }
 
 const routes = () => (

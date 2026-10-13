@@ -8,7 +8,7 @@ import type { DeparturePoint } from '../lib/departure'
 import { leaveNotice } from '../lib/leaveNotice'
 import { fetchLeaveRooms, type LeaveRoom } from '../lib/roomMembership'
 import { getUid } from '../lib/uid'
-import { deferred } from '../test/dom'
+import { deferred, settle } from '../test/dom'
 import HomePage from './HomePage'
 
 // 首頁是建房／加入的入口，也是「回首頁＝離席」（ADR-0007）的 mount 攔截點。
@@ -141,11 +141,6 @@ const routes = (state: unknown = null) => (
     </Routes>
   </MemoryRouter>
 )
-
-// 讓 mock 的 promise（帳號、房籍、口味建議、建房）在 act 裡落地
-async function settle() {
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-}
 
 async function renderHome(state: unknown = null) {
   const view = render(routes(state))
@@ -492,6 +487,23 @@ describe('HomePage 口味建議查詢失敗（Task 11）', () => {
     await act(async () => gate.resolve(okPrefs))
     await settle()
     expect(read).not.toHaveBeenCalledWith(`prefs-suggest-dismissed:${ME}`)
+  })
+
+  // 評分卡的寫入還在飛就離開首頁：寫入成功後 onRated 才回呼，這時頁面已經不在，不該再查一輪建議
+  it('評分寫入途中離開首頁：寫入成功後不再重新載入口味建議', async () => {
+    const write = deferred<Result>()
+    mocks.write.mockReturnValueOnce(write.promise)
+    const view = await renderHome()
+    fireEvent.click(button('5 顆星'))
+    fireEvent.click(button('送出評分'))
+    await settle()
+    const loads = mocks.prefs.mock.calls.length
+    view.unmount()
+
+    await act(async () => write.resolve({ error: null, count: 1 }))
+    await settle()
+    expect(mocks.write).toHaveBeenCalledWith('dining_history')
+    expect(mocks.prefs).toHaveBeenCalledTimes(loads)
   })
 })
 

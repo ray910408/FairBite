@@ -1,4 +1,6 @@
-import { cleanup } from '@testing-library/react'
+import { createElement } from 'react'
+import { act, cleanup } from '@testing-library/react'
+import { useLocation, useNavigationType } from 'react-router-dom'
 import { afterEach, beforeEach, vi } from 'vitest'
 
 // jsdom 行為測試的共用設定：測試檔頭寫 `// @vitest-environment jsdom` 再 import 本檔。
@@ -30,6 +32,18 @@ export function captureFrames() {
     get pending() { return frames.length },
     flush() { frames.splice(0).forEach(cb => cb(performance.now())) },
   }
+}
+
+// 讓已經 resolve 的 mock promise（帳號、查詢、寫入）在 act 裡落地：等一個真的 macrotask。
+// setTimeout 被 fake timers 接管的檔案（RoomPage、ConditionsForm）用自己推進時鐘的版本
+export async function settle() {
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+}
+
+// 導頁後落在這裡：路徑加上 push／replace；data-key 每次導航都換，看得出有沒有被導航第二次
+export function Landing() {
+  const { pathname, key } = useLocation()
+  return createElement('p', { 'data-key': key }, `到了 ${pathname}（${useNavigationType()}）`)
 }
 
 export function deferred<T>() {

@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
-import { Link, MemoryRouter, Route, Routes, useLocation, useNavigationType } from 'react-router-dom'
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { leaveRooms } from '../lib/api'
 import { fetchLeaveRooms, type LeaveRoom } from '../lib/roomMembership'
 import { getUid } from '../lib/uid'
-import { deferred } from '../test/dom'
+import { deferred, Landing, settle } from '../test/dom'
 import JoinPage, { validGuestNickname } from './JoinPage'
 
 // 行為測試：真的 React hooks 跑在 jsdom 上，只在模組邊界 mock——lib/supabase（auth、兩支 RPC、
@@ -62,16 +62,6 @@ vi.mock('../lib/roomMembership')
 const leaveRoom = (id: string, code: string, stale = false): LeaveRoom =>
   ({ id, code, status: 'lobby', memberCount: 2, isHost: false, stale })
 const inOldRoom = () => vi.mocked(fetchLeaveRooms).mockResolvedValueOnce([leaveRoom('old-room', 'OLD111')])
-
-// 導頁後落在這裡：路徑加上 push／replace；data-key 每次導航都換，看得出有沒有被導航第二次
-function Landing() {
-  const { pathname, key } = useLocation()
-  return <p data-key={key}>到了 {pathname}（{useNavigationType()}）</p>
-}
-
-async function settle() {
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-}
 
 // 頁面外的兩條路：換一張邀請（同一個 JoinPage 換 :code）、離開這頁（JoinPage 卸載）
 async function renderJoin() {
