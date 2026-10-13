@@ -55,7 +55,8 @@ export default function CandidateList({ rows, voting, picking }: {
 
   // 精簡按鈕：btn-primary 本身沒邊框，補框才不會和 btn-quiet 切換時寬度跳 2px。
   // 框用 brand 而非 brand-fill：深色時 brand-fill 對 surface 只有 2.07:1，按下與否要靠亮框分辨
-  // shrink-0 + nowrap：≤360px 時按鈕不被擠成一字一行；整列不 wrap，改由左側連結自己折行，贊成／否決才不會被拆開
+  // shrink-0 + nowrap：≤360px 時按鈕不被擠成一字一行；擠的時候先由左側連結自己折行，
+  // 字級放大後連一個字都放不下才整組換行，贊成／否決包在同一組，不會被拆開
   const actionBtn = 'btn shrink-0 whitespace-nowrap px-3.5 text-sm tracking-widest'
   const pressedBtn = 'btn-primary border border-brand'
   // 逐行浮現的錯開上限：候選可超過 20 家，換階段 remount 或投票重排時不讓後面的列空白好幾秒
@@ -133,28 +134,34 @@ export default function CandidateList({ rows, voting, picking }: {
                         className={`inline-flex items-center gap-[3px] ${
                           e.mult > 1 ? 'text-ok' : 'text-warn' // 倍率恰為 1 的已由 decisiveFactors 濾掉
                         }`}>
-                        {e.mult > 1 && <ArrowUp className="h-[11px] w-[11px] shrink-0" />}
-                        {e.mult < 1 && <ArrowDown className="h-[11px] w-[11px] shrink-0" />}
+                        {e.mult > 1 && <ArrowUp className="size-[0.6875rem] shrink-0" />}
+                        {e.mult < 1 && <ArrowDown className="size-[0.6875rem] shrink-0" />}
                         {chipLabel(e)}
                       </span>
                     ))}
                   </div>
                 )}
                 {(google || voting || picking) && (
-                  <div className="flex items-center justify-end gap-1.5">
+                  // 字級放大後連結和按鈕擠不下：按鈕組整組換到下一行。不換行時 justify-end 會往左溢出，
+                  // 跑出卡片框，html 的 scrollWidth 也量不到
+                  <div className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1">
                     {google && (
-                      <a
-                        className="mr-auto text-xs text-brand underline underline-offset-[3px]"
-                        href={buildGoogleMapsPlaceUrl(c.restaurants.name, c.restaurants.lat, c.restaurants.lng,
-                          c.restaurants.place_id, c.restaurants.source)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        在 Google Maps 查看
-                      </a>
+                      // flex-1 放在外層 span：基準 0，只在連「Google」一個字都塞不下時才換行，預設字級照舊
+                      // 讓連結文字自己折行。不直接放在 <a> 上，免得整列空白都變成可點的連結
+                      <span className="flex-1 text-xs">
+                        <a
+                          className="text-brand underline underline-offset-[3px]"
+                          href={buildGoogleMapsPlaceUrl(c.restaurants.name, c.restaurants.lat, c.restaurants.lng,
+                            c.restaurants.place_id, c.restaurants.source)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          在 Google Maps 查看
+                        </a>
+                      </span>
                     )}
                     {voting && (
-                      <>
+                      <div className="flex flex-wrap justify-end gap-1.5">
                         <button type="button" aria-pressed={voting.hasMyVote(c.restaurant_id, 'up')}
                           className={`${actionBtn} ${voting.hasMyVote(c.restaurant_id, 'up') ? pressedBtn : 'btn-quiet'}`}
                           onClick={() => voting.onToggle(c.restaurant_id, 'up')}>
@@ -166,7 +173,7 @@ export default function CandidateList({ rows, voting, picking }: {
                           onClick={() => voting.onToggle(c.restaurant_id, 'veto')}>
                           否決
                         </button>
-                      </>
+                      </div>
                     )}
                     {picking && (
                       <button type="button" aria-pressed={picking.isPicked(c.restaurant_id)}

@@ -91,3 +91,18 @@ it('字級選標準不留 key；storage 寫不進去時這次瀏覽仍有效', (
   expect(env.fontSize()).toBe('lg')
   expect(theme.getFontSizePref()).toBe('lg')
 })
+
+it('storage 讀取丟例外時，inline script 與 app 都退回跟隨系統＋標準字級，主題照樣套上', () => {
+  const denied = { getItem() { throw new Error('denied') } }
+  const inline = stubEnv(null, true)
+  vi.stubGlobal('localStorage', denied)
+  new Function(inlineScript)()
+  const app = stubEnv(null, true)
+  vi.stubGlobal('localStorage', denied)
+  theme.applyTheme()
+  theme.applyFontSize()
+  expect(inline.result().theme).toBe('dark')
+  expect(inline.fontSize()).toBe('md')
+  expect(app.result()).toEqual(inline.result())
+  expect(app.fontSize()).toBe('md')
+})

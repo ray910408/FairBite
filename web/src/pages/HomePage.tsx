@@ -237,7 +237,8 @@ export default function HomePage() {
             {/* 320px 要和兩顆按鈕並排：手機 text-lg，sm 以上才放大 */}
             <span className="font-serif text-lg font-black tracking-[0.12em] whitespace-nowrap sm:text-xl">今天吃什麼</span>
           </div>
-          <div className="ml-auto flex flex-col items-end gap-1">
+          {/* grow：同一行時吃滿標題右邊的空間（狀態文字照舊能排成一行），換行後佔滿整行、按鈕靠右 */}
+          <div className="flex grow flex-col items-end gap-1">
             <div className="flex items-center gap-1 sm:gap-1.5">
               <ThemeMenu />
               <Link to="/history" className="btn btn-quiet min-h-11 px-2 text-sm sm:px-3">足跡</Link>
@@ -254,7 +255,9 @@ export default function HomePage() {
               </button>
             </div>
             {leavePending && (
-              <p role="status" className="max-w-52 text-right text-xs text-fg-muted">
+              // w-0 min-w-full：寬度跟著按鈕欄，不拿自己的字寬撐按鈕欄。否則換行判斷會算進這行字，
+              // 每次進首頁查房籍的那一下，320／360px 預設字級的按鈕就會掉到第二行
+              <p role="status" className="w-0 min-w-full text-right text-xs text-fg-muted">
                 正在確認房間狀態，確認後才能登出
               </p>
             )}

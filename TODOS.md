@@ -119,6 +119,12 @@ review 用 mutation 找到、新舊測試都不會發現的改壞方式。不是
 - **GuestRegistrationPrompt 記回房路徑沒包 try:** 「註冊並保留紀錄」的 onClick 直接 `sessionStorage.setItem`，丟錯時回房路徑記不下來，click handler 也中斷。
 - **加入頁的多房確認框:** `LeaveRoomsBody` 多房文案寫「回首頁會一次全部離開」，但加入頁按的是「離開並加入」；按下「離開並加入」送出中（busy）時，回原房的鈕仍可點（單房的「取消並回原房」、多房的各房回房鈕都是）。
 
+### 字級放大後的遺留（字級選項 review，2026-10-13，未修）
+
+- **動作橫幅在特大字級會被 sticky 標頭蓋住 6–11px:** `RoomPage.tsx` 的錯誤／警告橫幅靠 `scroll-mt-36` 停在標頭下，註解假設 320px 標頭約 124px。特大時步驟列與印章換行，標頭多出整行（320px 約 178px、375px 換地點中約 183px），`scroll-mt-36` 只放大到 180px，再扣浮現動畫的 8px 位移就不夠。修法：`revealBanner` 比照換階段的捲動，量 header 底緣再 `scrollBy`；`RoomPage.test.tsx` spy `scrollIntoView` 的那條要跟著改。
+- **步驟列換行後最後一格落單:** `RoomHeader.tsx` 的 Stepper 在 320px 大／特大、360px 特大會折成兩行，`justify-between` 讓第二行的「伍 定案」單獨靠左。純外觀。
+- **TrendChart 的 ★ 刻度字不跟字級放大:** SVG 的 `fontSize="9"` 是 viewBox 單位，只跟著圖寬縮放。
+
 ## /qa-only 線上站 QA + PR #17 review 殘留（2026-08-16）
 
 QA 對象 https://ray910408.github.io/FairBite/#/auth（headless，test 帳號）。ISSUE 編號對應 `.gstack/qa-reports/qa-report-fairbite-2026-08-16.md`（該目錄被 .gitignore 蓋住，只在本機）。PR #17 已修 ISSUE-001（回首頁離席確認）與 ISSUE-003（星排視覺）；ISSUE-005／006／008 已修，見封存。
