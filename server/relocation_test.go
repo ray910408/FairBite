@@ -19,11 +19,18 @@ type relocatingSearchProvider struct {
 	fail         bool
 	relocate     bool
 	changeCenter bool
+	deleteRoom   bool // 唯一成員在 Places 呼叫期間從另一個分頁退房，房間跟著刪掉
+	found        []Restaurant
 }
 
 func (relocatingSearchProvider) Source() string { return "mock" }
 
 func (p relocatingSearchProvider) SearchNearby(ctx context.Context, _, _ float64, _ int, _ []string) (PlacesSearchResult, error) {
+	if p.deleteRoom {
+		if _, err := p.pool.Exec(ctx, `delete from rooms where id=$1`, p.roomID); err != nil {
+			return PlacesSearchResult{}, err
+		}
+	}
 	if p.relocate {
 		if _, err := p.pool.Exec(ctx, `update rooms
 			set search_version=search_version+1,
@@ -35,7 +42,7 @@ func (p relocatingSearchProvider) SearchNearby(ctx context.Context, _, _ float64
 	if p.fail {
 		return PlacesSearchResult{}, errors.New("simulated outage after relocation")
 	}
-	return PlacesSearchResult{}, nil
+	return PlacesSearchResult{Restaurants: p.found}, nil
 }
 
 func seedLocationRoom(t *testing.T, count int) (*pgxpool.Pool, string, []string) {
@@ -281,6 +288,42 @@ func TestHandleSearchRejectsRelocationBeforeEarlySearchExits(t *testing.T) {
 			}
 			if status != "lobby" || candidates != 0 {
 				t.Fatalf("early exit changed room: status=%s candidates=%d", status, candidates)
+			}
+		})
+	}
+}
+
+// 搜尋進行中房間被刪：三條提早結束的路徑都要回 404，不是 500「資料庫錯誤」
+func TestHandleSearchRoomDeletedDuringSearchReturns404(t *testing.T) {
+	const placeID = "mock-room-deleted-during-search"
+	for _, tc := range []struct {
+		name  string
+		fail  bool
+		found []Restaurant
+	}{
+		{name: "empty result"},
+		{name: "provider failure without cache", fail: true},
+		{name: "with restaurants", found: []Restaurant{{
+			PlaceID: placeID, Name: "搜尋中刪房測試", PrimaryType: "restaurant", PriceLevel: 1,
+			Lat: -50, Lng: -140, Hours: daily([2]int{0, 1440}),
+		}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool, roomID, users := seedLocationRoom(t, 1)
+			ctx := context.Background()
+			t.Cleanup(func() {
+				pool.Exec(context.Background(), `delete from restaurants where place_id=$1`, placeID)
+			})
+			// 遠離台北的餐廳 fixture，provider 失敗那條才不會撈到快取
+			if _, err := pool.Exec(ctx, `update rooms set status='lobby',center_lat=-50,center_lng=-140 where id=$1`, roomID); err != nil {
+				t.Fatal(err)
+			}
+			h := newTestAppWithProvider(t, pool, relocatingSearchProvider{
+				pool: pool, roomID: roomID, fail: tc.fail, deleteRoom: true, found: tc.found,
+			})
+			search := pendingPost(t, h, users[0], "/api/rooms/"+roomID+"/search", "")
+			if search.Code != http.StatusNotFound || !strings.Contains(search.Body.String(), "房間不存在") {
+				t.Fatalf("want 404 房間不存在, got %d %s", search.Code, search.Body.String())
 			}
 		})
 	}

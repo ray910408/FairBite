@@ -76,7 +76,17 @@
 - ~~**ConditionsForm 按「我準備好了」到條件寫完之間沒鎖滑桿:** `toggleReady` 先 `await flushPending()` 才 `setForm(ready)`，這一個來回期間滑桿還能拖；拖出的那筆排進 400ms debounce，會在 ready 成立後才寫入。~~ 已結案（2026-10-13）：等條件寫完的期間也算凍結；寫入失敗或地點改變時解凍。
 - ~~**JoinPage 多房時「取消並回原房」固定回 `rooms[0]`:** `LeaveRoomsBody` 已經每間各給「回到 XXX」，這顆鈕卻替使用者猜回哪一間，和 HistoryPage／HomePage「不替使用者猜」的做法不一致。~~ 已結案（2026-10-13）：這顆鈕只在單房時出現，多房時從各房的「回到 XXX」回去。
 
+### 搜尋進行中房間被刪仍回 500（server 可維護度重構 review 遞延，2026-10-12）
+
+- ~~**What:** 搜尋進行中房間被刪（例如唯一成員的房主在 Places 呼叫期間從另一個分頁退房），仍回 500「資料庫錯誤」。有餐廳時，`freezeSearchCandidates` 的 `assertHostInTx` 回 `ErrRoomNotFound`，它不是 `ErrNotHost`，於是走 `serverError`；零筆時，`rejectChangedSearchSnapshot` 從 `checkSearchSnapshot` 拿到 `pgx.ErrNoRows`。~~ 已結案（2026-10-13）：`checkSearchSnapshot` 讀房間列改用 `roomRowErr`，`freezeSearchCandidates` 與 `rejectChangedSearchSnapshot` 各加 `ErrRoomNotFound` → 404「房間不存在」。`relocation_test.go` 的 `TestHandleSearchRoomDeletedDuringSearchReturns404` 讓 provider 在呼叫期間刪房，零筆、provider 失敗且無快取、有餐廳三條路徑都斷言 404；修正前三條都回 500。
+
+### 封鎖網站資料與加入頁的舊問題（修讀碼問題時 review 發現，2026-10-13）
+
+- ~~**封鎖網站資料的瀏覽器，正式會員建不了房:** `HomePage.tsx` 的 `loadAuthState` 讀 `guest-upgrade:<uid>` 丟錯，被 catch 接成 `authState='error'`，建房鈕換成一顆永遠失敗的「重新檢查」。~~ 已結案（2026-10-13）：讀不到升級標記當作沒有，非匿名就顯示建房鈕。半升級帳號仍由 DB 的 `create_room` 擋下（回「訪客需完成註冊後才能建立房間」）；而且封鎖時 AuthPage 寫標記那一步就會丟錯、升級停在送信前，這台裝置本來也走不到半升級。`HomePage.test.tsx` 的 fail closed 案例拿掉 localStorage 那條，改成「封鎖時會員照樣能建房」與「封鎖時匿名訪客仍只看到註冊入口」。同段其餘三條仍在 `TODOS.md`。
+
 ## /qa-only 線上站 QA + PR #17 review 殘留（2026-08-16）
+
+- ~~**ISSUE-002（High）預設條件產生退化結果集** — 全預設（NT$300 上限／800m／步行）在台北 101 搜尋，15 家排除 14 家、全部理由都是「超過 NT$300」，只剩 1 家候選、抽中機率 100%。轉盤只有一個選項等於產品主張不成立，且 App 沒有任何「候選過少、建議放寬條件」的提示就讓使用者走到投票與轉盤。需要產品決策：調預設值、依商圈動態調整、或加候選過少的引導。~~ — 已結案（2026-10-13）：舊版拿每個 Google 價位層級的 NT$ 上限去比預算，只要該層級上限超過 NT$300 就排除；56486ed（2026-08-20）改成先把預算對映成可接受的最高價位層級再比。2026-10-10 在台北 101 用全預設條件、真 API 複測，保留 14 家、排除 4 家，不再重現。「候選過少」的引導沒做，因為退化結果集已經不再出現。
 
 - ~~**ISSUE-005（Low）足跡頁把 3/5 星畫成 3 顆滿星** — `HistoryPage.tsx` 的清單列只渲染 N 顆實心星、沒有空心星做 5 星刻度，3 分讀起來像滿分。摘要區的「平均 3.0 ★」正確，只有列表圖示缺刻度。`icons.tsx` 的 `Star` 已有 `filled` prop（PR #17 加的），補刻度是小改。~~ — 已修（c8d9c57，2026-08-22）：清單列固定畫 5 顆星，未達分數者為空心；2026-10-08 查證。
 

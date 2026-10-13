@@ -165,7 +165,7 @@ func checkSearchSnapshot(ctx context.Context, q querier, roomID string, version 
 	var currentLat, currentLng float64
 	if err := q.QueryRow(ctx, `select search_version, center_lat, center_lng from rooms where id=$1`, roomID).
 		Scan(&currentVersion, &currentLat, &currentLng); err != nil {
-		return err
+		return roomRowErr(err)
 	}
 	if currentVersion != version || currentLat != lat || currentLng != lng {
 		return ErrSearchChanged

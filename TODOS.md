@@ -94,12 +94,6 @@ feat/phase-1 全分支 final review 的 DEFER-P2 批次。原本優先的前三�
 - **#15** unmount 未清 debounce timer。
 - **#18** `Wheel` 的 `!s` 分支是 dead-end（實務不可達）。
 
-### 搜尋進行中房間被刪仍回 500（server 可維護度重構 review 遞延，2026-10-12）
-
-- **What:** 搜尋進行中房間被刪（例如唯一成員的房主在 Places 呼叫期間從另一個分頁退房），仍回 500「資料庫錯誤」。有餐廳時，`freezeSearchCandidates` 的 `assertHostInTx` 回 `ErrRoomNotFound`，它不是 `ErrNotHost`，於是走 `serverError`，log 記 "room not found"；零筆時，`rejectChangedSearchSnapshot` 從 `checkSearchSnapshot` 拿到 `pgx.ErrNoRows`，log 記 "no rows in result set"。
-- **Why:** 改之前也是 500，不算回歸；要測就得編排搜尋競態，成本高，所以延後。其他房間動作在房間被刪後已回 404「房間不存在」。
-- **修法:** 在 `server/search.go` 的 `assertHostInTx` 錯誤分支先判斷 `ErrRoomNotFound`，回 404「房間不存在」；`checkSearchSnapshot`（`relocation.go`）讀房間列的 `ErrNoRows` 也用 `roomRowErr` 轉成同一個 sentinel。光轉 sentinel 仍是 500，因為 `rejectChangedSearchSnapshot` 只分 `ErrSearchChanged` 與其他：`rejectChangedSearchSnapshot` 也要加 `ErrRoomNotFound` → 404 的分支。它的兩個呼叫端要一併檢查：零筆的 `respondNoRestaurants`，以及 provider 失敗且沒有快取的那條路徑（`fetchSearchRestaurants`，回 502 之前）。
-
 ### 行為測試仍未守住的分支（測試轉換 review，2026-10-13）
 
 review 用 mutation 找到、新舊測試都不會發現的改壞方式。不是這次轉換造成的退步，逐條補即可。
@@ -114,7 +108,6 @@ review 用 mutation 找到、新舊測試都不會發現的改壞方式。不是
 
 ### 封鎖網站資料與加入頁的舊問題（修讀碼問題時 review 發現，2026-10-13，未修）
 
-- **封鎖網站資料的瀏覽器，正式會員建不了房:** `HomePage.tsx` 的 `loadAuthState` 讀 `guest-upgrade:<uid>` 丟錯，被 catch 接成 `authState='error'`，建房鈕換成一顆永遠失敗的「重新檢查」。supabase-js 在 storage 被封鎖時會退回記憶體儲存，登入本身可用，所以影響比原本以為的大。`HomePage.test.tsx` 的「localStorage error 時 fail closed 並可重試」把這當成預期行為：讀不到升級標記就分不出訪客或會員。要改得先決定 fail closed 是否仍是想要的。
 - **AuthPage 讀升級標記丟錯時狀態沒更新:** `applyUser` 在 `setUser` 之後讀 `guest-upgrade:<uid>`，丟錯被 `refreshUser` 的 `.catch` 吞掉，後面的升級狀態與模式都沒套用。
 - **GuestRegistrationPrompt 記回房路徑沒包 try:** 「註冊並保留紀錄」的 onClick 直接 `sessionStorage.setItem`，丟錯時回房路徑記不下來，click handler 也中斷。
 - **加入頁的多房確認框:** `LeaveRoomsBody` 多房文案寫「回首頁會一次全部離開」，但加入頁按的是「離開並加入」；按下「離開並加入」送出中（busy）時，回原房的鈕仍可點（單房的「取消並回原房」、多房的各房回房鈕都是）。
@@ -125,9 +118,7 @@ review 用 mutation 找到、新舊測試都不會發現的改壞方式。不是
 
 ## /qa-only 線上站 QA + PR #17 review 殘留（2026-08-16）
 
-QA 對象 https://ray910408.github.io/FairBite/#/auth（headless，test 帳號）。ISSUE 編號對應 `.gstack/qa-reports/qa-report-fairbite-2026-08-16.md`（該目錄被 .gitignore 蓋住，只在本機）。PR #17 已修 ISSUE-001（回首頁離席確認）與 ISSUE-003（星排視覺）；ISSUE-005／006／008 已修，見封存。
-
-- **ISSUE-002（High，未修，待確認是否結案）預設條件產生退化結果集**（2026-10-10 複測已不重現：預算改 Google 價位層級後，台北 101 全預設以真 API 搜尋保留 14 家、排除 4 家。下方為原始紀錄） — 全預設（NT$300 上限／800m／步行）在台北 101 搜尋，15 家排除 14 家、全部理由都是「超過 NT$300」，只剩 1 家候選、抽中機率 100%。轉盤只有一個選項等於產品主張不成立，且 App 沒有任何「候選過少、建議放寬條件」的提示就讓使用者走到投票與轉盤。需要產品決策：調預設值、依商圈動態調整、或加候選過少的引導。
+QA 對象 https://ray910408.github.io/FairBite/#/auth（headless，test 帳號）。ISSUE 編號對應 `.gstack/qa-reports/qa-report-fairbite-2026-08-16.md`（該目錄被 .gitignore 蓋住，只在本機）。PR #17 已修 ISSUE-001（回首頁離席確認）與 ISSUE-003（星排視覺）；ISSUE-002／005／006／008 已結案，見封存。
 
 - **ISSUE-007（Low）邀請碼錯誤橫幅不會消失** — 「房間不存在或已開始」在首頁一直停留到換路由，中間展開地圖、搜尋地點、切用餐時間、觸發另一則驗證訊息期間都還在，跟當下操作已無關。
 
