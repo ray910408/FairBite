@@ -343,14 +343,6 @@ describe('HomePage guest 建房邊界', () => {
       })
     }],
     ['missing user', () => { mocks.getUser.mockResolvedValue({ data: { user: null }, error: null }) }],
-    ['localStorage error', () => {
-      // 只讓升級標記讀不到：出發點、口味建議這些讀法不在這條測試的範圍
-      const read = Storage.prototype.getItem
-      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
-        if (key.startsWith('guest-upgrade:')) throw new Error('storage blocked')
-        return read.call(this, key)
-      })
-    }],
   ])('%s 時 fail closed 並可重試', async (_name, arrange) => {
     arrange()
     await renderHome()
@@ -364,6 +356,24 @@ describe('HomePage guest 建房邊界', () => {
     await settle()
     expect(button('建立房間')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('封鎖網站資料、讀不到升級標記時，會員照樣能建房', async () => {
+    blockStorage('guest-upgrade:')
+    await renderHome()
+    pickDeparture()
+    fireEvent.click(button('建立房間'))
+    await settle()
+    expect(createCalls()).toHaveLength(1)
+    expect(onRoomPage()).toBe('房間頁 /room/room-1')
+  })
+
+  it('封鎖網站資料時，匿名訪客仍只看到註冊入口', async () => {
+    blockStorage('guest-upgrade:')
+    mocks.getUser.mockResolvedValue({ data: { user: { id: 'guest-1', is_anonymous: true } }, error: null })
+    await renderHome()
+    expect(screen.getByRole('link', { name: REGISTER }).getAttribute('href')).toBe('/auth?mode=register')
+    expect(queryButton('建立房間')).toBeNull()
   })
 })
 

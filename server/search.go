@@ -313,6 +313,11 @@ func freezeSearchCandidates(w http.ResponseWriter, r *http.Request, pool *pgxpoo
 			jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
 			return EngineResult{}, false
 		}
+		// Provider call 期間唯一成員退房、房間被刪
+		if errors.Is(err, ErrRoomNotFound) {
+			jsonError(w, http.StatusNotFound, "房間不存在")
+			return EngineResult{}, false
+		}
 		serverError(w, err, "資料庫錯誤，請稍後再試")
 		return EngineResult{}, false
 	}
@@ -397,9 +402,12 @@ func rejectChangedSearchSnapshot(w http.ResponseWriter, ctx context.Context, q q
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, ErrSearchChanged) {
+	switch {
+	case errors.Is(err, ErrSearchChanged):
 		jsonError(w, http.StatusConflict, "搜尋位置已更新，請重新搜尋")
-	} else {
+	case errors.Is(err, ErrRoomNotFound):
+		jsonError(w, http.StatusNotFound, "房間不存在")
+	default:
 		serverError(w, err, "資料庫錯誤，請稍後再試")
 	}
 	return true

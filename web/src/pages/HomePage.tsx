@@ -100,8 +100,11 @@ export default function HomePage() {
       const { data, error } = await supabase.auth.getUser()
       if (error || !data.user) throw error ?? new Error('Missing user')
       const user = data.user
-      setAuthState(user.is_anonymous === true ||
-        localStorage.getItem(`guest-upgrade:${user.id}`) !== null ? 'guest' : 'member')
+      // 封鎖網站資料時讀不到升級標記：當作沒有。半升級帳號照樣會被 DB 的 create_room 擋下，
+      // 而封鎖時 AuthPage 寫標記那一步就會丟錯、升級停在送信前，這台裝置本來也走不到半升級
+      let upgrading = false
+      try { upgrading = localStorage.getItem(`guest-upgrade:${user.id}`) !== null } catch { /* 見上 */ }
+      setAuthState(user.is_anonymous === true || upgrading ? 'guest' : 'member')
     } catch {
       setAuthState('error')
     }
