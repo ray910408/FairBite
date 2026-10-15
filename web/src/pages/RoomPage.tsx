@@ -472,9 +472,10 @@ export default function RoomPage() {
         ) : (
           // 非房主不是主要邀請人：收起來，自己的條件不必捲過整張 QR 卡
           <details className="card py-0">
-            <summary className="flex min-h-12 list-none items-center gap-2 font-serif text-base font-semibold [&::-webkit-details-marker]:hidden">
-              <Chevron className="disclosure-chevron h-4 w-4" />
+            {/* 箭頭放右邊（同首頁自製轉盤）：標題才和其他卡片的標題對齊同一條左緣 */}
+            <summary className="flex min-h-12 list-none items-center justify-between gap-2 font-serif text-base font-semibold [&::-webkit-details-marker]:hidden">
               邀請其他人加入
+              <Chevron className="disclosure-chevron h-5 w-5 shrink-0" />
             </summary>
             <div className="pb-4"><InviteQRCode code={room.code} /></div>
           </details>

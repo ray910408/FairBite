@@ -169,7 +169,7 @@ export default function AuthPage() {
 
   return (
     <>
-    <main className="mx-auto flex min-h-screen w-full max-w-sm flex-col justify-center gap-6 p-5"
+    <main className="mx-auto flex min-h-screen w-full max-w-sm flex-col justify-center gap-6 p-4"
       inert={confirmExistingLogin}>
       <div className="animate-rise flex flex-col items-center gap-3 text-center">
         <Logo className="h-14 w-14" />

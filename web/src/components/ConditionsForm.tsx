@@ -172,11 +172,13 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
 
       <div role="group" aria-labelledby="cuisine-label">
         <span id="cuisine-label" className="label">料理偏好</span>
-        <div className="mt-2 flex flex-wrap gap-2">
+        {/* 等寬欄而非 flex-wrap：每列左右都貼齊卡片內緣，上下列的 chip 也對齊欄位。
+            4rem 欄寬讓欄數和原本自然換行時一樣（375px 四欄、320px 三欄、特大字級二到三欄） */}
+        <div className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(4rem,1fr))] gap-2">
           {CUISINE_OPTIONS.map(([v, label]) => (
             <button key={v} type="button" aria-pressed={form.cuisines.includes(v)}
               disabled={frozen}
-              className={`chip ${form.cuisines.includes(v)
+              className={`chip justify-center px-2 ${form.cuisines.includes(v)
                 ? 'border-brand bg-brand-fill text-on-brand hover:bg-brand-fill-hover' : ''}`}
               onClick={() => save({ cuisines: toggle(form.cuisines, v) })}>{label}</button>
           ))}
@@ -186,11 +188,11 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
       <div role="group" aria-labelledby="dietary-label">
         <span id="dietary-label" className="label">飲食禁忌</span>
         <p className="mt-0.5 text-xs text-fg-muted">硬性排除：不符合的店不會出現在轉盤上</p>
-        <div className="mt-2 flex flex-wrap gap-2">
+        <div className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(4rem,1fr))] gap-2">
           {DIETARY_OPTIONS.map(([v, label]) => (
             <button key={v} type="button" aria-pressed={form.dietary.includes(v)}
               disabled={frozen}
-              className={`chip ${form.dietary.includes(v)
+              className={`chip justify-center px-2 ${form.dietary.includes(v)
                 ? 'border-danger bg-danger text-on-danger hover:bg-danger' : ''}`}
               onClick={() => save({ dietary: toggle(form.dietary, v) })}>{label}</button>
           ))}
@@ -212,11 +214,12 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
 
       <div role="group" aria-labelledby="transport-label">
         <span id="transport-label" className="label">交通方式</span>
-        <div className="mt-2 flex gap-2">
+        {/* 字級特大的 320／360px 三顆並排不下：整顆換到下一列，不把「大眾運輸」折成直排 */}
+        <div className="mt-2 flex flex-wrap gap-2">
           {TRANSPORTS.map(([v, label]) => (
             <button key={v} type="button" aria-pressed={form.transport === v}
               disabled={frozen}
-              className={`chip flex-1 justify-center ${form.transport === v
+              className={`chip flex-1 justify-center whitespace-nowrap ${form.transport === v
                 ? 'border-brand bg-brand-fill text-on-brand hover:bg-brand-fill-hover' : ''}`}
               onClick={() => save({ transport: v })}>{label}</button>
           ))}

@@ -16,9 +16,11 @@ function Stepper({ status }: { status: Room['status'] }) {
   // relocating／shortlisting 不是獨立步驟：借用投票／候選出爐那格並改標籤
   const current = STEPS.findIndex(s => s.key === (
     status === 'relocating' ? 'voting' : status === 'shortlisting' ? 'candidates' : status))
-  // 320px 寬：五格不畫連接線、靠 justify-between 撐開，字距縮到 gap-0.5 才放得下；字級放大後仍放不下就換行
+  // 320px 寬：五格不畫連接線、靠 justify-between 撐開，字距縮到 gap-0.5 才放得下。
+  // 字全是全形，一列要的寬度是 rem 定值，最寬是換地點中（17.625rem）：容器窄於這個就改成三欄 3+2，
+  // 第二列對齊第一列的欄位。門檻不分狀態，同一台裝置換階段時步驟列不會忽然變形
   return (
-    <ol className="flex flex-wrap items-center justify-between gap-1 text-xs">
+    <ol className="flex flex-wrap items-center justify-between gap-1 text-xs @max-[17.75rem]:grid @max-[17.75rem]:grid-cols-3">
       {STEPS.map((s, i) => (
         <li key={s.key} aria-current={i === current ? 'step' : undefined}
           className="flex items-center gap-0.5 whitespace-nowrap">
@@ -47,8 +49,10 @@ export function RoomHeader({ room, copied, onCopy, leaveChecking, onLeave }: {
 }) {
   return (
     <header className="sticky top-0 z-20 bg-canvas/85 backdrop-blur">
-      {/* 320px 放不下最長的印章（等待選新地點）時讓印章換行，不撐出水平捲動 */}
-      <div className="mx-auto flex w-full max-w-lg flex-wrap items-center gap-x-2 gap-y-1 p-3 pb-2 sm:gap-x-3">
+      {/* 320px 放不下最長的印章（等待選新地點）時讓印章換行，不撐出水平捲動。
+          左右內距和 main 同為 p-4，logo、步驟列、雙線才對齊下方卡片；手機的間距收成 gap-x-1（同首頁標頭的按鈕組），
+          320px 預設字級的三字印章才不會被擠到第二行 */}
+      <div className="mx-auto flex w-full max-w-lg flex-wrap items-center gap-x-1 gap-y-1 p-4 pb-2 sm:gap-x-3">
         {/* 回首頁＝離席（ADR-0007），代價不可逆——攔下導覽先查再確認 */}
         <Link to="/" aria-label="回首頁"
           aria-busy={leaveChecking} onClick={onLeave}
@@ -68,7 +72,7 @@ export function RoomHeader({ room, copied, onCopy, leaveChecking, onLeave }: {
           {ROOM_STATUS_LABEL[room.status]}
         </span>
       </div>
-      <div className="mx-auto w-full max-w-lg px-3">
+      <div className="@container mx-auto w-full max-w-lg px-4">
         <Stepper status={room.status} />
         <div className="double-rule mt-3" />
       </div>
