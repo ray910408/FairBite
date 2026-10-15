@@ -214,7 +214,7 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
 
       <div role="group" aria-labelledby="transport-label">
         <span id="transport-label" className="label">交通方式</span>
-        {/* 字級特大的 320／360px 三顆並排不下：整顆換到下一列，不把「大眾運輸」折成直排 */}
+        {/* 字級大／特大的窄螢幕三顆並排不下：整顆換到下一列，不把「大眾運輸」折成直排 */}
         <div className="mt-2 flex flex-wrap gap-2">
           {TRANSPORTS.map(([v, label]) => (
             <button key={v} type="button" aria-pressed={form.transport === v}

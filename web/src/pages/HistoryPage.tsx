@@ -71,13 +71,14 @@ export default function HistoryPage() {
       {/* 品牌列比照 HomePage（h1 歸位到 main，design review D3）；sticky 比照 RoomPage——
           本頁是全 app 最長可捲頁，捲深後「回首頁」不得消失（design review D8） */}
       <header className="sticky top-0 z-20 bg-canvas/85 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-md items-center justify-between px-4 pt-4">
+        {/* 標題不折行：系統字級再加特大時並排不下，「回首頁」換到下一列並靠右（同首頁標頭） */}
+        <div className="mx-auto flex w-full max-w-md flex-wrap items-center justify-between gap-y-1 px-4 pt-4">
           <div className="flex items-center gap-2">
             <Logo className="h-8 w-8" />
             <span className="font-serif text-lg font-black tracking-[0.12em] whitespace-nowrap sm:text-xl">今天吃什麼</span>
           </div>
           {/* 一律攔下當場查（ADR-0007）；查到真的沒房才放行導覽 */}
-          <Link to="/" className="btn btn-quiet min-h-11 px-3 text-sm"
+          <Link to="/" className="btn btn-quiet ml-auto min-h-11 px-3 text-sm"
             aria-busy={leaveChecking} onClick={askLeave}>回首頁</Link>
         </div>
         <div className="mx-auto w-full max-w-md px-4">

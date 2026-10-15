@@ -17,10 +17,11 @@ function Stepper({ status }: { status: Room['status'] }) {
   const current = STEPS.findIndex(s => s.key === (
     status === 'relocating' ? 'voting' : status === 'shortlisting' ? 'candidates' : status))
   // 320px 寬：五格不畫連接線、靠 justify-between 撐開，字距縮到 gap-0.5 才放得下。
-  // 字全是全形，一列要的寬度是 rem 定值，最寬是換地點中（17.625rem）：容器窄於這個就改成三欄 3+2，
-  // 第二列對齊第一列的欄位。門檻不分狀態，同一台裝置換階段時步驟列不會忽然變形
+  // 字全是全形，一列要的寬度是 rem 定值，最寬是換地點中（17.625rem，門檻多留 0.125rem 取 17.75rem）：
+  // 容器窄於這個就改成三欄 3+2，第二列對齊第一列的欄位。門檻不分狀態，同一台裝置換階段時步驟列不會忽然變形。
+  // 系統字級再加特大時三欄也放不下最寬的一格（打勾的四字，4rem）：窄於 3×4rem＋兩個 gap 就改兩欄，不讓字疊到隔壁欄
   return (
-    <ol className="flex flex-wrap items-center justify-between gap-1 text-xs @max-[17.75rem]:grid @max-[17.75rem]:grid-cols-3">
+    <ol className="flex flex-wrap items-center justify-between gap-1 text-xs @max-[17.75rem]:grid @max-[17.75rem]:grid-cols-3 @max-[12.5rem]:grid-cols-2">
       {STEPS.map((s, i) => (
         <li key={s.key} aria-current={i === current ? 'step' : undefined}
           className="flex items-center gap-0.5 whitespace-nowrap">
