@@ -112,10 +112,6 @@ review 用 mutation 找到、新舊測試都不會發現的改壞方式。不是
 - **GuestRegistrationPrompt 記回房路徑沒包 try:** 「註冊並保留紀錄」的 onClick 直接 `sessionStorage.setItem`，丟錯時回房路徑記不下來，click handler 也中斷。
 - **加入頁的多房確認框:** `LeaveRoomsBody` 多房文案寫「回首頁會一次全部離開」，但加入頁按的是「離開並加入」；按下「離開並加入」送出中（busy）時，回原房的鈕仍可點（單房的「取消並回原房」、多房的各房回房鈕都是）。
 
-### 字級放大後的遺留（字級選項 review，2026-10-13，未修）
-
-- **步驟列換行後第二行排得怪:** `RoomHeader.tsx` 的 Stepper 在 320px 大／特大、360px 特大，以及 375px 特大換地點中會折成兩行。多數狀態第二行只剩「伍 定案」單獨靠左；320px 特大換地點中第二行是「待確認／定案」兩格，被 `justify-between` 推到左右兩端。純外觀。
-
 ## /qa-only 線上站 QA + PR #17 review 殘留（2026-08-16）
 
 QA 對象 https://ray910408.github.io/FairBite/#/auth（headless，test 帳號）。ISSUE 編號對應 `.gstack/qa-reports/qa-report-fairbite-2026-08-16.md`（該目錄被 .gitignore 蓋住，只在本機）。PR #17 已修 ISSUE-001（回首頁離席確認）與 ISSUE-003（星排視覺）；ISSUE-002／005／006／008 已結案，見封存。
