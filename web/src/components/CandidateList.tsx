@@ -131,11 +131,12 @@ export default function CandidateList({ rows, voting, picking }: {
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[0.78125rem] leading-relaxed">
                     {factors.map((e, i) => (
                       <span key={i}
-                        className={`inline-flex items-center gap-[3px] ${
+                        className={`inline-flex items-start gap-[3px] ${
                           e.mult > 1 ? 'text-ok' : 'text-warn' // 倍率恰為 1 的已由 decisiveFactors 濾掉
                         }`}>
-                        {e.mult > 1 && <ArrowUp className="size-[0.6875rem] shrink-0" />}
-                        {e.mult < 1 && <ArrowDown className="size-[0.6875rem] shrink-0" />}
+                        {/* 箭頭高一行（1lh）、圖形置中：說明折成兩行時箭頭對齊第一行，不卡在兩行中間 */}
+                        {e.mult > 1 && <ArrowUp className="h-[1lh] w-[0.6875rem] shrink-0" />}
+                        {e.mult < 1 && <ArrowDown className="h-[1lh] w-[0.6875rem] shrink-0" />}
                         {chipLabel(e)}
                       </span>
                     ))}

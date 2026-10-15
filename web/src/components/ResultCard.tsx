@@ -44,7 +44,7 @@ export default function ResultCard({ draw, candidates, me, confirmed = true }: {
           抽中機率 <span className="font-serif text-[0.9375rem] font-bold text-fg">{formatPercent(prob)}</span>
         </>}
       </p>
-      <a className={`btn ${confirmed ? 'btn-primary' : 'btn-secondary'} mt-1 w-full text-sm tracking-[0.05em]`}
+      <a className={`btn ${confirmed ? 'btn-primary' : 'btn-secondary'} mt-1 w-full text-center text-sm tracking-[0.05em]`}
         href={buildMapsUrl(r.lat, r.lng, r.place_id, r.source, me?.transport ?? 'walking')}
         target="_blank" rel="noreferrer">
         <MapPin className="h-4.5 w-4.5" />

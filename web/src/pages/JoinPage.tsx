@@ -138,7 +138,7 @@ export default function JoinPage() {
 
   return (
     <>
-    <main className="mx-auto flex min-h-screen w-full max-w-sm flex-col justify-center gap-5 p-5"
+    <main className="mx-auto flex min-h-screen w-full max-w-sm flex-col justify-center gap-5 p-4"
       inert={!!leaveTarget}>
       <div className="flex flex-col items-center gap-3 text-center">
         <Logo className="h-14 w-14" />
