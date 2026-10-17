@@ -250,8 +250,8 @@ func TestScoringFactors(t *testing.T) {
 	var sum float64
 	for _, c := range res.Kept {
 		sum += c.Probability
-		if len(c.Trace) != 4 {
-			t.Errorf("%s trace 應有 4 個公開因素，got %d", c.PlaceID, len(c.Trace))
+		if len(c.Trace) != 5 { // 含無紀錄時倍率 1 的 recency
+			t.Errorf("%s trace 應有 5 個公開因素，got %d", c.PlaceID, len(c.Trace))
 		}
 		for _, e := range c.Trace {
 			if e.Reason == "" || e.Mult <= 0 {
@@ -629,8 +629,8 @@ func TestEvaluateVotes(t *testing.T) {
 			byID := map[string]Candidate{}
 			for _, c := range res.Kept {
 				byID[c.PlaceID] = c
-				if len(c.Trace) != 4 {
-					t.Errorf("%s public trace length=%d, want 4", c.PlaceID, len(c.Trace))
+				if len(c.Trace) != 5 { // 含無紀錄時倍率 1 的 recency
+					t.Errorf("%s public trace length=%d, want 5", c.PlaceID, len(c.Trace))
 				}
 			}
 			want := byID["b"].Score * tc.boost

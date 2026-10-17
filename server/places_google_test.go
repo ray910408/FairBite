@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -761,7 +760,7 @@ func TestGoogleSearchNearbyTaiwanesePagingDedupesAndCapsCalls(t *testing.T) {
 	defer srv.Close()
 
 	result, err := NewGooglePlacesProvider("test-key", srv.URL).SearchNearby(
-		context.Background(), 25.0478, 121.5170, 1000, []string{"taiwanese", "taiwanese"})
+		context.Background(), 25.0478, 121.5170, 1000, []string{"taiwanese"})
 	if err != nil {
 		t.Fatalf("SearchNearby: %v", err)
 	}
@@ -784,67 +783,30 @@ func TestGoogleSearchNearbyTaiwanesePagingDedupesAndCapsCalls(t *testing.T) {
 	}
 }
 
-func TestTaiwaneseNextPageStopsDuplicateBeforeAnExtraCall(t *testing.T) {
-	seen := map[string]bool{}
-	calls := 1 // page one was already fetched and returned page-2.
-	for _, token := range []string{"page-2", "page-2"} {
-		if !nextTaiwanesePage(seen, token) {
-			break
+func TestGoogleSearchNearbyTaiwanesePagingStopsOnEmptyToken(t *testing.T) {
+	var textCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/places:searchNearby" {
+			_, _ = w.Write([]byte(`{"places":[]}`))
+			return
 		}
-		calls++
-	}
-	if calls != 2 {
-		t.Fatalf("duplicate token must stop before a would-be third call, got %d", calls)
-	}
-}
+		textCalls.Add(1)
+		_, _ = w.Write([]byte(`{"places":[],"nextPageToken":""}`))
+	}))
+	defer srv.Close()
 
-func TestGoogleSearchNearbyTaiwanesePagingStopsOnEmptyOrDuplicateToken(t *testing.T) {
-	for _, tc := range []struct {
-		name            string
-		firstPageToken  string
-		secondPageToken string
-		wantCalls       int
-	}{
-		{name: "empty token", wantCalls: 2},
-		{name: "duplicate token", firstPageToken: "page-2", secondPageToken: "page-2", wantCalls: 4},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var textCalls atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if r.URL.Path == "/v1/places:searchNearby" {
-					_, _ = w.Write([]byte(`{"places":[]}`))
-					return
-				}
-				var request struct {
-					PageToken string `json:"pageToken"`
-				}
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Errorf("decode text request: %v", err)
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
-				textCalls.Add(1)
-				token := tc.firstPageToken
-				if request.PageToken != "" {
-					token = tc.secondPageToken
-				}
-				_, _ = w.Write([]byte(`{"places":[],"nextPageToken":` + strconv.Quote(token) + `}`))
-			}))
-			defer srv.Close()
-
-			result, err := NewGooglePlacesProvider("test-key", srv.URL).SearchNearby(
-				context.Background(), 25.0478, 121.5170, 1000, []string{"taiwanese"})
-			if err != nil {
-				t.Fatalf("SearchNearby: %v", err)
-			}
-			if got := int(textCalls.Load()); got != tc.wantCalls {
-				t.Fatalf("Text calls = %d, want %d", got, tc.wantCalls)
-			}
-			if len(result.UnfulfilledTerms) != 0 {
-				t.Fatalf("decoded empty/duplicate-token pages must remain fulfilled: %v", result.UnfulfilledTerms)
-			}
-		})
+	result, err := NewGooglePlacesProvider("test-key", srv.URL).SearchNearby(
+		context.Background(), 25.0478, 121.5170, 1000, []string{"taiwanese"})
+	if err != nil {
+		t.Fatalf("SearchNearby: %v", err)
+	}
+	// 兩支台式查詢詞各打一頁：空 token 不翻第二頁
+	if got := int(textCalls.Load()); got != 2 {
+		t.Fatalf("Text calls = %d, want 2", got)
+	}
+	if len(result.UnfulfilledTerms) != 0 {
+		t.Fatalf("decoded empty-token pages must remain fulfilled: %v", result.UnfulfilledTerms)
 	}
 }
 

@@ -116,7 +116,7 @@ func TestVoteAfterLeaveRejectedNoOrphanVote(t *testing.T) {
 	}
 
 	// B 先退房，再以殘存 JWT 投否決——模擬「檢查後、寫票前退房」競態的落點狀態
-	if err := leaveOneRoom(ctx, pool, nil, roomID, memberB); err != nil {
+	if err := leaveOneRoom(ctx, pool, failingWeather{}, roomID, memberB); err != nil {
 		t.Fatal(err)
 	}
 	h := newTestApp(t, pool)
@@ -186,7 +186,7 @@ func TestCastVoteAfterConcurrentLeaveReturnsErrNotMember(t *testing.T) {
 		t.Fatal("前置：B 應為成員")
 	}
 	// 競態落點：B 的退房在寫票交易開始前 commit
-	if err := leaveOneRoom(ctx, pool, nil, roomID, memberB); err != nil {
+	if err := leaveOneRoom(ctx, pool, failingWeather{}, roomID, memberB); err != nil {
 		t.Fatal(err)
 	}
 	// 寫票交易（比照 handleVote 的交易內順序）
@@ -249,7 +249,7 @@ func TestLeaveSuccessionAndLastLeaveDeletesRoom(t *testing.T) {
 	}
 
 	// 房主退：繼任給 joined_at 最早的 B
-	if err := leaveOneRoom(ctx, pool, nil, roomID, host); err != nil {
+	if err := leaveOneRoom(ctx, pool, failingWeather{}, roomID, host); err != nil {
 		t.Fatal(err)
 	}
 	var newHost string
@@ -260,7 +260,7 @@ func TestLeaveSuccessionAndLastLeaveDeletesRoom(t *testing.T) {
 		t.Fatalf("繼任應給 joined_at 最早者 B：got %s", newHost)
 	}
 	// 已退者再退（房仍活著）：RowsAffected=0 早退分支，冪等且不動房（eng review 5A）
-	if err := leaveOneRoom(ctx, pool, nil, roomID, host); err != nil {
+	if err := leaveOneRoom(ctx, pool, failingWeather{}, roomID, host); err != nil {
 		t.Fatalf("已退者重複退房應冪等：%v", err)
 	}
 	var membersLeft int
@@ -272,10 +272,10 @@ func TestLeaveSuccessionAndLastLeaveDeletesRoom(t *testing.T) {
 	}
 
 	// B 退 → 繼任 C；C 退 → 末位刪房
-	if err := leaveOneRoom(ctx, pool, nil, roomID, memberB); err != nil {
+	if err := leaveOneRoom(ctx, pool, failingWeather{}, roomID, memberB); err != nil {
 		t.Fatal(err)
 	}
-	if err := leaveOneRoom(ctx, pool, nil, roomID, memberC); err != nil {
+	if err := leaveOneRoom(ctx, pool, failingWeather{}, roomID, memberC); err != nil {
 		t.Fatal(err)
 	}
 	var roomCount int
@@ -296,7 +296,7 @@ func TestLeaveSuccessionAndLastLeaveDeletesRoom(t *testing.T) {
 	}
 
 	// 冪等：已退的人再退、房已刪再退，都靜默成功
-	if err := leaveOneRoom(ctx, pool, nil, roomID, host); err != nil {
+	if err := leaveOneRoom(ctx, pool, failingWeather{}, roomID, host); err != nil {
 		t.Fatalf("房已刪的退房應冪等：%v", err)
 	}
 }
@@ -347,7 +347,7 @@ func TestLeaveDuringVotingDeletesVotesAndRescores(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := leaveOneRoom(ctx, pool, nil, roomID, memberB); err != nil {
+	if err := leaveOneRoom(ctx, pool, failingWeather{}, roomID, memberB); err != nil {
 		t.Fatal(err)
 	}
 
@@ -404,7 +404,7 @@ func TestLeaveSuccessionTieBreakByUserID(t *testing.T) {
 		($1, $4, '2026-08-15T00:01:00Z')`, roomID, host, memberB, memberC); err != nil {
 		t.Fatal(err)
 	}
-	if err := leaveOneRoom(ctx, pool, nil, roomID, host); err != nil {
+	if err := leaveOneRoom(ctx, pool, failingWeather{}, roomID, host); err != nil {
 		t.Fatal(err)
 	}
 	var newHost string
@@ -441,7 +441,7 @@ func TestConcurrentLeavesDeleteRoomExactlyOnce(t *testing.T) {
 	errs := make(chan error, 2)
 	for _, uid := range []string{host, memberB} {
 		uid := uid
-		go func() { errs <- leaveOneRoom(ctx, pool, nil, roomID, uid) }()
+		go func() { errs <- leaveOneRoom(ctx, pool, failingWeather{}, roomID, uid) }()
 	}
 	for i := 0; i < 2; i++ {
 		if err := <-errs; err != nil {
@@ -470,7 +470,7 @@ type hostLeavingProvider struct {
 func (p hostLeavingProvider) Source() string { return "mock" }
 
 func (p hostLeavingProvider) SearchNearby(ctx context.Context, lat, lng float64, radiusM int, cuisines []string) (PlacesSearchResult, error) {
-	if err := leaveOneRoom(ctx, p.pool, nil, p.roomID, p.uid); err != nil {
+	if err := leaveOneRoom(ctx, p.pool, failingWeather{}, p.roomID, p.uid); err != nil {
 		return PlacesSearchResult{}, err
 	}
 	if p.afterLeave != nil {

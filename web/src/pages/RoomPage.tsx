@@ -59,7 +59,7 @@ function revealBanner(el: HTMLElement | null) {
 
 export default function RoomPage() {
   const { id = '' } = useParams()
-  const { room, members, candidates, draw, locationVotes = [], shortlistVotes = [], shortlistPicks = [], myUserId,
+  const { room, members, candidates, draw, locationVotes, shortlistVotes, shortlistPicks, myUserId,
     connected, notFound, loadError, refetch, toggleVote, togglePick, hasMyVote, ups, vetoesRemaining } = useRoom(id)
   const [spun, setSpun] = useState(false)
   const [actionError, setActionError] = useState('')

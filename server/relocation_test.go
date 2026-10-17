@@ -376,7 +376,7 @@ func TestLocationMajorityRecountsThroughLeave(t *testing.T) {
 			if leaveYes {
 				leaver = users[1]
 			}
-			if err := leaveOneRoom(context.Background(), pool, nil, roomID, leaver); err != nil {
+			if err := leaveOneRoom(context.Background(), pool, failingWeather{}, roomID, leaver); err != nil {
 				t.Fatal(err)
 			}
 			var status string

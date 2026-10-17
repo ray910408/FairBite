@@ -11,15 +11,14 @@ var ErrSearchQuota = errors.New("search resource quota exceeded")
 
 // Reserve the worst-case HTTP calls, including retries and Taiwanese pages.
 // Unused reservations are not refunded: provider failures can still be billable.
+// cuisines is cuisineUnion output, already deduplicated, matching SearchNearby's fan-out.
 func googleSearchRequestBudget(cuisines []string) int {
 	calls := 2 // nearby plus one retry
-	seen := map[string]bool{}
 	for _, cuisine := range cuisines {
 		queries := CuisineSearchQueries[cuisine]
-		if seen[cuisine] || len(queries) == 0 {
+		if len(queries) == 0 {
 			continue
 		}
-		seen[cuisine] = true
 		if cuisine == "taiwanese" {
 			calls += 2 * len(queries) // two pages per query, no retries
 		} else {

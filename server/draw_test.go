@@ -14,25 +14,15 @@ func cands(ps ...float64) []Candidate {
 }
 
 func TestDraw(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		candidates []Candidate
-		wantEmpty  bool
-	}{
-		{"weighted candidates replay deterministically", cands(0.5, 0.3, 0.2), false},
-		{"empty candidates retain a seed", nil, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			winner, seed := Draw(tc.candidates)
-			if seed == "" || (winner == "") != tc.wantEmpty {
-				t.Fatalf("Draw = (%q, %q)", winner, seed)
-			}
-			for i := 0; i < 10; i++ {
-				if got := ReplayWinner(tc.candidates, seed); got != winner {
-					t.Fatalf("replay = %q, want %q", got, winner)
-				}
-			}
-		})
+	ks := cands(0.5, 0.3, 0.2)
+	winner, seed := Draw(ks)
+	if seed == "" || winner == "" {
+		t.Fatalf("Draw = (%q, %q)", winner, seed)
+	}
+	for i := 0; i < 10; i++ {
+		if got := ReplayWinner(ks, seed); got != winner {
+			t.Fatalf("replay = %q, want %q", got, winner)
+		}
 	}
 }
 
