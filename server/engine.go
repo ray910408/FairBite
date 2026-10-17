@@ -77,7 +77,7 @@ type EngineInput struct {
 	Weather              *Weather                 // nil = 無資料（provider 失敗或未接），中性
 	Votes                map[string]VoteInfo      // key = rkey(r)；nil = 無投票資料（P1 相容）
 	Recency              map[string]RecencyCount  // key = rkey(r)；nil = 無紀錄
-	Exposure             map[string]ExposureCount // key = rkey(r)；nil = 無統計（相容舊測試）
+	Exposure             map[string]ExposureCount // key = rkey(r)；nil = 無統計
 	ExposureCounted      map[string]bool          // search 時 kept（收到本房曝光 +1）的候選；nil/false = 不扣
 	Satisfaction         map[string]float64       // key = UserID；無樣本的成員不在 map；nil = 無資料
 	Exploration          string                   // familiar/balanced/explore；"" 視為 balanced
@@ -138,17 +138,9 @@ func hardExclude(r Restaurant, ms []Member, now time.Time, cuisineFilter bool) (
 	// 全員未設定時 maxPriceLevel 仍為 PriceLevelUnknown，依常數契約不參與硬排除；
 	// 少了這道守衛，-1 會排掉所有已知價位（含免費的 0）。
 	if r.PriceLevel >= 0 && maxPriceLevel != PriceLevelUnknown && r.PriceLevel > maxPriceLevel {
-		priceLabel := GooglePriceLevelLabels[r.PriceLevel]
-		if priceLabel == "" {
-			priceLabel = "未設定"
-		}
-		preferenceLabel := GooglePriceLevelLabels[maxPriceLevel]
-		if preferenceLabel == "" {
-			preferenceLabel = "未設定"
-		}
 		addKind("budget")
 		reasons = append(reasons, fmt.Sprintf("Google 價位層級「%s」高於 %s 的「%s」偏好",
-			priceLabel, minName, preferenceLabel))
+			GooglePriceLevelLabels[r.PriceLevel], minName, GooglePriceLevelLabels[maxPriceLevel]))
 	}
 	// 比照未知價位先例：未知不排除，不能把缺少時段當成用餐時間未營業。
 	if len(r.Hours) > 0 && !r.Hours.IsOpenAt(now) {
@@ -494,9 +486,6 @@ func allCandidatesNew(in EngineInput) bool {
 }
 
 func exposureFactor(r Restaurant, in EngineInput) TraceEntry {
-	if in.Exposure == nil {
-		return TraceEntry{Mult: 1.0} // 無統計資料：中性且不產生 trace（比照 closingFactor 先例）
-	}
 	c := in.Exposure[rkey(r)]
 	if effectiveRecommended(r, c, in) == 0 {
 		scale := gearScale(NewStoreBonusScale, in.Exploration)
@@ -528,17 +517,11 @@ func exposureFactor(r Restaurant, in EngineInput) TraceEntry {
 }
 
 func recencyFactor(r Restaurant, in EngineInput) TraceEntry {
-	if in.Recency == nil {
-		return TraceEntry{Mult: 1.0}
-	}
 	c := in.Recency[rkey(r)]
 	eff := (float64(c.Fresh) + RecencyFadingWeight*float64(c.Fading)) / float64(len(in.Members))
 	eff = math.Round(eff*2) / 2
 	scale := gearScale(RecencyPenaltyScale, in.Exploration)
 	mult := 1 - (1-RecencyFloorMult)*eff*scale
-	if mult < RecencyMinMult {
-		mult = RecencyMinMult
-	}
 	return TraceEntry{"recency", mult, "依群體近期用餐概況調整"}
 }
 
@@ -607,9 +590,6 @@ func normalize(kept []Candidate) {
 	var sum float64
 	for i := range kept {
 		sum += kept[i].Score
-	}
-	if sum == 0 {
-		return
 	}
 	for i := range kept {
 		kept[i].Probability = kept[i].Score / sum

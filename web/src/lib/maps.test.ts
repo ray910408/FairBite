@@ -6,10 +6,13 @@ describe('buildGoogleMapsPlaceUrl', () => {
     const url = buildGoogleMapsPlaceUrl('A&B 餐廳', 25.05, 121.52, 'ChIJabc', 'google')
     expect(url).toBe('https://www.google.com/maps/search/?api=1&query=A%26B+%E9%A4%90%E5%BB%B3+25.05%2C121.52&query_place_id=ChIJabc')
   })
-  it('缺少或使用 mock ID 時只使用店名與座標 fallback', () => {
+  it('缺少 ID 或非 Google 出身時只使用店名與座標 fallback', () => {
     expect(buildGoogleMapsPlaceUrl('餐廳', 25.05, 121.52, '', 'google')).not.toContain('query_place_id=')
-    expect(buildGoogleMapsPlaceUrl('餐廳', 25.05, 121.52, 'mock-008', 'google')).not.toContain('query_place_id=')
     expect(buildGoogleMapsPlaceUrl('餐廳', 25.05, 121.52, 'ChIJabc', 'mock')).not.toContain('query_place_id=')
+  })
+  // 同 buildMapsUrl 的交叉案例：只看 source 欄，place_id 前綴 sniff 復辟時會紅
+  it('source 為 google 時，mock- 前綴的 place_id 仍帶入', () => {
+    expect(buildGoogleMapsPlaceUrl('餐廳', 25.05, 121.52, 'mock-008', 'google')).toContain('query_place_id=mock-008')
   })
 })
 

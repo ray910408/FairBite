@@ -8,8 +8,7 @@ export function buildGoogleMapsPlaceUrl(
     api: '1',
     query: `${name} ${lat},${lng}`,
   })
-  // mock identifiers are local fixtures, never Google Place IDs.
-  if (placeId && isGoogleSourced(source) && !placeId.startsWith('mock-')) {
+  if (placeId && isGoogleSourced(source)) {
     q.set('query_place_id', placeId)
   }
   return `https://www.google.com/maps/search/?${q.toString()}`

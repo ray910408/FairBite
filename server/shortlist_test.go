@@ -75,7 +75,7 @@ func shortlistCall(t *testing.T, pool *pgxpool.Pool, h func(http.ResponseWriter,
 }
 
 func startVotingNoWeather(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
-	handleStartVoting(w, r, pool, nil)
+	handleStartVoting(w, r, pool, failingWeather{})
 }
 
 func shortlistCount(t *testing.T, pool *pgxpool.Pool, query string, args ...any) int {
@@ -251,7 +251,7 @@ func TestShortlistFreezeAndLeave(t *testing.T) {
 		castPicks(t, pool, roomID, users[1], rs[0], rs[1], rs[2])
 		castPicks(t, pool, roomID, users[2], rs[0], rs[1], rs[3])
 		shortlistCall(t, pool, startVotingNoWeather, roomID, users[0], "", 200)
-		if err := leaveOneRoom(context.Background(), pool, nil, roomID, users[2]); err != nil {
+		if err := leaveOneRoom(context.Background(), pool, failingWeather{}, roomID, users[2]); err != nil {
 			t.Fatal(err)
 		}
 		assertShortlistSplit(t, pool, roomID, rs, map[int]bool{0: true, 1: true, 2: true, 3: true})
@@ -262,7 +262,7 @@ func TestShortlistFreezeAndLeave(t *testing.T) {
 		castPicks(t, pool, roomID, users[1], rs[0], rs[1], rs[2])
 		castPicks(t, pool, roomID, users[2], rs[3], rs[4])
 		shortlistCall(t, pool, startVotingNoWeather, roomID, users[0], "", 409)
-		if err := leaveOneRoom(context.Background(), pool, nil, roomID, users[2]); err != nil {
+		if err := leaveOneRoom(context.Background(), pool, failingWeather{}, roomID, users[2]); err != nil {
 			t.Fatal(err)
 		}
 		if n := shortlistCount(t, pool, `select count(*) from shortlist_picks where room_id=$1 and user_id=$2`, roomID, users[2]); n != 0 {
@@ -334,7 +334,7 @@ func TestShortlistMajorityRecountsThroughLeave(t *testing.T) {
 			if leaveYes {
 				leaver = users[1]
 			}
-			if err := leaveOneRoom(context.Background(), pool, nil, roomID, leaver); err != nil {
+			if err := leaveOneRoom(context.Background(), pool, failingWeather{}, roomID, leaver); err != nil {
 				t.Fatal(err)
 			}
 			want := "shortlisting"

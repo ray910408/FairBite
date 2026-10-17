@@ -144,11 +144,11 @@ func handleChooseLocation(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 }
 
 // Use only after the room has entered lobby, while holding its lock.
+// 改地點意願與初選表決／圈選已由前一條 UPDATE（search_version+1）觸發的 advance_room_search_version 清掉。
 func clearLocationBatch(ctx context.Context, tx pgx.Tx, roomID string) error {
 	for _, query := range []string{
 		`delete from room_candidates where room_id=$1`,
 		`delete from votes where room_id=$1`,
-		`delete from location_change_votes where room_id=$1`,
 		`update room_members set ready=false where room_id=$1`,
 	} {
 		if _, err := tx.Exec(ctx, query, roomID); err != nil {

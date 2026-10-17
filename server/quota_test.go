@@ -24,7 +24,7 @@ func TestGoogleSearchRequestBudget(t *testing.T) {
 	}{
 		{"nearby only", nil, 2},
 		{"Taiwanese multi-query branch", []string{"taiwanese"}, 6},
-		{"deduplicate terms and ignore unknown", []string{"taiwanese", "taiwanese", "ramen", "unknown"}, 8},
+		{"ignore unknown terms", []string{"taiwanese", "ramen", "unknown"}, 8},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := googleSearchRequestBudget(tc.terms); got != tc.want {

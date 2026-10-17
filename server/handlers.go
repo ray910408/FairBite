@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -79,9 +78,6 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, weather
 
 // loadWeather：天氣是加分資料，失敗不阻斷（比 Places 降級更輕：連橫幅都不用）
 func loadWeather(ctx context.Context, wp WeatherProvider, lat, lng float64, at time.Time) *Weather {
-	if wp == nil {
-		return nil
-	}
 	w, err := wp.Current(ctx, lat, lng, at)
 	if err != nil {
 		var ue *url.Error
@@ -97,9 +93,6 @@ func loadWeather(ctx context.Context, wp WeatherProvider, lat, lng float64, at t
 // loadWeatherCached：vote 熱路徑版——只讀快取、永不發網路（eng review D6）。
 // miss 就當無資料（中性）；快取由前一次 search/draw 的 blocking fetch 餵飽。
 func loadWeatherCached(wp WeatherProvider, lat, lng float64, at time.Time) *Weather {
-	if wp == nil {
-		return nil
-	}
 	if w, ok := wp.CurrentCached(lat, lng, at); ok {
 		return &w
 	}
@@ -538,11 +531,6 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 	if _, err := tx.Exec(ctx,
 		`insert into draws (room_id, version, seed, winner_restaurant_id, probabilities)
 		 values ($1, $2, $3, $4, $5)`, room.ID, version, seed, winner, probs); err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique(room_id, version)：防禦性衝突處理
-			jsonError(w, http.StatusConflict, "已抽選過")
-			return
-		}
 		serverError(w, err, "資料庫錯誤，請稍後再試")
 		return
 	}

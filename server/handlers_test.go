@@ -25,7 +25,7 @@ func newTestApp(t *testing.T, pool *pgxpool.Pool) http.Handler {
 
 func newTestAppWithProvider(t *testing.T, pool *pgxpool.Pool, places PlacesProvider) http.Handler {
 	t.Helper()
-	return newTestAppWithWeather(t, pool, places, nil)
+	return newTestAppWithWeather(t, pool, places, failingWeather{})
 }
 
 func newTestAppWithWeather(t *testing.T, pool *pgxpool.Pool, places PlacesProvider, weather WeatherProvider) http.Handler {
@@ -1341,7 +1341,7 @@ func TestSearchFallsBackToCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := buildRoutes(v, pool, failingProvider{}, nil, newLimiterStore(1000, 1000))
+	h := buildRoutes(v, pool, failingProvider{}, failingWeather{}, newLimiterStore(1000, 1000))
 	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
 	w := postTestRequest(h, token, "/api/rooms/"+roomID+"/search", "")
 	if w.Code != http.StatusOK {
@@ -1673,7 +1673,7 @@ func TestSearchNoCacheReturns502(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := buildRoutes(v, pool, failingProvider{}, nil, newLimiterStore(1000, 1000))
+	h := buildRoutes(v, pool, failingProvider{}, failingWeather{}, newLimiterStore(1000, 1000))
 	w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", hostID), "/api/rooms/"+roomID+"/search", "")
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("無快取時 want 502 got %d body %s", w.Code, w.Body.String())

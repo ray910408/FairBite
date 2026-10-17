@@ -427,20 +427,11 @@ type textOut struct {
 	failedTerm string
 }
 
-func nextTaiwanesePage(seenTokens map[string]bool, token string) bool {
-	if token == "" || seenTokens[token] {
-		return false
-	}
-	seenTokens[token] = true
-	return true
-}
-
 func (g *googleProvider) taiwaneseTextSearch(ctx context.Context, lat, lng float64, radiusM int, textCalls, partialFailures *atomic.Int32) textOut {
 	var out textOut
 	decodedPage := false
 	for _, query := range CuisineSearchQueries["taiwanese"] {
 		pageToken := ""
-		seenTokens := map[string]bool{}
 		for page := 1; page <= 2; page++ {
 			if ctx.Err() != nil {
 				return out
@@ -457,7 +448,7 @@ func (g *googleProvider) taiwaneseTextSearch(ctx context.Context, lat, lng float
 			decodedPage = true
 			out.rs = append(out.rs, rs...)
 			out.rejected = append(out.rejected, rejected...)
-			if !nextTaiwanesePage(seenTokens, nextPageToken) {
+			if nextPageToken == "" {
 				break
 			}
 			pageToken = nextPageToken
@@ -523,12 +514,8 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 		}
 		cancelText()
 	}()
-	seenCuisines := make(map[string]bool, len(cuisines))
+	// cuisines 是 cuisineUnion 的輸出：跨成員已排序去重
 	for i, c := range cuisines {
-		if seenCuisines[c] {
-			continue
-		}
-		seenCuisines[c] = true
 		queries, ok := CuisineSearchQueries[c]
 		if !ok || len(queries) == 0 {
 			continue // 沒有查詢詞的菜系（防未來 key 漂移）：只靠 nearby＋types
