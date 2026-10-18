@@ -114,7 +114,7 @@ func TestMockProviderRadius(t *testing.T) {
 }
 
 func TestMockProviderSynthesizesCuisineQueryMatches(t *testing.T) {
-	result, err := NewMockProvider().SearchNearby(context.Background(), 25.0478, 121.5170, 3000, []string{"ramen", "indian"})
+	result, err := NewMockProvider().SearchNearby(context.Background(), 25.0478, 121.5170, 3000, []string{"ramen", "indian", "custom:咖哩"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestMockProviderSynthesizesCuisineQueryMatches(t *testing.T) {
 		want    []string
 	}{
 		{"mock-002", []string{"ramen"}},
-		{"mock-009", []string{"indian"}},
+		{"mock-009", []string{"indian", "custom:咖哩"}}, // 沙巴印度咖哩：自訂詞以店名比對
 		{"mock-003", nil},
 	} {
 		t.Run(tc.placeID, func(t *testing.T) {

@@ -516,8 +516,8 @@ func (g *googleProvider) SearchNearby(ctx context.Context, lat, lng float64, rad
 	}()
 	// cuisines 是 cuisineUnion 的輸出：跨成員已排序去重
 	for i, c := range cuisines {
-		queries, ok := CuisineSearchQueries[c]
-		if !ok || len(queries) == 0 {
+		queries := cuisineSearchQueries(c)
+		if len(queries) == 0 {
 			continue // 沒有查詢詞的菜系（防未來 key 漂移）：只靠 nearby＋types
 		}
 		wg.Add(1)

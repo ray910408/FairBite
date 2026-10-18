@@ -1052,6 +1052,9 @@ func TestCuisineFilterAndQueryMatches(t *testing.T) {
 	noodle := Restaurant{PlaceID: "p-tw-qm", Name: "台式麵店", CuisineTags: []string{}, QueryMatches: []string{"taiwanese"}, PriceLevel: 1, Hours: daily([2]int{0, 1440})}
 	queryOnly := Restaurant{ID: "veg-query-only", Name: "素坊燒肉", CuisineTags: []string{"korean"}, QueryMatches: []string{"vegetarian"}, PriceLevel: 1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440})}
 	canonical := Restaurant{ID: "veg-real", Name: "春天素食", CuisineTags: []string{"vegetarian_friendly", "taiwanese"}, PriceLevel: 1, Lat: 25.0478, Lng: 121.5170, Hours: daily([2]int{0, 1440})}
+	// 自訂菜系沒有 canonical tag，只能靠同 key 的查詢命中入池
+	customFan := Member{UserID: "u-custom", DisplayName: "想吃泰式", BudgetMax: 1600, Cuisines: []string{"custom:泰式"}, MaxDistanceM: 3000, Transport: "walking"}
+	thai := Restaurant{PlaceID: "p-thai", Name: "泰式小館", QueryMatches: []string{"custom:泰式"}, PriceLevel: 1, Hours: daily([2]int{0, 1440})}
 	for _, tc := range []struct {
 		name                 string
 		restaurants          []Restaurant
@@ -1066,6 +1069,7 @@ func TestCuisineFilterAndQueryMatches(t *testing.T) {
 		{"Taiwanese query evidence does not change canonical tags", []Restaurant{noodle}, taiwaneseFan, true, 1, "", ""},
 		{"strict dietary rejects query-only evidence", []Restaurant{queryOnly}, veg, false, 0, "dietary", ""},
 		{"strict dietary accepts canonical evidence", []Restaurant{canonical}, veg, false, 1, "", ""},
+		{"filter accepts custom cuisine query matches", []Restaurant{thai, other}, customFan, true, 1, "cuisine", "不符成員菜系偏好"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			res := Evaluate(EngineInput{Restaurants: tc.restaurants, Members: []Member{tc.member}, Now: lunchMonday, CuisineFilter: tc.filter})

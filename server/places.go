@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -139,7 +140,9 @@ func (mockProvider) SearchNearby(_ context.Context, lat, lng float64, radiusM in
 		// r 是值複本，設定 QueryMatches/TimeZone 不會污染共享的 mockRestaurants
 		r.TimeZone = "Asia/Taipei" // mock 店全在台北，不隨 APP_TZ 漂移
 		for _, c := range cuisines {
-			if hasTag(r.CuisineTags, c) {
+			// 自訂菜系沒有 tag 可比，以店名包含原文模擬 Google 的文字檢索
+			text, custom := strings.CutPrefix(c, CustomCuisinePrefix)
+			if hasTag(r.CuisineTags, c) || custom && strings.Contains(r.Name, text) {
 				r.QueryMatches = append(r.QueryMatches, c)
 			}
 		}

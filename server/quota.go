@@ -15,7 +15,7 @@ var ErrSearchQuota = errors.New("search resource quota exceeded")
 func googleSearchRequestBudget(cuisines []string) int {
 	calls := 2 // nearby plus one retry
 	for _, cuisine := range cuisines {
-		queries := CuisineSearchQueries[cuisine]
+		queries := cuisineSearchQueries(cuisine)
 		if len(queries) == 0 {
 			continue
 		}

@@ -1,6 +1,9 @@
 package main
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // 所有可調參數集中此檔（spec §5）
 
@@ -24,9 +27,9 @@ func BudgetMaxGooglePriceLevel(budgetMax int) int {
 	}
 }
 
-// 定向檢索的查詢詞（Round 3 spec §5.2）。key 有兩類：CUISINE_OPTIONS 的 cuisine key，
-// 以及 DietaryRequires 的嚴格禁忌 key（2026-08-16 起）。兩類都由 cuisineUnion 統一產出，
-// 送進 SearchNearby 的同一支 fan-out。
+// 定向檢索的查詢詞（Round 3 spec §5.2）。表內 key 有兩類：CUISINE_OPTIONS 的 cuisine key，
+// 以及 DietaryRequires 的嚴格禁忌 key（2026-08-16 起）；第三類自訂菜系不在表內，見下方
+// cuisineSearchQueries。三類都由 cuisineUnion 統一產出，送進 SearchNearby 的同一支 fan-out。
 // 查詢詞是檢索召回用，不是分類判準；調詞只影響召回率，正確性仍由候選管線把關。
 var CuisineSearchQueries = map[string][]string{
 	"taiwanese": {"台式料理", "台灣小吃"},
@@ -40,6 +43,19 @@ var CuisineSearchQueries = map[string][]string{
 	// 由此產生的 QueryMatches 值為 "vegetarian"，不會被 memberLikes 讀到
 	// （它只走 m.Cuisines），也不會讓 DietaryRequires 誤放行（那只讀 canonical tags）。
 	"vegetarian": {"素食"},
+}
+
+// 第三類 key 是自訂菜系（成員在選單外自填，CONTEXT.md 料理偏好）："custom:<文字>"，
+// 格式與每人 1 個的上限由 room_members_cuisines_bounds 把關。沒有 Google type 對映，
+// 原文直接當查詢詞，命中只以查詢命中生效；不在 HotMealCuisines，衝突防護不適用。
+const CustomCuisinePrefix = "custom:"
+
+// cuisineSearchQueries：SearchNearby fan-out 與額度預估共用的查表，兩邊對「哪些詞會打付費檢索」不得分岔。
+func cuisineSearchQueries(c string) []string {
+	if text, ok := strings.CutPrefix(c, CustomCuisinePrefix); ok {
+		return []string{text}
+	}
+	return CuisineSearchQueries[c]
 }
 
 // 衝突防護（Round 3 spec §5.3 決策 #9）。熱食 query match 維持甜品專門／純輕飲防護；
