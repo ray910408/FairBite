@@ -49,3 +49,12 @@ unfulfilled。`nextPageToken` 只列入 Text Search field mask；Nearby 保持�
 type，或 `googleTypeTags` 對映到別的國別）即拒收該筆 match。只看 primaryType；品類菜系不受影響。
 已接受的副作用：日式咖哩不再得 indian match；台式牛排（steak_house）、包子店（dim_sum）不再得 taiwanese match。
 既有房間已落盤的 query_matches 不回溯，下一次搜尋才套用。
+
+## 2026-10-18 自訂菜系
+
+成員可在選單外自填一個菜系，存成 `custom:<文字>`（DB 限每人 1 個、1–10 字）。原文直接當 Text Search
+查詢詞，命中寫 `query_matches=["custom:<文字>"]`；它沒有 canonical tag，偏好因素、滿足度與菜系過濾
+只能靠這筆查詢命中。三道衝突閘門都以預設菜系為鍵，自訂詞一律不適用（已接受：Google 模糊比對的誤命中
+只影響本房）。已接受的副作用：快取 fallback 與重試後仍失敗的自訂詞檢索都不產生命中，也不個別回報
+給使用者（快取 fallback 只有通用的 degraded 提示，同一般菜系的容忍不降級）；此時若開菜系過濾、
+且有填偏好的成員都只填自訂菜系，會全數排除成 no_candidates。

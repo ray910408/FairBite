@@ -681,6 +681,7 @@ export type Database = {
         Args: { allowed: string[]; j: Json; max_items: number }
         Returns: boolean
       }
+      valid_member_cuisines: { Args: { j: Json }; Returns: boolean }
     }
     Enums: {
       [_ in never]: never

@@ -30,6 +30,20 @@ select throws_like($$update room_members set dietary='["unknown"]' where user_id
  '%room_members_dietary_bounds%', 'unknown dietary rejected');
 select lives_ok($$update room_members set cuisines='["japanese","taiwanese"]',dietary='["vegetarian"]' where user_id=auth.uid()$$,
  'normal preferences remain writable');
+select lives_ok($$update room_members set cuisines='["japanese","custom:泰式"]' where user_id=auth.uid()$$,
+ 'one custom cuisine accepted alongside presets');
+select lives_ok($$update room_members set cuisines=jsonb_build_array('custom:'||repeat('泰',10)) where user_id=auth.uid()$$,
+ '10 character custom cuisine accepted');
+select throws_like($$update room_members set cuisines='["custom:泰式","custom:越式"]' where user_id=auth.uid()$$,
+ '%room_members_cuisines_bounds%', 'second custom cuisine rejected');
+select throws_like($$update room_members set cuisines=jsonb_build_array('custom:'||repeat('泰',11)) where user_id=auth.uid()$$,
+ '%room_members_cuisines_bounds%', '11 character custom cuisine rejected');
+select throws_like($$update room_members set cuisines='["custom:"]' where user_id=auth.uid()$$,
+ '%room_members_cuisines_bounds%', 'empty custom cuisine rejected');
+select throws_like($$update room_members set cuisines='["custom: 泰式"]' where user_id=auth.uid()$$,
+ '%room_members_cuisines_bounds%', 'untrimmed custom cuisine rejected');
+select throws_like($$update room_members set cuisines=jsonb_build_array('custom:泰'||chr(10)||'式') where user_id=auth.uid()$$,
+ '%room_members_cuisines_bounds%', 'control character in custom cuisine rejected');
 select throws_like($$update room_members set ready=true where user_id=auth.uid()$$,
  '%permission denied%', 'ready cannot bypass its round-bound RPC');
 select is(set_member_ready(

@@ -25,6 +25,7 @@ func TestGoogleSearchRequestBudget(t *testing.T) {
 		{"nearby only", nil, 2},
 		{"Taiwanese multi-query branch", []string{"taiwanese"}, 6},
 		{"ignore unknown terms", []string{"taiwanese", "ramen", "unknown"}, 8},
+		{"custom term is one query plus retry", []string{"custom:泰式", "ramen"}, 6},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := googleSearchRequestBudget(tc.terms); got != tc.want {
@@ -69,7 +70,7 @@ func TestGoogleSearchBudgetCoversActualFanout(t *testing.T) {
 	for term := range CuisineSearchQueries {
 		terms = append(terms, term, term)
 	}
-	terms = append(terms, "unknown")
+	terms = append(terms, "unknown", "custom:泰式")
 	if _, err := NewGooglePlacesProvider("test", upstream.URL).SearchNearby(context.Background(), 25, 121, 800, terms); err != nil {
 		t.Fatal(err)
 	}

@@ -617,6 +617,42 @@ func TestGoogleSearchNearbyCuisineFanOut(t *testing.T) {
 	}
 }
 
+// 自訂菜系：原文直接當 textQuery，命中標回原 key。泰式店沒有任何 canonical tag，
+// 自訂詞也不在 HotMealCuisines，衝突防護不得拒收這筆 match。
+func TestGoogleSearchNearbyCustomCuisineQueriesRawText(t *testing.T) {
+	var mu sync.Mutex
+	var queries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/places:searchNearby" {
+			_, _ = w.Write([]byte(`{"places":[]}`))
+			return
+		}
+		var body struct {
+			TextQuery string `json:"textQuery"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode text search body: %v", err)
+		}
+		mu.Lock()
+		queries = append(queries, body.TextQuery)
+		mu.Unlock()
+		_, _ = w.Write([]byte(`{"places":[{"id":"thai-1","primaryType":"thai_restaurant","displayName":{"text":"泰式小館"},"types":["restaurant","thai_restaurant"],"location":{"latitude":25.0479,"longitude":121.5170}}]}`))
+	}))
+	defer srv.Close()
+
+	result, err := NewGooglePlacesProvider("test-key", srv.URL).SearchNearby(context.Background(), 25.0478, 121.5170, 1000, []string{"custom:泰式"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(queries, []string{"泰式"}) {
+		t.Errorf("textQuery = %v，want 原文 [泰式]", queries)
+	}
+	if len(result.Restaurants) != 1 || !slices.Equal(result.Restaurants[0].QueryMatches, []string{"custom:泰式"}) {
+		t.Errorf("自訂詞命中應標回原 key，got %+v", result.Restaurants)
+	}
+}
+
 func TestGoogleSearchNearbyDessertEvidenceUsesCanonicalConflictGate(t *testing.T) {
 	const nearby = `{"places":[
   {"id":"hotpot-nearby","primaryType":"hot_pot_restaurant","displayName":{"text":"附近火鍋"},"types":["restaurant","hot_pot_restaurant"],"location":{"latitude":25.0478,"longitude":121.5170}}

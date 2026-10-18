@@ -48,7 +48,14 @@ const alertText = () => screen.queryByRole('alert')?.textContent ?? null
 const controls = () => [
   ...screen.getAllByRole<HTMLButtonElement>('button'),
   ...screen.getAllByRole<HTMLInputElement>('slider'),
+  ...screen.queryAllByRole<HTMLInputElement>('textbox'),
 ]
+const customInput = () => screen.getByRole<HTMLInputElement>('textbox', { name: '其他想吃的菜系' })
+const addCustom = (value: string) => {
+  fireEvent.change(customInput(), { target: { value } })
+  fireEvent.click(button('加入'))
+}
+const lastCuisines = () => mocks.update.mock.calls.at(-1)?.[0].cuisines
 // 拖價位 slider：每格都觸發 onChange，元件自己 debounce 400ms 才寫
 const drag = (value: number) => fireEvent.change(budget(), { target: { value: String(value) } })
 
@@ -460,6 +467,83 @@ describe('ConditionsForm 凍結（準備／搜尋中）', () => {
     expect(alertText()).toBe(CONDITION_ERROR)
     expect(mocks.rpc).not.toHaveBeenCalled()
     expect(controls().filter(el => el.disabled)).toEqual([])
+  })
+})
+
+describe('ConditionsForm 自訂菜系', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+
+  it('加入後寫成 custom:<文字>，輸入框換成可移除的自訂項', async () => {
+    render(form({ me: { ...me, cuisines: ['japanese'] } }))
+    addCustom(' 泰式 ')
+    await debounce()
+
+    expect(lastCuisines()).toEqual(['japanese', 'custom:泰式'])
+    expect(screen.queryByRole('textbox', { name: '其他想吃的菜系' })).toBeNull()
+    expect(screen.getByText('泰式')).toBeTruthy()
+  })
+
+  it('移除自訂項只拿掉它，輸入框回來', async () => {
+    render(form({ me: { ...me, cuisines: ['japanese', 'custom:泰式'] } }))
+    fireEvent.click(button('移除 泰式'))
+    await debounce()
+
+    expect(lastCuisines()).toEqual(['japanese'])
+    expect(customInput()).toBeTruthy()
+  })
+
+  it('打成選單上的名稱就選那顆，不產生自訂項', async () => {
+    render(form())
+    addCustom('日式')
+    await debounce()
+
+    expect(lastCuisines()).toEqual(['japanese'])
+    expect(pressed(button('日式'))).toBe('true')
+    expect(customInput().value).toBe('')
+  })
+
+  it('空白不寫入；連續空白壓成一格、超過 10 字截斷', async () => {
+    render(form())
+    addCustom('   ')
+    await debounce()
+    expect(mocks.update).not.toHaveBeenCalled()
+
+    addCustom('泰\t 式一二三四五六七八九')
+    await debounce()
+    expect(lastCuisines()).toEqual(['custom:泰 式一二三四五六七'])
+  })
+
+  it('控制字元壓成空格，不送出 DB 會拒收的值', async () => {
+    render(form())
+    // U+0085 是 C1 控制字元、不在 JS \s 裡：只處理 C0／DEL 的寫法會漏掉它
+    addCustom('泰\u0001\u007f\u0085式')
+    await debounce()
+    expect(lastCuisines()).toEqual(['custom:泰 式'])
+  })
+
+  it('打成飲食禁忌的名稱不收成偏好，提示改勾飲食禁忌', async () => {
+    render(form())
+    addCustom('素食')
+    await debounce()
+
+    expect(mocks.update).not.toHaveBeenCalled()
+    expect(alertText()).toBe('素食是飲食禁忌，請勾下方的「素食」')
+    fireEvent.change(customInput(), { target: { value: '泰' } })
+    expect(alertText()).toBeNull()
+
+    addCustom('素食')
+    fireEvent.click(button('素食')) // 照提示改勾飲食禁忌，提示就該消失
+    expect(alertText()).toBeNull()
+  })
+
+  it('成員 ready 時自訂輸入與移除都凍結', () => {
+    const { unmount } = render(form({ me: { ...me, ready: true } }))
+    expect(customInput().disabled).toBe(true)
+    expect(button('加入').disabled).toBe(true)
+    unmount()
+
+    render(form({ me: { ...me, ready: true, cuisines: ['custom:泰式'] } }))
+    expect(button('移除 泰式').disabled).toBe(true)
   })
 })
 

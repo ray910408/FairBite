@@ -5,12 +5,18 @@ import { budgetTierLabel, CUISINE_OPTIONS, DIETARY_OPTIONS, TRANSPORT_LABELS } f
 import { Alert, Check } from './icons'
 
 const TRANSPORTS = Object.entries(TRANSPORT_LABELS) as [MemberRow['transport'], string][]
+// 自訂菜系（選單外自填）存成 custom:<文字>，伺服器拿原文當定向檢索詞；
+// 上限與 DB 的 room_members_cuisines_bounds 同步：每人 1 個、1–10 字
+const CUSTOM_PREFIX = 'custom:'
+const CUSTOM_MAX = 10
 
 export default function ConditionsForm({ me, isHost, searchVersion, disabled = false, onFlushAvailable }:
   { me: MemberRow; isHost: boolean; searchVersion: number; disabled?: boolean;
     onFlushAvailable?: (flush: (() => Promise<boolean>) | null) => void }) {
   const [form, setForm] = useState(me)
   const [saveError, setSaveError] = useState('')
+  const [customDraft, setCustomDraft] = useState('')
+  const [customError, setCustomError] = useState('')
   // 按下準備後要先等條件寫完：這段期間拖出的值會在準備成立後才寫入，其他人就看到已準備的人條件還在變
   const [flushingForReady, setFlushingForReady] = useState(false)
   const savedRef = useRef(me)   // 最後一次確認寫入成功的值（失敗時還原用）
@@ -98,6 +104,7 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
   // debounce 400ms：slider 拖曳每格都會觸發 onChange，直接連發 update 會逆序落庫
   function save(patch: Partial<MemberRow>) {
     const next = { ...form, ...patch }
+    setCustomError('') // 勾了飲食禁忌或改了其他條件，自訂菜系的提示就過時了
     const generation = ++editGeneration.current
     setForm(next)
     pendingWrite.current = { generation, value: next }
@@ -146,6 +153,23 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
     return list.includes(v) ? list.filter(x => x !== v) : [...list, v]
   }
 
+  const custom = form.cuisines.find(c => c.startsWith(CUSTOM_PREFIX))?.slice(CUSTOM_PREFIX.length)
+
+  function addCustom(e: React.FormEvent) {
+    e.preventDefault()
+    // 空白與控制字元壓成單一空格（DB 拒收控制字元）；IME 組字可能超過 maxLength，照字數截斷
+    const text = Array.from(customDraft.replace(/[\s\p{Cc}]+/gu, ' ').trim()).slice(0, CUSTOM_MAX).join('').trim()
+    if (!text || frozen) return
+    // 飲食禁忌是硬性條件，收成偏好會讓人以為已排除（CONTEXT.md 料理偏好：不與飲食禁忌混用）
+    if (DIETARY_OPTIONS.some(([, label]) => label === text)) return setCustomError(`${text}是飲食禁忌，請勾下方的「${text}」`)
+    // 打成選單上已有的名稱就選那顆，不多花一支付費檢索
+    const preset = CUISINE_OPTIONS.find(([, label]) => label === text)?.[0]
+    const cuisines = preset ? (form.cuisines.includes(preset) ? form.cuisines : [...form.cuisines, preset])
+      : [...form.cuisines, CUSTOM_PREFIX + text]
+    save({ cuisines })
+    setCustomDraft('')
+  }
+
   return (
     <div className="card animate-rise space-y-5">
       <h2 className="text-base font-semibold">我的條件</h2>
@@ -183,6 +207,26 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
               onClick={() => save({ cuisines: toggle(form.cuisines, v) })}>{label}</button>
           ))}
         </div>
+        {custom
+          ? (
+            <div className="mt-2 flex items-center gap-2">
+              <span className="chip min-w-0 flex-1 border-brand bg-brand-fill wrap-anywhere text-on-brand hover:bg-brand-fill">
+                {custom}
+              </span>
+              <button type="button" className="btn btn-quiet shrink-0 px-3 text-sm" aria-label={`移除 ${custom}`}
+                disabled={frozen}
+                onClick={() => save({ cuisines: form.cuisines.filter(c => !c.startsWith(CUSTOM_PREFIX)) })}>移除</button>
+            </div>
+          )
+          : (
+            <form className="mt-2 flex gap-2" onSubmit={addCustom}>
+              <input className="field min-w-0 flex-1" aria-label="其他想吃的菜系" placeholder="選單沒有的？例：泰式"
+                maxLength={CUSTOM_MAX} autoComplete="off" disabled={frozen}
+                value={customDraft} onChange={e => { setCustomDraft(e.target.value); setCustomError('') }} />
+              <button type="submit" className="btn btn-quiet shrink-0" disabled={frozen}>加入</button>
+            </form>
+          )}
+        {customError && <p role="alert" className="mt-1 text-sm text-danger">{customError}</p>}
       </div>
 
       <div role="group" aria-labelledby="dietary-label">
