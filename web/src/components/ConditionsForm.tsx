@@ -157,9 +157,11 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
 
   function addCustom(e: React.FormEvent) {
     e.preventDefault()
-    // 空白與控制字元壓成單一空格（DB 拒收控制字元）；IME 組字可能超過 maxLength，照字數截斷
-    const text = Array.from(customDraft.replace(/[\s\p{Cc}]+/gu, ' ').trim()).slice(0, CUSTOM_MAX).join('').trim()
+    // 空白與控制字元壓成單一空格（DB 拒收控制字元）
+    const text = customDraft.replace(/[\s\p{Cc}]+/gu, ' ').trim()
     if (!text || frozen) return
+    // 字數照 DB char_length 算 code point；maxLength 算 UTF-16，只當寬鬆上限
+    if (Array.from(text).length > CUSTOM_MAX) return setCustomError(`自訂菜系最多 ${CUSTOM_MAX} 個字`)
     // 飲食禁忌是硬性條件，收成偏好會讓人以為已排除（CONTEXT.md 料理偏好：不與飲食禁忌混用）
     if (DIETARY_OPTIONS.some(([, label]) => label === text)) return setCustomError(`${text}是飲食禁忌，請勾下方的「${text}」`)
     // 打成選單上已有的名稱就選那顆，不多花一支付費檢索
@@ -221,7 +223,7 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
           : (
             <form className="mt-2 flex gap-2" onSubmit={addCustom}>
               <input className="field min-w-0 flex-1" aria-label="其他想吃的菜系" placeholder="選單沒有的？例：泰式"
-                maxLength={CUSTOM_MAX} autoComplete="off" disabled={frozen}
+                maxLength={CUSTOM_MAX * 2} autoComplete="off" disabled={frozen}
                 value={customDraft} onChange={e => { setCustomDraft(e.target.value); setCustomError('') }} />
               <button type="submit" className="btn btn-quiet shrink-0" disabled={frozen}>加入</button>
             </form>

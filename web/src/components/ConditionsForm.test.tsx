@@ -502,15 +502,29 @@ describe('ConditionsForm 自訂菜系', () => {
     expect(customInput().value).toBe('')
   })
 
-  it('空白不寫入；連續空白壓成一格、超過 10 字截斷', async () => {
+  it('空白不寫入；連續空白壓成一格；超過 10 字提示、不寫入', async () => {
     render(form())
     addCustom('   ')
     await debounce()
     expect(mocks.update).not.toHaveBeenCalled()
 
-    addCustom('泰\t 式一二三四五六七八九')
+    addCustom('泰\t 式一二三四五六七八') // 正規化後剛好 11 字
+    await debounce()
+    expect(mocks.update).not.toHaveBeenCalled()
+    expect(alertText()).toBe('自訂菜系最多 10 個字')
+
+    addCustom('泰\t 式一二三四五六七')
     await debounce()
     expect(lastCuisines()).toEqual(['custom:泰 式一二三四五六七'])
+  })
+
+  // 擴充區漢字一字佔兩個 UTF-16 code unit：上限要照 DB char_length 的 code point 算
+  it('10 個非 BMP 字照樣收，原生 maxLength 不先擋', async () => {
+    render(form())
+    expect(customInput().maxLength).toBe(20)
+    addCustom('𠀀'.repeat(10))
+    await debounce()
+    expect(lastCuisines()).toEqual([`custom:${'𠀀'.repeat(10)}`])
   })
 
   it('控制字元壓成空格，不送出 DB 會拒收的值', async () => {
