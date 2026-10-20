@@ -113,15 +113,22 @@ export function useRoom(roomId: string) {
     // roomId/refetch 變動會重跑本 effect：舊 channel 的 CLOSED 會晚於新 channel 的
     // SUBSCRIBED 抵達，沒有 live 旗標就會把已連線的狀態蓋回「斷線」
     let live = true
-    let refetchTimer: ReturnType<typeof setTimeout> | undefined
-    const scheduleRefetch = () => {
-      clearTimeout(refetchTimer)
-      refetchTimer = setTimeout(refetchQuietly, 150)
+    // 每筆交易立刻重抓一次：Realtime 只送已 commit 的交易，第一個事件到時整筆都讀得到。每票重算
+    // 一次推 N+3 個事件（全房候選逐列），去抖要等最後一個到齊再多等，手機上拖成一秒多。
+    // 同交易的事件共用 commit_timestamp（毫秒精度），後續的略過。同一毫秒 commit 的別筆交易也被略過：
+    // 重抓的快照晚於觸發它的 commit 數十毫秒（輪詢＋推播＋網路），通常已含它；殘餘風險是它的 WAL
+    // flush 恰好卡住、晚於快照才可見，畫面會停在舊資料到下一筆變更（payload 沒有 xid，無法分辨）
+    let coveredCommit: string | undefined
+    const onChange = ({ commit_timestamp: commit }: { commit_timestamp?: string }) => {
+      // 卸載後 removeChannel 還在非同步離開，舊房事件照樣派發：別拿舊 roomId 重抓蓋掉新房那輪
+      if (!live || (commit && commit === coveredCommit)) return
+      coveredCommit = commit
+      refetchQuietly()
     }
     let ch = supabase.channel(`room-${roomId}`)
     for (const t of tables) {
       ch = ch.on('postgres_changes',
-        { event: '*', schema: 'public', table: t.table, filter: t.filter }, scheduleRefetch)
+        { event: '*', schema: 'public', table: t.table, filter: t.filter }, onChange)
     }
     // 斷線不能靜默：非 SUBSCRIBED 顯示橫幅，恢復時整包重拉補上漏掉的事件。
     // 首次 SUBSCRIBED 的 refetch 與 mount refetch 重疊是刻意的：補訂閱生效前的
@@ -137,7 +144,6 @@ export function useRoom(roomId: string) {
     })
     return () => {
       live = false
-      clearTimeout(refetchTimer)
       supabase.removeChannel(ch)
     }
   }, [roomId, refetch])
