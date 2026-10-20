@@ -363,33 +363,30 @@ func LoadCachedRestaurants(ctx context.Context, q querier, lat, lng float64, rad
 	return out, rows.Err()
 }
 
+// 整批一趟送出：每票都會重寫全房候選，逐列 Exec 是 N 趟循序 DB 往返，直接拖慢投票同步。
+// 任一句失敗 Close 都回傳該錯誤，交易照常由呼叫端 rollback
 func ReplaceCandidates(ctx context.Context, tx pgx.Tx, roomID string, res EngineResult, exposureCounted map[string]bool) error {
-	if _, err := tx.Exec(ctx, `delete from room_candidates where room_id = $1`, roomID); err != nil {
-		return err
-	}
+	b := &pgx.Batch{}
+	b.Queue(`delete from room_candidates where room_id = $1`, roomID)
 	for _, c := range res.Kept {
 		trace, _ := json.Marshal(c.Trace)
-		if _, err := tx.Exec(ctx, `
+		b.Queue(`
 			insert into room_candidates
 				(room_id, restaurant_id, status, probability, weight_breakdown, exposure_counted, query_matches, batch_excluded)
 			values ($1, $2, 'kept', $3, $4, $5, $6, false)`,
 			roomID, c.Restaurant.ID, c.Probability, trace, exposureCounted[c.Restaurant.ID],
-			nonNilKinds(c.Restaurant.QueryMatches)); err != nil {
-			return err
-		}
+			nonNilKinds(c.Restaurant.QueryMatches))
 	}
 	for _, e := range res.Excluded {
 		// arch c3：結構化 kinds 隨列持久化（kept 列吃欄位 default '{}'）
-		if _, err := tx.Exec(ctx, `
+		b.Queue(`
 			insert into room_candidates
 				(room_id, restaurant_id, status, exclusion_reason, exclusion_kinds, exposure_counted, query_matches, batch_excluded, shortlist_excluded)
 			values ($1, $2, 'excluded', $3, $4, $5, $6, $7, $8)`,
 			roomID, e.Restaurant.ID, e.Reason, nonNilKinds(e.Kinds), exposureCounted[e.Restaurant.ID],
-			nonNilKinds(e.Restaurant.QueryMatches), hasKind(e.Kinds, "batch"), hasKind(e.Kinds, "shortlist")); err != nil {
-			return err
-		}
+			nonNilKinds(e.Restaurant.QueryMatches), hasKind(e.Kinds, "batch"), hasKind(e.Kinds, "shortlist"))
 	}
-	return nil
+	return tx.SendBatch(ctx, b).Close()
 }
 
 // LoadPersistentExclusions：本批排除與初選落選——兩者都是重算的輸入，不是重算的產物
