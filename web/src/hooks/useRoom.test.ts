@@ -33,7 +33,7 @@ const mocks = vi.hoisted(() => {
     ? state.roomsReplies.shift() ?? Promise.resolve({ data: state.room, error: null })
     : Promise.resolve({ data: table === 'draws' ? null : [], error: null })))
   // Realtime：記下每個 channel 各表的 postgres_changes handler 與 subscribe 的狀態回呼，測試拿來推事件
-  type Change = (payload: { commit_timestamp: string }) => void
+  type Change = (payload: { commit_timestamp?: string }) => void
   type Channel = { handlers: Map<string, Change>; status?: (status: string) => void }
   const channels: Channel[] = []
   const channel = vi.fn(() => {
@@ -194,7 +194,7 @@ describe('useRoom 背景重抓', () => {
     mocks.state.room = room('voting')
 
     const onMount = nextRooms()
-    renderRoom()
+    const { unmount } = renderRoom()
     expect(rounds()).toBe(1)
     onMount.reject(boom)
     await advance(0)
@@ -205,7 +205,7 @@ describe('useRoom 背景重抓', () => {
     onSubscribed.reject(boom)
     await advance(0)
 
-    const change = (table: string, commit_timestamp: string) =>
+    const change = (table: string, commit_timestamp?: string) =>
       mocks.channels.at(-1)?.handlers.get(table)?.({ commit_timestamp })
     const onVote = nextRooms()
     change('votes', '2026-10-20T12:00:00.100Z')
@@ -214,14 +214,26 @@ describe('useRoom 背景重抓', () => {
     change('rooms', '2026-10-20T12:00:00.100Z')
     await advance(1_000)
     expect(rounds()).toBe(3) // 同一筆交易（同 commit_timestamp）的其餘事件不再重抓
-    onVote.reject(boom)
-    await advance(0)
 
+    // 上一輪還在飛：下一筆交易可能不在它的快照裡，照樣立刻抓
     const onNextCommit = nextRooms()
     change('room_candidates', '2026-10-20T12:00:00.250Z')
-    expect(rounds()).toBe(4) // 下一筆交易照樣立刻抓
+    expect(rounds()).toBe(4)
+    onVote.reject(boom)
     onNextCommit.reject(boom)
     await advance(0)
+
+    // 沒帶 commit_timestamp 就分不出是不是同一筆：每個都抓
+    const unstamped = [nextRooms(), nextRooms()]
+    change('votes')
+    change('votes')
+    expect(rounds()).toBe(6)
+    for (const reply of unstamped) reply.reject(boom)
+    await advance(0)
+
+    unmount()
+    change('votes', '2026-10-20T12:00:01.000Z')
+    expect(rounds()).toBe(6) // 卸載後舊 channel 還在派發的事件不重抓
 
     expect(unhandled).toEqual([])
   })

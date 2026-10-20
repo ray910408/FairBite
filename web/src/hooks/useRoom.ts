@@ -115,11 +115,13 @@ export function useRoom(roomId: string) {
     let live = true
     // 每筆交易立刻重抓一次：Realtime 只送已 commit 的交易，第一個事件到時整筆都讀得到。每票重算
     // 一次推 N+3 個事件（全房候選逐列），去抖要等最後一個到齊再多等，手機上拖成一秒多。
-    // 同交易的事件共用 commit_timestamp（毫秒精度），後續的略過；同一毫秒 commit 的別筆交易也被略過
-    // 仍安全：重抓的快照晚於觸發它的 commit 數十毫秒（輪詢＋推播＋網路），一定讀得到它
+    // 同交易的事件共用 commit_timestamp（毫秒精度），後續的略過。同一毫秒 commit 的別筆交易也被略過：
+    // 重抓的快照晚於觸發它的 commit 數十毫秒（輪詢＋推播＋網路），通常已含它；殘餘風險是它的 WAL
+    // flush 恰好卡住、晚於快照才可見，畫面會停在舊資料到下一筆變更（payload 沒有 xid，無法分辨）
     let coveredCommit: string | undefined
     const onChange = ({ commit_timestamp: commit }: { commit_timestamp?: string }) => {
-      if (commit && commit === coveredCommit) return
+      // 卸載後 removeChannel 還在非同步離開，舊房事件照樣派發：別拿舊 roomId 重抓蓋掉新房那輪
+      if (!live || (commit && commit === coveredCommit)) return
       coveredCommit = commit
       refetchQuietly()
     }
