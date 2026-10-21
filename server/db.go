@@ -367,6 +367,9 @@ func LoadCachedRestaurants(ctx context.Context, q querier, lat, lng float64, rad
 // 任一句失敗 Close 都回傳該錯誤，交易照常由呼叫端 rollback
 func ReplaceCandidates(ctx context.Context, tx pgx.Tx, roomID string, res EngineResult, exposureCounted map[string]bool) error {
 	b := &pgx.Batch{}
+	// 要刪掉該房全部舊列，不能改成 upsert 或只刪過期列：web 不訂 room_candidates（useRoom.ts），
+	// 這句刪除觸發的 signal_room_delete（rooms 遞增 delete_version）才讓成員知道候選變了。重算重寫
+	// 的是同一組店，只刪過期列會刪到 0 列、不發訊號；pending.go 確認時得主失效的分支只靠這個訊號
 	b.Queue(`delete from room_candidates where room_id = $1`, roomID)
 	for _, c := range res.Kept {
 		trace, _ := json.Marshal(c.Trace)
