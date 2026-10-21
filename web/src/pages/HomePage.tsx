@@ -4,7 +4,6 @@ import { useMidnightRerender } from '../hooks/useMidnightRerender'
 import { leaveRooms, wakeApi } from '../lib/api'
 import { supabase } from '../lib/supabase'
 import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
-import { leaveNotice } from '../lib/leaveNotice'
 import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
 import { suggestCuisines } from '../lib/prefsLearning'
 import { loadLastDeparture, saveLastDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
@@ -14,7 +13,7 @@ import { applyDefaultPrefs } from '../lib/defaultPrefs'
 import { inviteCodeFromLink } from '../lib/invite'
 import { addDismissed, readDismissed } from '../lib/dismissed'
 import { Alert, Logo, LogOut, Spinner } from '../components/icons'
-import { LeaveConfirm } from '../components/LeaveConfirm'
+import { LeaveConfirm, LeaveRoomsList } from '../components/LeaveConfirm'
 import { ThemeMenu } from '../components/ThemeMenu'
 import LocationPicker from '../components/LocationPicker'
 import { RecentRatingPrompt } from '../components/RatingPrompt'
@@ -452,19 +451,8 @@ export default function HomePage() {
                 你回到首頁了，但你還在 {rooms.length} 個房間裡，離開會一次全部離開：
               </p>
             )}
-            {rooms.map((r, i) => (
-              <div key={r.id} className={multi ? 'space-y-2 rounded-xl border border-border p-3' : ''}>
-                {multi && <p className="text-sm font-semibold">房間 {r.code}</p>}
-                <ul className="list-disc space-y-1 pl-5 text-sm text-fg-muted">
-                  {leaveNotice(r.status, r.memberCount, r.code, r.isHost).map(p => <li key={p}>{p}</li>)}
-                </ul>
-                {/* 多房時回房入口掛在各房區塊內，不替使用者猜要回哪一間（比照 HistoryPage） */}
-                {multi && (
-                  <button type="button" autoFocus={i === 0} className="btn btn-quiet w-full"
-                    onClick={() => nav(`/room/${r.id}`)}>回到 {r.code}</button>
-                )}
-              </div>
-            ))}
+            {/* 多房時回房入口掛在各房區塊內，不替使用者猜要回哪一間（比照 HistoryPage） */}
+            <LeaveRoomsList rooms={rooms} onReturn={id => nav(`/room/${id}`)} />
           </LeaveConfirm>
         )
       })()}

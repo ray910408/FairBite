@@ -25,11 +25,7 @@
   --color-brand-fill: #a8321e;
   --color-brand-fill-hover: #8a2817;
   --color-on-brand: #ffffff; /* 朱底白字 6.69:1 */
-  --color-accent: #2b4a6f;
-  --color-accent-strong: #1f3753;
-  --color-on-accent: #ffffff;
   --color-ok: #2f6b3a;
-  --color-ok-soft: #e3ecdc;
   --color-on-ok: #ffffff;
   --color-warn: #8a5a12;
   --color-warn-soft: #f6e8c9;
@@ -41,7 +37,6 @@
 
   --radius-card: 3px;
   --radius-btn: 2px;
-  --shadow-card: none;
 
   --animate-rise: rise 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   /* dialog 遮罩：只淡入不位移，卡片本身另用 rise */
@@ -70,11 +65,7 @@
   --color-brand-fill: #8f2a1a;
   --color-brand-fill-hover: #a3341f;
   --color-on-brand: #f2ebe1;
-  --color-accent: #7f9fd6;
-  --color-accent-strong: #9db5e0;
-  --color-on-accent: #14110f;
   --color-ok: #7bd88f;
-  --color-ok-soft: #193524;
   --color-on-ok: #14110f;
   --color-warn: #e8b45a;
   --color-warn-soft: #3a2c12;
@@ -229,7 +220,7 @@
 
 @layer components {
   .card {
-    @apply rounded-card border border-border bg-surface p-4 shadow-card;
+    @apply rounded-card border border-border bg-surface p-4;
   }
   /* min-h-11 = 44px 觸控目標 */
   .btn {
@@ -243,9 +234,6 @@
   /* 次要動作：墨線框（深色時是淺灰線），和 btn-quiet 同族但語意上是「另一條路」 */
   .btn-secondary {
     @apply border border-rule bg-transparent text-fg hover:bg-brand-soft;
-  }
-  .btn-accent {
-    @apply bg-accent text-on-accent hover:bg-accent-strong;
   }
   .btn-quiet {
     @apply border border-rule bg-transparent text-fg hover:bg-brand-soft;

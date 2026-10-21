@@ -181,6 +181,11 @@ func writeError(w http.ResponseWriter, err error, conflictMsg string) {
 	}
 }
 
+// roomError：沒有自己 wrapper 的房間交易步驟用這個，conflictMsg 照該步驟原本的 409 文案傳入。
+func roomError(w http.ResponseWriter, err error, conflictMsg string) {
+	writeError(w, err, conflictMsg)
+}
+
 // loadMemberRoom：任一成員可用的操作（vote）用這個；房主限定仍走 loadHostRoom
 func loadMemberRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (RoomRow, bool) {
 	roomID, ok := roomIDFromPath(w, r)
@@ -229,19 +234,11 @@ func handleStartVoting(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 	}
 	defer tx.Rollback(ctx)
 	if err := TransitionRoom(ctx, tx, room.ID, from, "voting"); err != nil {
-		if errors.Is(err, ErrConflict) {
-			jsonError(w, http.StatusConflict, "房間狀態已變更")
-			return
-		}
-		serverError(w, err, "資料庫錯誤，請稍後再試")
+		roomError(w, err, "房間狀態已變更")
 		return
 	}
 	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
-		if errors.Is(err, ErrNotHost) {
-			jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
-			return
-		}
-		serverError(w, err, "資料庫錯誤，請稍後再試")
+		roomError(w, err, "房間狀態已變更")
 		return
 	}
 	room, err = LoadRoom(ctx, tx, room.ID)
@@ -306,19 +303,11 @@ func handleEditConditions(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 	}
 	defer tx.Rollback(ctx)
 	if err := TransitionRoom(ctx, tx, room.ID, from, "lobby"); err != nil {
-		if errors.Is(err, ErrConflict) {
-			jsonError(w, http.StatusConflict, "房間狀態已變更")
-		} else {
-			serverError(w, err, "資料庫錯誤，請稍後再試")
-		}
+		roomError(w, err, "房間狀態已變更")
 		return
 	}
 	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
-		if errors.Is(err, ErrNotHost) {
-			jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
-		} else {
-			serverError(w, err, "資料庫錯誤，請稍後再試")
-		}
+		roomError(w, err, "房間狀態已變更")
 		return
 	}
 	if _, err := tx.Exec(ctx, `delete from room_candidates where room_id = $1`, room.ID); err != nil {
@@ -373,11 +362,7 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 	defer tx.Rollback(ctx)
 	// 刻意的 no-op UPDATE：同時取得 rooms row lock 並檢查階段，勿最佳化移除。
 	if err := TransitionRoom(ctx, tx, room.ID, "voting", "voting"); err != nil {
-		if errors.Is(err, ErrConflict) {
-			jsonError(w, http.StatusConflict, "房間不在投票階段")
-			return
-		}
-		serverError(w, err, "資料庫錯誤，請稍後再試")
+		roomError(w, err, "房間不在投票階段")
 		return
 	}
 	room, err = LoadRoom(ctx, tx, room.ID)
@@ -484,19 +469,11 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 	var version int64
 	if err := tx.QueryRow(ctx, `update rooms set status='pending', draw_version=draw_version+1
 		where id=$1 and status='voting' returning draw_version`, room.ID).Scan(&version); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			jsonError(w, http.StatusConflict, "房間狀態已變更")
-			return
-		}
-		serverError(w, err, "資料庫錯誤，請稍後再試")
+		roomError(w, err, "房間狀態已變更") // ErrNoRows：已不在 voting（或房間已刪），同屬 409
 		return
 	}
 	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
-		if errors.Is(err, ErrNotHost) {
-			jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
-			return
-		}
-		serverError(w, err, "資料庫錯誤，請稍後再試")
+		roomError(w, err, "房間狀態已變更")
 		return
 	}
 	room, err = LoadRoom(ctx, tx, room.ID)

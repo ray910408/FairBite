@@ -315,17 +315,9 @@ func freezeSearchCandidates(w http.ResponseWriter, r *http.Request, pool *pgxpoo
 	}
 	defer tx.Rollback(ctx)
 	// Provider call 期間可能發生房主繼任；先在 room lock 下重驗權限，避免向前房主洩漏 readiness。
+	// 唯一成員同期退房、房間被刪則是 ErrRoomNotFound → 404。
 	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
-		if errors.Is(err, ErrNotHost) {
-			jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
-			return EngineResult{}, false
-		}
-		// Provider call 期間唯一成員退房、房間被刪
-		if errors.Is(err, ErrRoomNotFound) {
-			jsonError(w, http.StatusNotFound, "房間不存在")
-			return EngineResult{}, false
-		}
-		serverError(w, err, "資料庫錯誤，請稍後再試")
+		roomError(w, err, "房間狀態已變更")
 		return EngineResult{}, false
 	}
 	members, found, err := freezeAndLoadMembers(ctx, tx, &room, fetchedRadius, fetchedCuisines, fetched.found)

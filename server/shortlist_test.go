@@ -7,11 +7,33 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// web/src/lib/shortlist.ts 手抄了這三個常數（client 側的開始投票與初選開放判斷），漂移就是前後端各說各話。
+func TestShortlistConstantsMatchWeb(t *testing.T) {
+	src, err := os.ReadFile("../web/src/lib/shortlist.ts")
+	if err != nil {
+		t.Fatalf("讀 shortlist.ts 失敗（測試依賴 repo 佈局 server/ ↔ web/）：%v", err)
+	}
+	for name, want := range map[string]int{
+		"SHORTLIST_PICK_MIN":        ShortlistPickMin,
+		"SHORTLIST_PICK_MAX":        ShortlistPickMax,
+		"SHORTLIST_GATE_PER_MEMBER": ShortlistGatePerMember,
+	} {
+		m := regexp.MustCompile(`export const ` + name + ` = (\d+)\b`).FindSubmatch(src)
+		if m == nil {
+			t.Errorf("shortlist.ts 找不到 `export const %s = <數字>`——格式變了請同步本測試", name)
+		} else if string(m[1]) != fmt.Sprint(want) {
+			t.Errorf("shortlist.ts 的 %s = %s，Go 是 %d——兩邊要一起改", name, m[1], want)
+		}
+	}
+}
 
 // seedShortlistRoom：members 位成員（users[0] 為房主），kept 家通過硬過濾的候選
 // （24h 營業、價位在預算內、google 來源）——開始投票與退房會重算，候選必須是真餐廳列。
