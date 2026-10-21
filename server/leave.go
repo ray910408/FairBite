@@ -24,18 +24,8 @@ func handleLeave(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, wea
 		serverError(w, err, "資料庫錯誤，請稍後再試")
 		return
 	}
-	var roomIDs []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			serverError(w, err, "資料庫錯誤，請稍後再試")
-			return
-		}
-		roomIDs = append(roomIDs, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	roomIDs, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
 		serverError(w, err, "資料庫錯誤，請稍後再試")
 		return
 	}

@@ -116,6 +116,17 @@ func TestCuisineSearchQueriesCoverAllCuisineOptions(t *testing.T) {
 	}
 }
 
+// 反向：檢索詞聯集只來自成員選得到的值（cuisineUnion：菜系＋嚴格禁忌），表裡多出的 key 是死查詢詞或打錯字。
+func TestCuisineSearchQueriesKeysAreWebOptions(t *testing.T) {
+	web := append(webOptionKeys(t, "CUISINE_OPTIONS"), webOptionKeys(t, "DIETARY_OPTIONS")...)
+	for key := range CuisineSearchQueries {
+		if !containsOption(web, key) {
+			t.Errorf("CuisineSearchQueries 的 %q 不在 labels.ts 的 CUISINE_OPTIONS／DIETARY_OPTIONS——"+
+				"沒有成員選得到：補 labels.ts 選項，或從 weights.go 刪掉", key)
+		}
+	}
+}
+
 // DIETARY_OPTIONS 只保留具正向 Places tag 證據的 DietaryRequires（目前僅 vegetarian）。
 func TestDietaryRequiredTagsCoverage(t *testing.T) {
 	google, mock := googleProducibleTags(), mockProducibleTags()

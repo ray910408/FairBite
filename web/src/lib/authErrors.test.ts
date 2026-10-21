@@ -15,6 +15,14 @@ describe('authErrorMessage', () => {
   ])('辨識 hook 的固定錯誤識別字：%s', (message, expected) => {
     expect(authErrorMessage(err('unexpected_failure', message))).toBe(expected)
   })
+  // validate-upgrade-email 的 body.error 由 validateUpgradeEmail（api.ts）包成 new Error(code)：沒有 code，只有 message
+  it.each([
+    ['invalid_request', '請求格式有誤，請重新整理頁面後再試'],
+    ['upgrade_validation_unavailable', '暫時無法處理 Email 驗證，請稍後再試'],
+    ['account_already_linked', '這個帳號已經綁定 Email，請重新整理頁面'],
+  ])('辨識訪客升級檢查的錯誤碼：%s', (message, expected) => {
+    expect(authErrorMessage(err(undefined, message))).toBe(expected)
+  })
   it.each(['hook_timeout', 'hook_timeout_after_retry'])('hook 逾時提示稍後重試：%s', code => {
     expect(authErrorMessage(err(code))).toBe('暫時無法確認 Email 網域，請稍後再試')
   })

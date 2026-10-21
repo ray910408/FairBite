@@ -161,3 +161,13 @@ export function leaveRooms(): Promise<void> {
 export function pendingLeave(): Promise<void> | null {
   return leaveInFlight
 }
+
+// 訪客升級前的 Email 檢查（server/guest_auth.go）。body.error 是錯誤碼，原樣當 message 丟出，
+// 由 authErrorMessage 對照中文。逾時同 leaveRooms：Render 冷啟動約 50 秒
+export async function validateUpgradeEmail(email: string): Promise<void> {
+  const res = await post('/api/auth/validate-upgrade-email', { email }, { signal: AbortSignal.timeout(60_000) })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { error?: string }
+    throw new Error(body.error ?? 'upgrade validation failed')
+  }
+}

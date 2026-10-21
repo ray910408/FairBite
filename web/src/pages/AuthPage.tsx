@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import type { User } from '@supabase/supabase-js'
-import { wakeApi } from '../lib/api'
+import { leaveRooms, validateUpgradeEmail, wakeApi } from '../lib/api'
 import { authErrorMessage } from '../lib/authErrors'
 import { supabase } from '../lib/supabase'
 import { Alert, Logo, Spinner } from '../components/icons'
@@ -95,17 +95,8 @@ export default function AuthPage() {
         return
       }
       if (mode === 'register' && currentUser && (currentUser.is_anonymous || upgrade?.pending)) {
-        const token = sessionData.session?.access_token
-        if (!token) throw new Error('missing session')
-        const validation = await fetch(`${import.meta.env.VITE_API_URL ?? ''}/api/auth/validate-upgrade-email`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: registrationEmail }),
-        })
-        if (!validation.ok) {
-          const body = await validation.json().catch(() => ({})) as { error?: string }
-          throw new Error(body.error ?? 'upgrade validation failed')
-        }
+        if (!sessionData.session?.access_token) throw new Error('missing session')
+        await validateUpgradeEmail(registrationEmail)
         const emailRedirectTo = `${window.location.origin}${window.location.pathname}${window.location.search}#/auth`
         localStorage.setItem(`guest-upgrade:${currentUser.id}`, registrationEmail.toLowerCase())
         const { error: updateError } = await supabase.auth.updateUser({ email: registrationEmail }, { emailRedirectTo })
@@ -144,12 +135,11 @@ export default function AuthPage() {
     setError('')
     try {
       const { data } = await supabase.auth.getSession()
-      const token = data.session?.access_token
-      if (!token) throw new Error('missing session')
-      const leave = await fetch(`${import.meta.env.VITE_API_URL ?? ''}/api/leave`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!leave.ok) {
+      if (!data.session?.access_token) throw new Error('missing session')
+      // 沒 token 的 post() 會帶空 Bearer 打出去，所以上面先擋；HTTP、斷線、逾時一律同一句
+      try {
+        await leaveRooms()
+      } catch {
         setError('離開目前房間失敗，仍保留訪客身分；請稍後再試')
         return
       }

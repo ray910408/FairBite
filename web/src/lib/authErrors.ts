@@ -13,18 +13,27 @@ const MESSAGES: Record<string, string> = {
   hook_timeout_after_retry: '暫時無法確認 Email 網域，請稍後再試',
 }
 
-// Auth hooks preserve the message but may replace the code. Only expose our exact identifiers.
-const SIGNUP_HOOK_MESSAGES: Record<string, string> = {
+// Our server's identifiers arrive in the message, not the code: Auth hooks preserve the message
+// but may replace the code, and validateUpgradeEmail (api.ts) rethrows /api/auth/validate-upgrade-email's body.error
+// as new Error(code) (server/guest_auth.go; it also returns the signup_email_* codes).
+// Only expose our exact identifiers.
+const SERVER_MESSAGES: Record<string, string> = {
   signup_email_invalid: '請輸入完整的 Email，例如 you@example.com',
   signup_email_no_mx: '此 Email 網域沒有可用的收信設定，請確認信箱地址',
   signup_email_dns_unavailable: '暫時無法確認 Email 網域，請稍後再試',
   signup_email_rate_limited: '嘗試次數過多，請稍後再試',
+  // 請求 body 解不開（頁面只送 {email}，實務上只有前後端版本不一致會撞到）
+  invalid_request: '請求格式有誤，請重新整理頁面後再試',
+  // 寫入驗證授權時資料庫出錯
+  upgrade_validation_unavailable: '暫時無法處理 Email 驗證，請稍後再試',
+  // 這個身分已不是訪客、也沒有進行中的升級：Email 已綁定完成（例如在別的分頁驗證過）
+  account_already_linked: '這個帳號已經綁定 Email，請重新整理頁面',
 }
 
 export function authErrorMessage(error: { code?: string; message: string }): string {
   const known = MESSAGES[error.code ?? '']
   if (known) return known
-  if (Object.hasOwn(SIGNUP_HOOK_MESSAGES, error.message)) return SIGNUP_HOOK_MESSAGES[error.message]
+  if (Object.hasOwn(SERVER_MESSAGES, error.message)) return SERVER_MESSAGES[error.message]
   // 連線失敗時還沒收到 response，沒有 code，只能靠 message 判斷（AuthRetryableFetchError）
   if (!error.code && /fetch|network/i.test(error.message)) return '連線失敗，請檢查網路後再試'
   return '操作失敗，請稍後再試'

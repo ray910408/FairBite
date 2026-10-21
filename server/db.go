@@ -73,25 +73,22 @@ func loadMembers(ctx context.Context, q querier, roomID, query string) ([]Member
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Member
-	for rows.Next() {
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Member, error) {
 		var m Member
 		var cuisines, dietary []byte
-		if err := rows.Scan(&m.UserID, &m.DisplayName, &m.BudgetMax, &cuisines, &dietary,
+		if err := row.Scan(&m.UserID, &m.DisplayName, &m.BudgetMax, &cuisines, &dietary,
 			&m.MaxDistanceM, &m.Transport, &m.Ready); err != nil {
-			return nil, err
+			return m, err
 		}
 		// 信任邊界：JSON shape 異常是錯誤，不靜默當空值
 		if err := json.Unmarshal(cuisines, &m.Cuisines); err != nil {
-			return nil, fmt.Errorf("member %s cuisines: %w", m.UserID, err)
+			return m, fmt.Errorf("member %s cuisines: %w", m.UserID, err)
 		}
 		if err := json.Unmarshal(dietary, &m.Dietary); err != nil {
-			return nil, fmt.Errorf("member %s dietary: %w", m.UserID, err)
+			return m, fmt.Errorf("member %s dietary: %w", m.UserID, err)
 		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+		return m, nil
+	})
 }
 
 func memberIDs(ms []Member) []string {
@@ -111,13 +108,9 @@ func LoadVotes(ctx context.Context, q querier, roomID string) (map[string]VoteIn
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := map[string]VoteInfo{}
-	for rows.Next() {
-		var rid, kind, name string
-		if err := rows.Scan(&rid, &kind, &name); err != nil {
-			return nil, err
-		}
+	var rid, kind, name string
+	_, err = pgx.ForEachRow(rows, []any{&rid, &kind, &name}, func() error {
 		v := out[rid]
 		if kind == "up" {
 			v.Ups++
@@ -125,8 +118,9 @@ func LoadVotes(ctx context.Context, q querier, roomID string) (map[string]VoteIn
 			v.Vetoers = append(v.Vetoers, name)
 		}
 		out[rid] = v
-	}
-	return out, rows.Err()
+		return nil
+	})
+	return out, err
 }
 
 // LoadRecency：每位成員對每家餐廳取「最近一次同席」，分 14 天內 / 15–30 天兩桶（spec §5 近期去過）
@@ -145,17 +139,14 @@ func LoadRecency(ctx context.Context, q querier, memberIDs, restaurantIDs []stri
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := map[string]RecencyCount{}
-	for rows.Next() {
-		var rid string
-		var c RecencyCount
-		if err := rows.Scan(&rid, &c.Fresh, &c.Fading); err != nil {
-			return nil, err
-		}
+	var rid string
+	var c RecencyCount
+	_, err = pgx.ForEachRow(rows, []any{&rid, &c.Fresh, &c.Fading}, func() error {
 		out[rid] = c
-	}
-	return out, rows.Err()
+		return nil
+	})
+	return out, err
 }
 
 // LoadExposure：房內成員對每家餐廳的曝光聚合（P3 spec §5 曝光/新店因素）。
@@ -170,17 +161,14 @@ func LoadExposure(ctx context.Context, q querier, memberIDs, restaurantIDs []str
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := map[string]ExposureCount{}
-	for rows.Next() {
-		var rid string
-		var c ExposureCount
-		if err := rows.Scan(&rid, &c.Recommended, &c.Chosen); err != nil {
-			return nil, err
-		}
+	var rid string
+	var c ExposureCount
+	_, err = pgx.ForEachRow(rows, []any{&rid, &c.Recommended, &c.Chosen}, func() error {
 		out[rid] = c
-	}
-	return out, rows.Err()
+		return nil
+	})
+	return out, err
 }
 
 // RecordExposure：搜尋成功時為「每位成員 × 每家 kept」+1（P3 曝光平衡的資料來源）
@@ -257,17 +245,13 @@ func LoadSatisfaction(ctx context.Context, q querier, memberIDs []string) (map[s
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	samples := map[string][]float64{}
-	for rows.Next() {
-		var uid string
-		var s float64
-		if err := rows.Scan(&uid, &s); err != nil {
-			return nil, err
-		}
+	var uid string
+	var s float64
+	if _, err := pgx.ForEachRow(rows, []any{&uid, &s}, func() error {
 		samples[uid] = append(samples[uid], s)
-	}
-	if err := rows.Err(); err != nil {
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	out := map[string]float64{}
@@ -409,17 +393,14 @@ func LoadPersistentExclusions(ctx context.Context, q querier, roomID string) (ba
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
 	batch, shortlist = map[string]bool{}, map[string]bool{}
-	for rows.Next() {
-		var id string
-		var b, s bool
-		if err := rows.Scan(&id, &b, &s); err != nil {
-			return nil, nil, err
-		}
+	var id string
+	var b, s bool
+	_, err = pgx.ForEachRow(rows, []any{&id, &b, &s}, func() error {
 		batch[id], shortlist[id] = b, s
-	}
-	return batch, shortlist, rows.Err()
+		return nil
+	})
+	return batch, shortlist, err
 }
 
 func TransitionRoom(ctx context.Context, tx pgx.Tx, roomID, from, to string) error {
@@ -445,27 +426,25 @@ func LoadRoomRestaurants(ctx context.Context, q querier, roomID string) ([]Resta
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
-	var out []Restaurant
 	exposureCounted := map[string]bool{}
-	for rows.Next() {
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Restaurant, error) {
 		var r Restaurant
 		var tags, hours []byte
 		var counted bool
-		if err := rows.Scan(&r.ID, &r.PlaceID, &r.Name, &tags, &r.PriceLevel,
+		if err := row.Scan(&r.ID, &r.PlaceID, &r.Name, &tags, &r.PriceLevel,
 			&r.Lat, &r.Lng, &r.Address, &hours, &r.Rating, &counted, &r.QueryMatches, &r.TimeZone); err != nil {
-			return nil, nil, err
+			return r, err
 		}
 		if err := json.Unmarshal(tags, &r.CuisineTags); err != nil {
-			return nil, nil, fmt.Errorf("restaurant %s tags: %w", r.PlaceID, err)
+			return r, fmt.Errorf("restaurant %s tags: %w", r.PlaceID, err)
 		}
 		if err := json.Unmarshal(hours, &r.Hours); err != nil {
-			return nil, nil, fmt.Errorf("restaurant %s hours: %w", r.PlaceID, err)
+			return r, fmt.Errorf("restaurant %s hours: %w", r.PlaceID, err)
 		}
-		out = append(out, r)
 		exposureCounted[r.ID] = counted
-	}
-	if err := rows.Err(); err != nil {
+		return r, nil
+	})
+	if err != nil {
 		return nil, nil, err
 	}
 	return out, exposureCounted, nil

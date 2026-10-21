@@ -364,9 +364,10 @@ describe('訪客登入既有帳號', () => {
     expect(auth.signInWithPassword).not.toHaveBeenCalled()
   })
 
+  // 離房走 leaveRooms()（60 秒逾時）：HTTP 失敗、斷線、逾時都講同一句，明說身分沒換
   it.each([
     ['leave-http', '離開目前房間失敗，仍保留訪客身分；請稍後再試'],
-    ['leave-network', '連線失敗，請檢查網路後再試'],
+    ['leave-network', '離開目前房間失敗，仍保留訪客身分；請稍後再試'],
     ['login-credentials', 'Email 或密碼錯誤'],
     ['login-network', '連線失敗，請檢查網路後再試'],
   ])('切換帳號失敗 %s 在仍開著的確認框裡顯示錯誤', async (failure, message) => {
@@ -385,7 +386,9 @@ describe('訪客登入既有帳號', () => {
     fireEvent.click(within(dialog()).getByRole('button', { name: '離房並登入' }))
     await settle()
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/leave', { method: 'POST', headers: { Authorization: 'Bearer guest-token' } })
+    expect(fetchMock).toHaveBeenCalledWith('/api/leave', {
+      method: 'POST', headers: { Authorization: 'Bearer guest-token' }, signal: expect.any(AbortSignal),
+    })
     expect(within(dialog()).getByRole('alert').textContent).toBe(message)
     expect(screen.getAllByRole('alert')).toHaveLength(1) // 表單那邊被蓋住，不重複顯示
     expect(within(dialog()).getByRole<HTMLButtonElement>('button', { name: '離房並登入' }).disabled).toBe(false)
@@ -415,7 +418,9 @@ describe('訪客登入既有帳號', () => {
     await act(async () => leave.resolve(new Response('{}')))
     await settle()
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/leave', { method: 'POST', headers: { Authorization: 'Bearer guest-token' } })
+    expect(fetchMock).toHaveBeenCalledWith('/api/leave', {
+      method: 'POST', headers: { Authorization: 'Bearer guest-token' }, signal: expect.any(AbortSignal),
+    })
     expect(auth.signInWithPassword).toHaveBeenCalledExactlyOnceWith({ email: 'member@example.com', password: 'password123' })
     expect(auth.updateUser).not.toHaveBeenCalled()
     expect(landed()).toBe('到了 /（PUSH）')
@@ -436,6 +441,7 @@ describe('訪客升級成正式帳號', () => {
       method: 'POST',
       headers: { Authorization: 'Bearer guest-token', 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: 'guest@gmail.com' }),
+      signal: expect.any(AbortSignal), // 有逾時：Render 冷啟動時不會永遠轉圈
     })
     expect(auth.updateUser).toHaveBeenCalledExactlyOnceWith(
       { email: 'guest@gmail.com' }, { emailRedirectTo: `${window.location.origin}/app/?ref=qr#/auth` },

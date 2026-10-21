@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { leaveNotice } from '../lib/leaveNotice'
-import type { LeaveTarget } from '../lib/roomMembership'
+import type { LeaveRoom, LeaveTarget } from '../lib/roomMembership'
 
 // 「回首頁＝離席」（ADR-0007）確認框的共用外殼：RoomPage 的 header logo、HistoryPage 的
 // 兩個回首頁入口、HomePage 的 mount 攔截。其他「先離房」的確認也借用這個外殼：JoinPage 加入
@@ -44,7 +44,7 @@ export function LeaveConfirm({ title, onClose, actions, actionsClassName, childr
 // 失敗時會保留舊物件（useRoom 的 refetch 只在查到列時更新 room、查無列才清成 null），拿它的 status 講
 // 「之後可用邀請碼重新加入」時 join_room 可能早就不匹配了。
 //
-// HomePage 的 mount 攔截不共用這段：它已經在首頁，時態不同。
+// HomePage 的 mount 攔截不共用這段引言：它已經在首頁，時態不同；只共用下面的 LeaveRoomsList。
 //
 // 不同於上面的外殼，各頁（RoomPage、HistoryPage、JoinPage）都以 <LeaveRoomsBody /> 渲染：它是真元件，可以用 hook。
 //
@@ -69,6 +69,17 @@ export function LeaveRoomsBody({ target, onReturn }: { target: LeaveTarget; onRe
           你目前在 {rooms.length} 個房間裡，回首頁會一次全部離開：
         </p>
       )}
+      <LeaveRoomsList rooms={rooms} onReturn={onReturn} />
+    </>
+  )
+}
+
+// 各房後果清單：LeaveRoomsBody 與 HomePage 的 mount 攔截共用（引言各自寫）。
+// 多房時回房入口掛在各房區塊內，不替使用者猜要回哪一間；onReturn 同上，HomePage 也帶（它沒有「取消」）
+export function LeaveRoomsList({ rooms, onReturn }: { rooms: LeaveRoom[]; onReturn?: (roomId: string) => void }) {
+  const multi = rooms.length > 1
+  return (
+    <>
       {rooms.map((r, i) => (
         <div key={r.id} className={multi ? 'space-y-2 rounded-card border border-border p-3' : ''}>
           {multi && <p className="text-sm font-semibold">房間 {r.code}</p>}
