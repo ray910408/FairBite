@@ -54,7 +54,14 @@ jobs:
       - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1
         with:
           version: 2.113.0
+      # -x 只擋服務容器，擋不掉 Storage 的 init container 與 pg-delta 的 catalog export（要拉
+      # storage-api、edge-runtime 映像，約 40 秒）。本專案不用 Storage，pg-delta 只給 db diff／db pull
+      # 這類 schema 比對用，CI 的 start 用不到，所以只在這幾步關掉；SUPABASE_* 環境變數會覆寫
+      # config.toml，本機開發與後續步驟不受影響。
       - run: supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector
+        env:
+          SUPABASE_STORAGE_ENABLED: "false"
+          SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false"
       # web 的 Database 型別是 gen types 的產物：migration 改了 schema 卻沒重新產生就擋下。
       # gen types --local 會另起一次性的 postgres-meta 容器連 DB，不靠上面 -x 排除的 postgres-meta 服務。
       # postgres-meta 映像跟著 CLI 版本走，只升一處這裡就會假紅：升 Supabase CLI 時下列各處要同步改，
@@ -95,8 +102,11 @@ jobs:
           version: 2.113.0
       # supabase start 要 1.5 分鐘，丟背景跟下面的安裝步驟重疊，到「Wait for Supabase」再收結果。
       # 背景 shell 繼承 bash -e，所以用 && || 收 exit code，不然失敗時連 fail 都寫不出來。
-      # 不起 E2E 用不到的服務（Studio、Storage、Edge Functions、log 收集）
+      # 不起 E2E 用不到的服務（Studio、Storage、Edge Functions、log 收集）；env 同 db job
       - name: Start Supabase (background)
+        env:
+          SUPABASE_STORAGE_ENABLED: "false"
+          SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false"
         run: |
           (supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector \
             > "$RUNNER_TEMP/supabase.log" 2>&1 && echo ok || echo fail) > "$RUNNER_TEMP/supabase.status" &
