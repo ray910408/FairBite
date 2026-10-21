@@ -80,6 +80,9 @@ func buildRoutes(v *Verifier, pool *pgxpool.Pool, places PlacesProvider, weather
 func loadWeather(ctx context.Context, wp WeatherProvider, lat, lng float64, at time.Time) *Weather {
 	w, err := wp.Current(ctx, lat, lng, at)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil // 請求已結束（搜尋提早回錯會取消並行中的天氣）：不是天氣故障，也沒有要評分
+		}
 		var ue *url.Error
 		if errors.As(err, &ue) {
 			err = ue.Err

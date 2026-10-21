@@ -64,3 +64,54 @@ func TestCachedRestaurantsPersistAndFilterPrimaryType(t *testing.T) {
 		t.Fatalf("loaded time_zone = %q, want Asia/Tokyo", cached[0].TimeZone)
 	}
 }
+
+// 批次 upsert 的回傳 ID 要逐列對上 DB：callback 寫錯 slot、漏掛 QueryRow 都會在這裡現形。
+// 第二次走 on conflict 分支，ID 必須沿用；nil CuisineTags 必須落成 []。
+func TestUpsertRestaurantsReturnsEachRowID(t *testing.T) {
+	ctx := context.Background()
+	pool := newTestPool(t, ctx)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+
+	in := []Restaurant{
+		{PlaceID: "upsert-id-a", Name: "甲", PrimaryType: "restaurant", Lat: 0.2, Lng: 0.2, Hours: OpeningHours{}},
+		{PlaceID: "upsert-id-b", Name: "乙", PrimaryType: "restaurant", Lat: 0.2, Lng: 0.2, Hours: OpeningHours{}, CuisineTags: []string{"japanese"}},
+		{PlaceID: "upsert-id-c", Name: "丙", PrimaryType: "restaurant", Lat: 0.2, Lng: 0.2, Hours: OpeningHours{}},
+	}
+	wantTags := []string{`[]`, `["japanese"]`, `[]`}
+	first, err := UpsertRestaurants(ctx, tx, in, "google")
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := UpsertRestaurants(ctx, tx, in, "google")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != len(in) || len(again) != len(in) {
+		t.Fatalf("returned %d/%d rows, want %d", len(first), len(again), len(in))
+	}
+	seen := map[string]bool{}
+	for i := range in {
+		var id, tags string
+		if err := tx.QueryRow(ctx, `select id::text, cuisine_tags::text from restaurants where place_id = $1`, in[i].PlaceID).
+			Scan(&id, &tags); err != nil {
+			t.Fatal(err)
+		}
+		if first[i].PlaceID != in[i].PlaceID || first[i].ID != id || seen[id] {
+			t.Fatalf("row %d: returned %s/%q, DB id %q (seen=%v)", i, first[i].PlaceID, first[i].ID, id, seen[id])
+		}
+		seen[id] = true
+		if again[i].ID != id {
+			t.Fatalf("row %d: conflict upsert returned %q, want existing id %q", i, again[i].ID, id)
+		}
+		if in[i].ID != "" {
+			t.Fatalf("row %d: input slice must not be mutated, got ID %q", i, in[i].ID)
+		}
+		if tags != wantTags[i] {
+			t.Fatalf("row %d: cuisine_tags = %s, want %s", i, tags, wantTags[i])
+		}
+	}
+}

@@ -427,33 +427,51 @@ type textOut struct {
 	failedTerm string
 }
 
+// taiwaneseTextSearch：每個查詢詞一支 goroutine 並行；同一個詞的頁 1→頁 2 仍循序（頁 2 要頁 1 的
+// pageToken）。結果先落各自的 slot，Wait 後依查詢詞原順序串接——SearchNearby 合併是 first-wins，
+// 串接順序跟著完成先後漂移就會讓輸出失去決定性。
 func (g *googleProvider) taiwaneseTextSearch(ctx context.Context, lat, lng float64, radiusM int, textCalls, partialFailures *atomic.Int32) textOut {
+	queries := CuisineSearchQueries["taiwanese"]
+	slots := make([]textOut, len(queries))
+	decoded := make([]bool, len(queries))
+	var wg sync.WaitGroup
+	for i, query := range queries {
+		wg.Add(1)
+		go func(i int, query string) {
+			defer wg.Done()
+			pageToken := ""
+			for page := 1; page <= 2; page++ {
+				if ctx.Err() != nil {
+					return
+				}
+				textCalls.Add(1)
+				rs, rejected, nextPageToken, err := g.textSearch(ctx, "taiwanese", query, pageToken, lat, lng, radiusM)
+				if err != nil {
+					if ctx.Err() == nil {
+						partialFailures.Add(1)
+						log.Printf("Taiwanese text search %q page %d failed: %v", query, page, err)
+					}
+					return // no retry; a failed page-one never reaches page two
+				}
+				decoded[i] = true
+				slots[i].rs = append(slots[i].rs, rs...)
+				slots[i].rejected = append(slots[i].rejected, rejected...)
+				if nextPageToken == "" {
+					return
+				}
+				pageToken = nextPageToken
+			}
+		}(i, query)
+	}
+	wg.Wait()
 	var out textOut
 	decodedPage := false
-	for _, query := range CuisineSearchQueries["taiwanese"] {
-		pageToken := ""
-		for page := 1; page <= 2; page++ {
-			if ctx.Err() != nil {
-				return out
-			}
-			textCalls.Add(1)
-			rs, rejected, nextPageToken, err := g.textSearch(ctx, "taiwanese", query, pageToken, lat, lng, radiusM)
-			if err != nil {
-				if ctx.Err() == nil {
-					partialFailures.Add(1)
-					log.Printf("Taiwanese text search %q page %d failed: %v", query, page, err)
-				}
-				break // no retry; a failed page-one never reaches page two
-			}
-			decodedPage = true
-			out.rs = append(out.rs, rs...)
-			out.rejected = append(out.rejected, rejected...)
-			if nextPageToken == "" {
-				break
-			}
-			pageToken = nextPageToken
-		}
+	for i := range slots {
+		decodedPage = decodedPage || decoded[i]
+		out.rs = append(out.rs, slots[i].rs...)
+		out.rejected = append(out.rejected, slots[i].rejected...)
 	}
+	// 所有查詢詞都沒解出任何一頁、且不是被取消，才算這個菜系的檢索失敗。
 	if !decodedPage && ctx.Err() == nil {
 		out.failedTerm = "taiwanese"
 	}
