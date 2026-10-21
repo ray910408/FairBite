@@ -281,8 +281,11 @@ func LoadSatisfaction(ctx context.Context, q querier, memberIDs []string) (map[s
 // 呼叫端要接回回傳值才拿得到 ID。
 // source 是寫入 provider 的出身（PlacesProvider.Source）；conflict 時一併更新——
 // 同一列被不同 provider 重抓時，provenance 跟著最新寫入者走。
+// 整批一趟送出（同 ReplaceCandidates）：一次搜尋 25–60 家，逐列 QueryRow 是 N 趟循序往返。
+// batch 依 Queue 順序執行，呼叫端依 place_id 排好的鎖序（防跨房 deadlock）照舊成立。
 func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant, source string) ([]Restaurant, error) {
 	rs = slices.Clone(rs)
+	b := &pgx.Batch{}
 	for i := range rs {
 		// migration 0021 的 cuisine_tags CHECK 只接受字串陣列；nil slice 必須寫成 []，不能是 JSON null。
 		if rs[i].CuisineTags == nil {
@@ -290,7 +293,7 @@ func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant, source s
 		}
 		tags, _ := json.Marshal(rs[i].CuisineTags)
 		hours, _ := json.Marshal(rs[i].Hours)
-		err := tx.QueryRow(ctx, `
+		b.Queue(`
 			insert into restaurants (place_id, name, primary_type, cuisine_tags, price_level, lat, lng, address, opening_hours, rating, source, time_zone, fetched_at)
 			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, nullif($12, ''), now())
 			on conflict (place_id) do update set
@@ -300,10 +303,17 @@ func UpsertRestaurants(ctx context.Context, tx pgx.Tx, rs []Restaurant, source s
 			  rating = excluded.rating, source = excluded.source, time_zone = coalesce(excluded.time_zone, restaurants.time_zone), fetched_at = now()
 			returning id`,
 			rs[i].PlaceID, rs[i].Name, rs[i].PrimaryType, tags, rs[i].PriceLevel, rs[i].Lat, rs[i].Lng,
-			rs[i].Address, hours, rs[i].Rating, source, rs[i].TimeZone).Scan(&rs[i].ID)
-		if err != nil {
-			return nil, fmt.Errorf("upsert %s: %w", rs[i].PlaceID, err)
-		}
+			rs[i].Address, hours, rs[i].Rating, source, rs[i].TimeZone).QueryRow(func(row pgx.Row) error {
+			if err := row.Scan(&rs[i].ID); err != nil {
+				return fmt.Errorf("upsert %s: %w", rs[i].PlaceID, err)
+			}
+			return nil
+		})
+	}
+	// Close 回傳第一個錯誤：逐列的錯誤已由 callback 包上 place_id；送出前就失敗的（prepare、
+	// 參數編碼、連線）沒有對應的列，原樣回傳。交易照常由呼叫端 rollback。
+	if err := tx.SendBatch(ctx, b).Close(); err != nil {
+		return nil, err
 	}
 	return rs, nil
 }

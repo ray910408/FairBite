@@ -2639,6 +2639,88 @@ func TestSearchSurvivesWeatherOutage(t *testing.T) {
 	}
 }
 
+// overlapWeather 擋在 Current 裡，直到 Places 已被呼叫才放行；循序實作（天氣跑完才打 Places）
+// 會一路等到逾時、回錯誤。
+type overlapWeather struct {
+	placesStarted <-chan struct{}
+	overlapped    atomic.Bool
+}
+
+func (p *overlapWeather) Current(ctx context.Context, _, _ float64, _ time.Time) (Weather, error) {
+	select {
+	case <-p.placesStarted:
+		p.overlapped.Store(true)
+		return Weather{RainMM: 5}, nil
+	case <-time.After(3 * time.Second):
+		return Weather{}, errors.New("天氣請求在途期間 Places 一直沒有發出")
+	case <-ctx.Done():
+		return Weather{}, ctx.Err()
+	}
+}
+
+func (*overlapWeather) CurrentCached(float64, float64, time.Time) (Weather, bool) {
+	return Weather{}, false
+}
+
+type startSignalProvider struct {
+	PlacesProvider
+	started chan struct{}
+}
+
+func (p startSignalProvider) SearchNearby(ctx context.Context, lat, lng float64, radiusM int, cuisines []string) (PlacesSearchResult, error) {
+	close(p.started)
+	return p.PlacesProvider.SearchNearby(ctx, lat, lng, radiusM, cuisines)
+}
+
+func TestSearchFetchesWeatherAlongsidePlaces(t *testing.T) {
+	ctx := context.Background()
+	pool := newTestPool(t, ctx)
+
+	hostID := "a5a5a5a5-a5a5-4a5a-8a5a-a5a5a5a5a5a5"
+	roomID := "a6a6a6a6-a6a6-4a6a-8a6a-a6a6a6a6a6a6"
+	insertTestUser(t, ctx, pool, hostID, "weather-overlap@test.dev")
+	if _, err := pool.Exec(ctx,
+		`insert into public.rooms (id, host_id, status, center_lat, center_lng)
+		 values ($1, $2, 'lobby', 25.0478, 121.5170)
+		 on conflict (id) do update set status = 'lobby'`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`insert into public.room_members (room_id, user_id, budget_max, cuisines, max_distance_m, transport)
+		 values ($1, $2, 1600, '["japanese"]', 2000, 'walking') on conflict do nothing`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID)
+		pool.Exec(ctx, `delete from public.exposure_stats where user_id = $1`, hostID)
+	})
+
+	started := make(chan struct{})
+	weather := &overlapWeather{placesStarted: started}
+	h := newTestAppWithWeather(t, pool, startSignalProvider{NewMockProvider(), started}, weather)
+	token := signHS256(t, "test-secret-test-secret-test-secret!", hostID)
+	w := postTestRequest(h, token, fmt.Sprintf("/api/rooms/%s/search", roomID), "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d body %s", w.Code, w.Body.String())
+	}
+	if !weather.overlapped.Load() {
+		t.Fatal("天氣與 Places 必須並行：天氣請求在途時 Places 就該已發出")
+	}
+	// 並行取回的 wx 要真的送進凍結評分：步行成員遇雨會留下 weather trace。
+	var sr struct {
+		Kept []struct {
+			Trace []TraceEntry `json:"trace"`
+		} `json:"kept"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &sr); err != nil || len(sr.Kept) == 0 {
+		t.Fatalf("kept 不可為空：%v %s", err, w.Body.String())
+	}
+	if !slices.ContainsFunc(sr.Kept[0].Trace, func(e TraceEntry) bool { return e.Factor == "weather" }) {
+		t.Fatalf("並行取回的天氣沒有進入評分：%+v", sr.Kept[0].Trace)
+	}
+}
+
 func TestVoteUsesCachedWeatherWithoutNetwork(t *testing.T) {
 	ctx := context.Background()
 	pool := newTestPool(t, ctx)

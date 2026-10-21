@@ -847,14 +847,23 @@ func TestGoogleSearchNearbyTaiwanesePagingStopsOnEmptyToken(t *testing.T) {
 }
 
 func TestGoogleSearchNearbyTaiwaneseStopsOnCancellation(t *testing.T) {
-	var requests atomic.Int32
+	var requests, pageTwoRequests atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/places:searchText" {
 			t.Errorf("unexpected path %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		var request struct {
+			PageToken string `json:"pageToken"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
 		requests.Add(1)
+		if request.PageToken != "" {
+			pageTwoRequests.Add(1)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"places":[{"id":"tw-cancel-page-one","primaryType":"noodle_shop","displayName":{"text":"取消前頁一"},"types":["noodle_shop"],"location":{"latitude":25.0478,"longitude":121.5170}}],"nextPageToken":"page-2"}`))
 	}))
@@ -872,17 +881,108 @@ func TestGoogleSearchNearbyTaiwaneseStopsOnCancellation(t *testing.T) {
 	})}
 	var textCalls, partialFailures atomic.Int32
 	out := provider.taiwaneseTextSearch(ctx, 25.0478, 121.5170, 1000, &textCalls, &partialFailures)
-	if len(out.rs) != 1 || out.rs[0].PlaceID != "tw-cancel-page-one" {
+	// 兩個查詢詞並行發車：第 1 頁可能都已在途（各至多一支），但任何一頁解完觸發取消後都不得再翻頁。
+	if len(out.rs) == 0 {
 		t.Fatalf("page one must decode before cancellation: %+v", out.rs)
 	}
-	if got := textCalls.Load(); got != 1 {
-		t.Fatalf("cancellation after page-one decode must prevent page two and second query, got %d Text calls", got)
+	for _, r := range out.rs {
+		if r.PlaceID != "tw-cancel-page-one" {
+			t.Fatalf("only page-one results may survive cancellation: %+v", out.rs)
+		}
 	}
-	if got := requests.Load(); got != 1 {
-		t.Fatalf("cancellation after page-one decode must send no page two or second query, got %d requests", got)
+	if got := pageTwoRequests.Load(); got != 0 {
+		t.Fatalf("cancellation after page-one decode must send no page two, got %d page-two requests", got)
+	}
+	// 守住「取消後不再發請求」的是 textCalls（數的是嘗試次數）：ctx 已取消的 client.Do 根本不上線，
+	// 下面的 server 端 requests 看不到那種回歸
+	if got := textCalls.Load(); got > 2 {
+		t.Fatalf("each query may send at most its page one before cancellation, got %d Text calls", got)
+	}
+	if got := requests.Load(); got > 2 {
+		t.Fatalf("each query may send at most its page one before cancellation, got %d requests", got)
 	}
 	if got := partialFailures.Load(); got != 0 {
 		t.Fatalf("cancellation must not become a partial failure, got %d", got)
+	}
+	if out.failedTerm != "" {
+		t.Fatalf("cancellation must not mark the term unfulfilled: %q", out.failedTerm)
+	}
+}
+
+// 兩個台式查詢詞要同時在途：第 1 頁都到了才放行，循序實作會卡在第一支直到逾時。
+// 第二個詞刻意先完成（第一個詞的頁 1 要等第二個詞翻到頁 2 才回應），結果仍須依查詢詞原順序串接——
+// 按完成先後串接會讓 SearchNearby 的 first-wins 合併失去決定性。
+func TestTaiwaneseTextSearchRunsQueriesConcurrentlyInQueryOrder(t *testing.T) {
+	queries := CuisineSearchQueries["taiwanese"]
+	if len(queries) != 2 {
+		t.Fatalf("this test pins the two-query layout, got %v", queries)
+	}
+	var arrived atomic.Int32
+	bothInFlight := make(chan struct{})
+	secondPageTwo := make(chan struct{})
+	wait := func(ch <-chan struct{}, what string) bool {
+		select {
+		case <-ch:
+			return true
+		case <-time.After(3 * time.Second):
+			t.Errorf("等不到%s", what)
+			return false
+		}
+	}
+	place := func(id string) string {
+		return `{"id":"` + id + `","primaryType":"noodle_shop","displayName":{"text":"` + id + `"},"types":["noodle_shop"],"location":{"latitude":25.0478,"longitude":121.5170}}`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			TextQuery string `json:"textQuery"`
+			PageToken string `json:"pageToken"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if request.PageToken == "" {
+			if arrived.Add(1) == 2 {
+				close(bothInFlight)
+			}
+			if !wait(bothInFlight, "兩個查詢詞的第 1 頁同時在途") {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+		}
+		switch request.TextQuery + "/" + request.PageToken {
+		case queries[0] + "/":
+			if !wait(secondPageTwo, "第二個查詢詞翻到第 2 頁") {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"places":[` + place("tw-first-query") + `]}`))
+		case queries[1] + "/":
+			_, _ = w.Write([]byte(`{"places":[` + place("tw-second-query-page-one") + `],"nextPageToken":"second-page-2"}`))
+		case queries[1] + "/second-page-2":
+			close(secondPageTwo)
+			_, _ = w.Write([]byte(`{"places":[` + place("tw-second-query-page-two") + `]}`))
+		default:
+			t.Errorf("unexpected Taiwanese text request %+v", request)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	provider := NewGooglePlacesProvider("test-key", srv.URL).(*googleProvider)
+	var textCalls, partialFailures atomic.Int32
+	out := provider.taiwaneseTextSearch(context.Background(), 25.0478, 121.5170, 1000, &textCalls, &partialFailures)
+	var ids []string
+	for _, r := range out.rs {
+		ids = append(ids, r.PlaceID)
+	}
+	if want := []string{"tw-first-query", "tw-second-query-page-one", "tw-second-query-page-two"}; !slices.Equal(ids, want) {
+		t.Fatalf("results must concatenate in query order, got %v want %v", ids, want)
+	}
+	if textCalls.Load() != 3 || partialFailures.Load() != 0 || out.failedTerm != "" {
+		t.Fatalf("textCalls=%d partialFailures=%d failedTerm=%q, want 3/0/\"\"", textCalls.Load(), partialFailures.Load(), out.failedTerm)
 	}
 }
 
@@ -936,6 +1036,8 @@ func TestGoogleSearchNearbyTaiwanesePartialFailures(t *testing.T) {
 			mu.Lock()
 			gotRequests := append([]string(nil), requests...)
 			mu.Unlock()
+			// 兩個查詢詞並行，跨詞的到達順序不固定；同詞的頁 2 本來就要等頁 1 的 token
+			slices.Sort(gotRequests)
 			if !slices.Equal(gotRequests, tc.wantRequests) {
 				t.Fatalf("requests=%v, want %v without retries", gotRequests, tc.wantRequests)
 			}

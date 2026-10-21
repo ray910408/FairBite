@@ -135,7 +135,13 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 	}()
 	// wx 用 pre-tx 的 roomEvalTime(room) 取（凍結重讀前）；host 在按鈕與凍結之間改時間的競態
 	// 只影響天氣取樣的小時，屬可接受誤差（exploration 的 pre-tx 讀取同款先例）。
-	wx := loadWeather(ctx, weather, room.CenterLat, room.CenterLng, roomEvalTime(room))
+	// 天氣與 Places 並行：wx 到凍結才用，不必讓 Places 排在天氣後面。參數在發車前取值，
+	// 仍是 pre-tx 的 room。容量 1：中途提早 return 時沒人收，goroutine 照樣寫得進去就結束；
+	// return 觸發 defer cancel()，在途的天氣請求跟著取消，不會洩漏。
+	wxCh := make(chan *Weather, 1)
+	go func(lat, lng float64, at time.Time) {
+		wxCh <- loadWeather(ctx, weather, lat, lng, at)
+	}(room.CenterLat, room.CenterLng, roomEvalTime(room))
 	fetched, ok := fetchSearchRestaurants(w, ctx, pool, places, room, fetchedRadius, fetchedCuisines)
 	if !ok {
 		return
@@ -150,7 +156,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		respondNoRestaurants(w, ctx, pool, room, fetchedRadius, fetchedCuisines, fetched)
 		return
 	}
-	result, ok := freezeSearchCandidates(w, r, pool, room, fetchedRadius, fetchedCuisines, fetched, wx)
+	// 開凍結交易前先收 wx：別讓交易開著等天氣。
+	result, ok := freezeSearchCandidates(w, r, pool, room, fetchedRadius, fetchedCuisines, fetched, <-wxCh)
 	if !ok {
 		return
 	}
