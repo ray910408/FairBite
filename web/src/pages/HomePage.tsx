@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useMidnightRerender } from '../hooks/useMidnightRerender'
-import { leaveRooms } from '../lib/api'
+import { leaveRooms, wakeApi } from '../lib/api'
 import { supabase } from '../lib/supabase'
 import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
 import { leaveNotice } from '../lib/leaveNotice'
@@ -109,6 +109,10 @@ export default function HomePage() {
       setAuthState('error')
     }
   }, [])
+
+  // 已登入的人不經過 AuthPage，建房與 lobby 都走 Supabase，沒有房要退時第一支打到 Render 的通常是「開始搜尋」：
+  // 在這裡先喚醒，冷啟動才不會整段算在搜尋上。不 abort——建房後換到房間頁本來就會卸載首頁
+  useEffect(() => { wakeApi() }, [])
 
   useEffect(() => {
     suggestionsMounted.current = true

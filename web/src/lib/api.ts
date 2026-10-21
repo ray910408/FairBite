@@ -22,6 +22,16 @@ async function post(path: string, body?: unknown, options: PostOptions = {}): Pr
   })
 }
 
+// 只發不等：喚醒閒置休眠的 Render，讓冷啟動和使用者填表／設條件的時間重疊；失敗靜默
+export function wakeApi(signal?: AbortSignal): void {
+  void fetch(`${import.meta.env.VITE_API_URL ?? ''}/healthz`, {
+    method: 'GET',
+    cache: 'no-store',
+    credentials: 'omit',
+    signal,
+  }).catch(() => {})
+}
+
 // 沒有 body.error 時的後備文案：5xx 多半是 Render 冷啟動或部署中的閘道錯誤，狀態碼對使用者沒有意義
 function fallbackError(fallback: string, status: number): string {
   return status >= 500 ? `${fallback}：伺服器暫時沒有回應，請稍後再試` : `${fallback}（${status}）`

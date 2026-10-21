@@ -33,6 +33,17 @@ export default defineConfig({
     proxy,
   },
   preview: { proxy },
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          // 第三方套件獨立成 vendor：多數部署只改 app 碼，回訪者不必重抓 React／Supabase。
+          // $initial 只收入口靜態相依鏈上的套件——leaflet（展開地圖才 dynamic import）不會被併進首屏
+          groups: [{ name: 'vendor', test: /node_modules/, tags: ['$initial'] }],
+        },
+      },
+    },
+  },
   test: {
     exclude: [...configDefaults.exclude, 'e2e/**'],
   },
