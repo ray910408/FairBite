@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import type { User } from '@supabase/supabase-js'
+import { wakeApi } from '../lib/api'
 import { authErrorMessage } from '../lib/authErrors'
 import { supabase } from '../lib/supabase'
 import { Alert, Logo, Spinner } from '../components/icons'
@@ -33,12 +34,7 @@ export default function AuthPage() {
   useEffect(() => {
     const controller = new AbortController()
     // 預熱後端，讓填表時間與冷啟動重疊；失敗不阻擋 Supabase 登入／註冊。
-    void fetch(`${import.meta.env.VITE_API_URL ?? ''}/healthz`, {
-      method: 'GET',
-      cache: 'no-store',
-      credentials: 'omit',
-      signal: controller.signal,
-    }).catch(() => {})
+    wakeApi(controller.signal)
     let active = true
     const applyUser = (current: User | null) => {
       if (!active) return

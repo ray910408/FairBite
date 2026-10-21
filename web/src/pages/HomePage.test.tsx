@@ -2,8 +2,8 @@
 import { StrictMode } from 'react'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, useNavigationType } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { leaveRooms } from '../lib/api'
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { leaveRooms, wakeApi } from '../lib/api'
 import type { DeparturePoint } from '../lib/departure'
 import { leaveNotice } from '../lib/leaveNotice'
 import { fetchLeaveRooms, type LeaveRoom } from '../lib/roomMembership'
@@ -13,7 +13,7 @@ import HomePage from './HomePage'
 
 // 首頁是建房／加入的入口，也是「回首頁＝離席」（ADR-0007）的 mount 攔截點。
 // 行為測試：真的 React hooks 跑在 jsdom 上，只在模組邊界 mock——lib/supabase（帳號、口味建議查詢、
-// 建房／加入 RPC 與寫入）、lib/api（退房）、lib/roomMembership（房籍查詢本體由 HistoryPage.test.tsx
+// 建房／加入 RPC 與寫入）、lib/api（退房、後端預熱）、lib/roomMembership（房籍查詢本體由 HistoryPage.test.tsx
 // 從頁面端整條打過，這裡只驗首頁的分支）、lib/uid，以及包 Leaflet 的 LocationPicker。
 // 斷言只看畫面（role／文字／屬性）、路由與送出去的呼叫參數，不看頁面內部有幾個 state。
 
@@ -870,5 +870,26 @@ describe('HomePage 離席確認 dialog', () => {
     expect(background).not.toBeNull()
     expect(background!.contains(screen.getByRole('main'))).toBe(true)
     expect(background!.contains(dialog())).toBe(false)
+  })
+})
+
+// 已登入的人不經過 AuthPage：首頁是第一個能喚醒 Render 的地方，第一支打到 Render 的請求就是「開始搜尋」
+describe('HomePage 後端預熱', () => {
+  it('mount 時 GET /healthz；卸載（建房後換到房間頁）不取消預熱', async () => {
+    const actual = await vi.importActual<typeof import('../lib/api')>('../lib/api')
+    vi.mocked(wakeApi).mockImplementation(actual.wakeApi)
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response('{}'))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubEnv('VITE_API_URL', '')
+    onTestFinished(() => {
+      vi.unstubAllGlobals()
+      vi.unstubAllEnvs()
+    })
+
+    const view = await renderHome()
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/healthz', expect.objectContaining({ method: 'GET' }))
+    const init = fetchMock.mock.calls[0][1]
+    view.unmount()
+    expect(init?.signal?.aborted ?? false).toBe(false)
   })
 })
