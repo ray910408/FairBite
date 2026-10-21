@@ -3,12 +3,104 @@ package main
 import (
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+// 升級驗證端點回的每個錯誤碼都要在 web authErrors.ts 的 SERVER_MESSAGES 有中文對映，
+// 否則使用者一律只看到「操作失敗」。兩邊都從原始碼推導：handler 的 jsonError 字面值
+// ＋checkSignupEmail 的回傳值（handler 原樣轉出）對 SERVER_MESSAGES 的 key，不手抄碼表。
+func TestGuestUpgradeErrorCodesHaveWebMessages(t *testing.T) {
+	fset := token.NewFileSet()
+	// fail closed：碼抽成 const／變數就推導不到，直接失敗，不能靜默漏收
+	literal := func(e ast.Expr) string {
+		lit, ok := e.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			t.Fatalf("%s：錯誤碼不是字串字面值，本測試推導不到——改回字面值或同步本測試", fset.Position(e.Pos()))
+		}
+		s, _ := strconv.Unquote(lit.Value)
+		return s
+	}
+	codesIn := func(file, fn string, match func(ast.Node) string) []string {
+		t.Helper()
+		f, err := parser.ParseFile(fset, file, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var codes []string
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == fn {
+				ast.Inspect(fd, func(n ast.Node) bool {
+					if code := match(n); code != "" {
+						codes = append(codes, code)
+					}
+					return true
+				})
+			}
+		}
+		if len(codes) == 0 {
+			t.Fatalf("%s 的 %s 推導不出任何錯誤碼——改名或改寫了請同步本測試", file, fn)
+		}
+		return codes
+	}
+	forwarded := map[string]bool{} // handler 裡接 checkSignupEmail 回傳值、原樣轉出的變數
+	codes := append(
+		codesIn("guest_auth.go", "handleValidateUpgradeEmail", func(n ast.Node) string {
+			switch n := n.(type) {
+			case *ast.AssignStmt:
+				if len(n.Lhs) == 1 && len(n.Rhs) == 1 {
+					lhs, isIdent := n.Lhs[0].(*ast.Ident)
+					if call, ok := n.Rhs[0].(*ast.CallExpr); ok && isIdent {
+						if fn, ok := call.Fun.(*ast.Ident); ok && fn.Name == "checkSignupEmail" {
+							forwarded[lhs.Name] = true
+						}
+					}
+				}
+			case *ast.CallExpr:
+				if fn, ok := n.Fun.(*ast.Ident); ok && fn.Name == "jsonError" && len(n.Args) == 3 {
+					// 唯一放行的非字面值：轉出 checkSignupEmail 的回傳值，它的碼由下面那組推導
+					if id, ok := n.Args[2].(*ast.Ident); ok && forwarded[id.Name] {
+						return ""
+					}
+					return literal(n.Args[2])
+				}
+			}
+			return ""
+		}),
+		codesIn("signup_email.go", "checkSignupEmail", func(n ast.Node) string {
+			if ret, ok := n.(*ast.ReturnStmt); ok && len(ret.Results) == 1 {
+				return literal(ret.Results[0]) // `return ""` 是通過，literal 回 "" 不收
+			}
+			return ""
+		})...)
+
+	src, err := os.ReadFile("../web/src/lib/authErrors.ts")
+	if err != nil {
+		t.Fatalf("讀 authErrors.ts 失敗（測試依賴 repo 佈局 server/ ↔ web/）：%v", err)
+	}
+	block := regexp.MustCompile(`(?s)const SERVER_MESSAGES[^=]*=\s*\{(.*?)\n\}`).FindSubmatch(src)
+	if block == nil {
+		t.Fatal("authErrors.ts 找不到 SERVER_MESSAGES 區塊——改名了請同步本測試")
+	}
+	web := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^\s*([a-z_]+):`).FindAllSubmatch(block[1], -1) {
+		web[string(m[1])] = true
+	}
+	for _, code := range codes {
+		if !web[code] {
+			t.Errorf("升級驗證會回錯誤碼 %q，但 authErrors.ts 的 SERVER_MESSAGES 沒有對映——使用者只會看到「操作失敗」，補 web 對照表", code)
+		}
+	}
+}
 
 type fakeGuestAuthStore struct {
 	saveErr error

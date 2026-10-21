@@ -26,6 +26,12 @@ func passLocationMajority(ctx context.Context, tx pgx.Tx, roomID string) (bool, 
 	return passed, err
 }
 
+// locationError：改地點兩個端點的錯誤對映（薄 wrapper，log 深度見 writeError）。
+// 409 是房間版本或階段變了，不是抽選結果，所以不走 pendingError。
+func locationError(w http.ResponseWriter, err error) {
+	writeError(w, err, "房間狀態已更新，請重新整理")
+}
+
 func handleLocationVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
 	var req struct {
 		Want    *bool  `json:"want"`
@@ -43,19 +49,19 @@ func handleLocationVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Po
 	ctx := r.Context()
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		pendingError(w, err)
+		locationError(w, err)
 		return
 	}
 	defer tx.Rollback(ctx)
 	var status string
 	var version int64
 	if err := tx.QueryRow(ctx, `select status, search_version from rooms where id=$1 for update`, roomID).Scan(&status, &version); err != nil {
-		pendingError(w, roomRowErr(err))
+		locationError(w, roomRowErr(err))
 		return
 	}
 	var member bool
 	if err := tx.QueryRow(ctx, `select exists(select 1 from room_members where room_id=$1 and user_id=$2)`, roomID, UserID(r)).Scan(&member); err != nil {
-		pendingError(w, err)
+		locationError(w, err)
 		return
 	}
 	if !member {
@@ -72,16 +78,16 @@ func handleLocationVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Po
 		_, err = tx.Exec(ctx, `delete from location_change_votes where room_id=$1 and user_id=$2`, roomID, UserID(r))
 	}
 	if err != nil {
-		pendingError(w, err)
+		locationError(w, err)
 		return
 	}
 	passed, err := passLocationMajority(ctx, tx, roomID)
 	if err != nil {
-		pendingError(w, err)
+		locationError(w, err)
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
-		pendingError(w, err)
+		locationError(w, err)
 		return
 	}
 	if passed {
@@ -110,34 +116,34 @@ func handleChooseLocation(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 	ctx := r.Context()
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		pendingError(w, err)
+		locationError(w, err)
 		return
 	}
 	defer tx.Rollback(ctx)
 	var host, status string
 	var version int64
 	if err := tx.QueryRow(ctx, `select host_id,status,search_version from rooms where id=$1 for update`, roomID).Scan(&host, &status, &version); err != nil {
-		pendingError(w, roomRowErr(err))
+		locationError(w, roomRowErr(err))
 		return
 	}
 	if host != UserID(r) {
-		pendingError(w, ErrNotHost)
+		locationError(w, ErrNotHost)
 		return
 	}
 	if (status != "lobby" && status != "relocating") || version != *req.Version {
-		pendingError(w, ErrConflict)
+		locationError(w, ErrConflict)
 		return
 	}
 	if _, err := tx.Exec(ctx, `update rooms set center_lat=$2,center_lng=$3,status='lobby',search_version=search_version+1 where id=$1`, roomID, *req.Lat, *req.Lng); err != nil {
-		pendingError(w, err)
+		locationError(w, err)
 		return
 	}
 	if err := clearLocationBatch(ctx, tx, roomID); err != nil {
-		pendingError(w, err)
+		locationError(w, err)
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
-		pendingError(w, err)
+		locationError(w, err)
 		return
 	}
 	jsonOK(w, map[string]any{"status": "lobby", "version": version + 1})

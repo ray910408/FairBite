@@ -52,6 +52,8 @@ func TestRoomActionErrorMapping(t *testing.T) {
 		{"shortlist rejection keeps its text", shortlistError, shortlistRejected("目前不在初選階段"), http.StatusConflict, "目前不在初選階段"},
 		{"pending db failure", pendingError, errors.New("pending boom"), http.StatusInternalServerError, "資料庫錯誤，請稍後再試"},
 		{"shortlist db failure", shortlistError, errors.New("shortlist boom"), http.StatusInternalServerError, "資料庫錯誤，請稍後再試"},
+		{"location conflict", locationError, ErrConflict, http.StatusConflict, "房間狀態已更新，請重新整理"},
+		{"location db failure", locationError, errors.New("location boom"), http.StatusInternalServerError, "資料庫錯誤，請稍後再試"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
@@ -70,6 +72,13 @@ func TestRoomActionErrorMapping(t *testing.T) {
 	wantLogAt["direct boom"] = line + 1
 	checkBody(t, w, http.StatusInternalServerError, "寫入餐廳快取失敗")
 
+	// roomError 多一個 conflictMsg 參數，塞不進上面的表：同樣緊接 Caller 直接呼叫
+	w = httptest.NewRecorder()
+	_, _, line, _ = runtime.Caller(0)
+	roomError(w, errors.New("room boom"), "房間狀態已變更") // 必須緊接上一行：呼叫端就是 line+1
+	wantLogAt["room boom"] = line + 1
+	checkBody(t, w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
+
 	// 每個 500 都要記下原因，且位置是呼叫 mapper／serverError 的那一行，不是 helper 自己。
 	for msg, line := range wantLogAt {
 		if want := fmt.Sprintf("server_error_test.go:%d: %s", line, msg); !strings.Contains(logs.String(), want) {
@@ -77,7 +86,7 @@ func TestRoomActionErrorMapping(t *testing.T) {
 		}
 	}
 	// 非 500 不記 log：409／403／404 是預期中的業務結果。
-	if n := strings.Count(strings.TrimSpace(logs.String()), "\n") + 1; len(wantLogAt) != 3 || n != 3 {
-		t.Fatalf("只有 3 個 500 該留 log，got %d 個期望、%d 行：%s", len(wantLogAt), n, logs.String())
+	if n := strings.Count(strings.TrimSpace(logs.String()), "\n") + 1; len(wantLogAt) != 5 || n != 5 {
+		t.Fatalf("只有 5 個 500 該留 log，got %d 個期望、%d 行：%s", len(wantLogAt), n, logs.String())
 	}
 }
