@@ -100,10 +100,13 @@ export function useRoom(roomId: string) {
     const refetchQuietly = () => { void refetch().catch(() => undefined) }
     refetchQuietly()
     // ponytail: 任何相關表變更就整包重抓，P1 資料量小；量大再改增量更新
+    // 不訂 room_candidates：每次重算整組重寫，一票就推 N 個 INSERT 給每位成員（Realtime 按人次計量），
+    // 我們卻只拿事件當「該重抓」的訊號。改寫候選的交易一定也寫到 rooms：ReplaceCandidates 先刪舊列，
+    // 刪除由 signal_room_delete 遞增 rooms.delete_version；房裡還沒有候選的那次是搜尋凍結，會轉換房間狀態。
+    // 只改旗標的兩處 UPDATE（pending.go 重轉、shortlist.go 初選定案）都在同一交易裡接著重算或轉換狀態
     const tables = [
       { table: 'rooms', filter: `id=eq.${roomId}` },
       { table: 'room_members', filter: `room_id=eq.${roomId}` },
-      { table: 'room_candidates', filter: `room_id=eq.${roomId}` },
       { table: 'draws', filter: `room_id=eq.${roomId}` },
       { table: 'votes', filter: `room_id=eq.${roomId}` },
       { table: 'location_change_votes', filter: `room_id=eq.${roomId}` },
@@ -113,8 +116,8 @@ export function useRoom(roomId: string) {
     // roomId/refetch 變動會重跑本 effect：舊 channel 的 CLOSED 會晚於新 channel 的
     // SUBSCRIBED 抵達，沒有 live 旗標就會把已連線的狀態蓋回「斷線」
     let live = true
-    // 每筆交易立刻重抓一次：Realtime 只送已 commit 的交易，第一個事件到時整筆都讀得到。每票重算
-    // 一次推 N+3 個事件（全房候選逐列），去抖要等最後一個到齊再多等，手機上拖成一秒多。
+    // 每筆交易立刻重抓一次：Realtime 只送已 commit 的交易，第一個事件到時整筆都讀得到。一票會推
+    // 好幾個事件（votes、rooms…），去抖要等最後一個到齊再多等，手機上拖成一秒多。
     // 同交易的事件共用 commit_timestamp（毫秒精度），後續的略過。同一毫秒 commit 的別筆交易也被略過：
     // 重抓的快照晚於觸發它的 commit 數十毫秒（輪詢＋推播＋網路），通常已含它；殘餘風險是它的 WAL
     // flush 恰好卡住、晚於快照才可見，畫面會停在舊資料到下一筆變更（payload 沒有 xid，無法分辨）

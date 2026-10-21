@@ -447,9 +447,24 @@ func TestQueryMatchesSurviveRescoreRoundTrip(t *testing.T) {
 		t.Fatalf("未知時區應載回空字串，got %q", got)
 	}
 
-	if err := ReplaceCandidates(ctx, tx, roomID,
-		EngineResult{Kept: []Candidate{{Restaurant: loadedByPlaceID[placeID], Probability: 1}}}, counted); err != nil {
+	// web 不訂 room_candidates（useRoom.ts），重算改寫候選靠先刪舊列觸發的 rooms 訊號推給成員。
+	// 重寫同一組店（真實重算就是這樣）：只刪過期列＋upsert 的寫法在這裡會刪到 0 列、不發訊號
+	var deleteVersion int64
+	if err := tx.QueryRow(ctx, `select delete_version from rooms where id = $1`, roomID).Scan(&deleteVersion); err != nil {
 		t.Fatal(err)
+	}
+	if err := ReplaceCandidates(ctx, tx, roomID, EngineResult{
+		Kept:     []Candidate{{Restaurant: loadedByPlaceID[placeID], Probability: 1}},
+		Excluded: []Excluded{{Restaurant: loadedByPlaceID[excludedPlaceID], Kinds: []string{"cuisine"}, Reason: "不符成員菜系偏好"}},
+	}, counted); err != nil {
+		t.Fatal(err)
+	}
+	var signaled int64
+	if err := tx.QueryRow(ctx, `select delete_version from rooms where id = $1`, roomID).Scan(&signaled); err != nil {
+		t.Fatal(err)
+	}
+	if signaled <= deleteVersion {
+		t.Fatalf("改寫既有候選後 rooms.delete_version = %d，沒有大於 %d：成員收不到候選變更", signaled, deleteVersion)
 	}
 	var roundTripped []string
 	if err := tx.QueryRow(ctx,

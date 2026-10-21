@@ -205,19 +205,21 @@ describe('useRoom 背景重抓', () => {
     onSubscribed.reject(boom)
     await advance(0)
 
+    // 候選整組重寫一票推 N 個事件、只拿來當重抓訊號；改寫候選的交易一定也寫 rooms，所以不訂它
+    expect([...mocks.channels.at(-1)!.handlers.keys()].sort())
+      .toEqual(ROOM_TABLES.filter(t => t !== 'room_candidates').sort())
     const change = (table: string, commit_timestamp?: string) =>
       mocks.channels.at(-1)?.handlers.get(table)?.({ commit_timestamp })
     const onVote = nextRooms()
     change('votes', '2026-10-20T12:00:00.100Z')
     expect(rounds()).toBe(3) // 第一個事件就抓，不等
-    change('room_candidates', '2026-10-20T12:00:00.100Z')
     change('rooms', '2026-10-20T12:00:00.100Z')
     await advance(1_000)
     expect(rounds()).toBe(3) // 同一筆交易（同 commit_timestamp）的其餘事件不再重抓
 
     // 上一輪還在飛：下一筆交易可能不在它的快照裡，照樣立刻抓
     const onNextCommit = nextRooms()
-    change('room_candidates', '2026-10-20T12:00:00.250Z')
+    change('rooms', '2026-10-20T12:00:00.250Z')
     expect(rounds()).toBe(4)
     onVote.reject(boom)
     onNextCommit.reject(boom)
