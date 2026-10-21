@@ -32,7 +32,11 @@ jobs:
       # 先在 runner 的本機 stack 重放全部 migrations＋pgTAP，紅就不碰 production：
       # push 觸發的 CI 與本 workflow 平行跑，不能指望 CI 先紅（Codex P1）
       # pgTAP＋DB-backed Go 測試都綠才碰 production，與 ci.yml db job 同套驗證。
-      - run: supabase start
+      # -x 與 env 同 ci.yml db job：不起 Studio、Storage、Edge Functions、log 收集
+      - run: supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector
+        env:
+          SUPABASE_STORAGE_ENABLED: "false"
+          SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false"
       - run: supabase test db
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
