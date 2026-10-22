@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ createClient: vi.fn() }))
+// 模組載入時會訂 auth 事件（登出清出發點），假 client 要有 onAuthStateChange
+const mocks = vi.hoisted(() => {
+  const createClient = vi.fn()
+  createClient.mockReturnValue({ auth: { onAuthStateChange: vi.fn() } })
+  return { createClient }
+})
 vi.mock('@supabase/supabase-js', () => ({ createClient: mocks.createClient }))
 
 const issuedAtFuture = () => new Response(

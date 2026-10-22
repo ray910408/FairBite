@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -168,6 +169,24 @@ func TestSearchQuotaHTTPDurableAcrossRoomsAndFailures(t *testing.T) {
 	}
 }
 
+func TestSearchQuotaHTTPGuestHostForbidden(t *testing.T) {
+	pool, uid := quotaTestDB(t)
+	room := quotaTestRoom(t, pool, uid)
+	// 繼任房主是匿名訪客：付費 provider 之前就 403，文案告訴他要先註冊
+	if _, err := pool.Exec(context.Background(), `update auth.users set is_anonymous = true where id = $1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	provider := &paidCountingProvider{}
+	h := newTestAppWithWeather(t, pool, provider, &countingWeatherProvider{})
+	w := quotaHTTPRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", uid), room)
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "訪客需完成註冊後才能搜尋") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if provider.calls.Load() != 0 {
+		t.Fatal("guest host reached the paid provider")
+	}
+}
+
 func TestSearchQuotaHTTPAcrossRouteInstances(t *testing.T) {
 	pool, uid := quotaTestDB(t)
 	room := quotaTestRoom(t, pool, uid)
@@ -294,6 +313,7 @@ func (q *quotaQuery) Scan(dest ...any) error {
 
 func TestReserveSearchQuotaFailsClosed(t *testing.T) {
 	dbErr := errors.New("database unavailable")
+	privErr := &pgconn.PgError{Code: "42501"}
 	for _, tc := range []struct {
 		name           string
 		lease          pgtype.Text
@@ -301,6 +321,9 @@ func TestReserveSearchQuotaFailsClosed(t *testing.T) {
 	}{
 		{"database error", pgtype.Text{}, dbErr, dbErr},
 		{"quota denied", pgtype.Text{}, nil, ErrSearchQuota},
+		{"guest host denied", pgtype.Text{}, &pgconn.PgError{Code: "FB001"}, ErrGuestHostSearch},
+		// 真正的權限錯誤不能被誤報成「訪客」
+		{"privilege error stays generic", pgtype.Text{}, privErr, privErr},
 		{"reserved", pgtype.Text{String: "lease", Valid: true}, nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

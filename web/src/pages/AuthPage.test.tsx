@@ -25,7 +25,10 @@ const auth = vi.hoisted(() => ({
   onAuthStateChange: vi.fn<(callback: () => void) => unknown>(),
 }))
 
-vi.mock('../lib/supabase', () => ({ supabase: { auth } }))
+// 載入時網址有沒有驗證信回跳的 ?code=（lib/supabase 在 auth-js 換 code 之前記下的）
+const emailCallback = vi.hoisted(() => ({ pending: false, failed: false }))
+
+vi.mock('../lib/supabase', () => ({ supabase: { auth }, emailCallback }))
 
 const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>()
 
@@ -93,6 +96,8 @@ beforeEach(() => {
   auth.signInWithPassword.mockResolvedValue({ error: null })
   auth.updateUser.mockResolvedValue({ error: null })
   auth.onAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: auth.unsubscribe } } })
+  emailCallback.pending = false
+  emailCallback.failed = false
   fetchMock.mockImplementation(async () => new Response('{}'))
   vi.stubGlobal('fetch', fetchMock)
 })
@@ -121,6 +126,14 @@ describe('登入／註冊分段控制', () => {
   it('註冊的顯示名稱以資料庫字數上限為界', async () => {
     await renderAuth('/auth?mode=register')
     expect(field('顯示名稱').maxLength).toBe(80)
+  })
+
+  it('新密碼至少 8 碼；登入維持 6 碼，舊規則註冊的帳號仍登得進來', async () => {
+    await renderAuth()
+    expect(field('密碼').minLength).toBe(6)
+    fireEvent.click(tab('註冊'))
+    expect(field('密碼').minLength).toBe(8)
+    expect(field('密碼').placeholder).toBe('至少 8 碼')
   })
 
   it('登入與註冊按鈕都有至少 44px 的 class', async () => {
@@ -165,6 +178,92 @@ describe('登入／註冊分段控制', () => {
     expect(field('Email').value).toBe('person@example.com')
     expect(field('密碼').value).toBe('sensitive')
     expect(alertText()).toBe('Email 或密碼錯誤')
+  })
+})
+
+// PKCE：驗證信回跳帶 ?code=，auth-js 在本機有 code_verifier 時換成 session 並移除 code；
+// 頁面等 getSession（初始化完成）後分辨三種落地
+describe('驗證信回跳', () => {
+  const NOTICE = 'Email 已完成驗證。請用 Email 與密碼登入；若是訪客升級，請回到寄出驗證信的裝置設定密碼。'
+
+  // StrictMode 的第一輪 effect 會被清掉；旗標不能在第一輪就被吃掉，否則第二輪什麼都不做
+  it('別的裝置點信（code 沒被換掉）：提示回原裝置或直接登入，清掉網址的 code，不導頁', async () => {
+    window.history.replaceState(null, '', '/app/?ref=qr&code=abc#/auth')
+    emailCallback.pending = true
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/auth']}>
+          <Routes>
+            <Route path="/auth" element={<AuthPage />} />
+            <Route path="*" element={<Landing />} />
+          </Routes>
+        </MemoryRouter>
+      </StrictMode>,
+    )
+    await settle()
+
+    expect(statusText()).toBe(NOTICE)
+    expect(window.location.search).toBe('?ref=qr')
+    expect(window.location.hash).toBe('#/auth')
+    expect(landed()).toBeNull()
+    expect(emailCallback.pending).toBe(false)
+  })
+
+  // 同瀏覽器的訪客升級超過 5 分鐘才點信：flow state 過期、code 沒換掉，但訪客 session 還在
+  it('code 沒換掉但手上有 session：不叫人回原裝置，留給升級流程接續', async () => {
+    window.history.replaceState(null, '', '/app/?code=abc#/auth')
+    emailCallback.pending = true
+    const confirmed = upgrading('guest@gmail.com', CONFIRMED_AT)
+    marker(confirmed, 'guest@gmail.com')
+    currentUser(confirmed)
+    signedIn(confirmed)
+    await renderAuth()
+    expect(document.body.textContent).not.toContain(NOTICE)
+    expect(window.location.search).toBe('')
+    expect(submitButton().textContent).toBe('完成註冊')
+  })
+
+  // StrictMode 第一輪 effect 就消耗旗標：第二輪不再設，但第一輪設的提示要留著
+  it('驗證連結失效（GoTrue 帶 ?error=）：提示重寄或直接登入', async () => {
+    emailCallback.failed = true
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/auth']}>
+          <Routes>
+            <Route path="/auth" element={<AuthPage />} />
+            <Route path="*" element={<Landing />} />
+          </Routes>
+        </MemoryRouter>
+      </StrictMode>,
+    )
+    await settle()
+    expect(statusText()).toBe('驗證連結已失效或已使用過。請重新寄送驗證信，或直接用 Email 與密碼登入。')
+    expect(emailCallback.failed).toBe(false)
+  })
+
+  it('同一個瀏覽器點註冊確認信（code 已換成 session）：直接進首頁', async () => {
+    emailCallback.pending = true
+    signedIn({ id: 'new-user', is_anonymous: false, email: 'new@gmail.com', email_confirmed_at: CONFIRMED_AT })
+    await renderAuth()
+    expect(landed()).toBe('到了 /（REPLACE）')
+  })
+
+  it('訪客升級的確認信回跳：留在本頁設定密碼，不進首頁', async () => {
+    emailCallback.pending = true
+    const confirmed = upgrading('guest@gmail.com', CONFIRMED_AT)
+    marker(confirmed, 'guest@gmail.com')
+    currentUser(confirmed)
+    signedIn(confirmed)
+    await renderAuth()
+    expect(landed()).toBeNull()
+    expect(submitButton().textContent).toBe('完成註冊')
+  })
+
+  it('不是從信件回跳就不查 session、不導頁', async () => {
+    signedIn({ id: 'member', is_anonymous: false })
+    await renderAuth()
+    expect(auth.getSession).not.toHaveBeenCalled()
+    expect(landed()).toBeNull()
   })
 })
 

@@ -416,6 +416,53 @@ func TestLeaveSuccessionTieBreakByUserID(t *testing.T) {
 	}
 }
 
+// 訪客房主不能搜尋：較早加入的訪客不得搶在註冊成員之前繼任，否則房間卡在 lobby。
+func TestLeaveSuccessionPrefersRegisteredMember(t *testing.T) {
+	pool, ctx := leaveTestPool(t)
+	const host = "77777777-eeee-4eee-8eee-777777777777"
+	const guest = "11111111-eeee-4eee-8eee-111111111111" // 最早加入且 user_id 最小：舊規則下必定是它
+	const registered = "88888888-eeee-4eee-8eee-888888888888"
+	const roomID = "99999999-eeee-4eee-8eee-999999999999"
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `delete from rooms where id = $1`, roomID)
+		pool.Exec(context.Background(), `delete from auth.users where id in ($1,$2,$3)`, host, guest, registered)
+	})
+	if _, err := pool.Exec(ctx, `insert into auth.users (id, email, is_anonymous) values
+		($1,'succ-host@test.dev',false), ($2,null,true), ($3,'succ-reg@test.dev',false)`,
+		host, guest, registered); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into rooms (id, host_id, status) values ($1, $2, 'lobby')`, roomID, host); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into room_members (room_id, user_id, joined_at) values
+		($1, $2, '2026-10-22T00:00:00Z'),
+		($1, $3, '2026-10-22T00:01:00Z'),
+		($1, $4, '2026-10-22T00:02:00Z')`, roomID, host, guest, registered); err != nil {
+		t.Fatal(err)
+	}
+	if err := leaveOneRoom(ctx, pool, failingWeather{}, roomID, host); err != nil {
+		t.Fatal(err)
+	}
+	var newHost string
+	if err := pool.QueryRow(ctx, `select host_id from rooms where id = $1`, roomID).Scan(&newHost); err != nil {
+		t.Fatal(err)
+	}
+	if newHost != registered {
+		t.Fatalf("註冊成員應優先繼任：got %s, want %s", newHost, registered)
+	}
+	// 註冊成員也走了：只剩訪客時照樣由訪客繼任，房間不會沒有房主
+	if err := leaveOneRoom(ctx, pool, failingWeather{}, roomID, registered); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select host_id from rooms where id = $1`, roomID).Scan(&newHost); err != nil {
+		t.Fatal(err)
+	}
+	if newHost != guest {
+		t.Fatalf("全員皆訪客時應由訪客繼任：got %s, want %s", newHost, guest)
+	}
+}
+
 // eng review C8：並發雙退——鎖序化下皆無錯誤、恰一人觸發刪房、零殘留。
 func TestConcurrentLeavesDeleteRoomExactlyOnce(t *testing.T) {
 	pool, ctx := leaveTestPool(t)

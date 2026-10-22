@@ -9,7 +9,7 @@ import type { Room } from './types'
 //    直接 return，走不到後面的 rescoreRoom：單人房沒有盤面可以重算，不得承諾「重新
 //    分割／重新計算」——那句跟同一張 dialog 上的「房間會直接刪除」直接打架。
 // 2. join_room 只匹配 status = 'lobby'（migration 0003/0006）——lobby 之後一律不可重加入。
-// 3. 房主退出由剩餘成員中最早加入者繼任（ADR-0007、leave.go 的 update rooms set host_id）：
+// 3. 房主退出由剩餘成員繼任，註冊成員優先、再依加入先後（ADR-0007、leave.go 的 update rooms set host_id）：
 //    重新加入也拿不回控制權，多人房要講明。單人房沒有人可繼任（房直接刪），不講。
 //
 // memberCount = null 代表「人數不可判定」（呼叫端沒把成員載成功）。此時兩個方向都不能
@@ -26,7 +26,7 @@ export function leaveNotice(
   // 肯定句要「確定是房主」且「確定還有別人」；任一不可判定就退回「你若是房主」
   const hostPoint = solo || isHost === false ? null
     : `${isHost && memberCount !== null ? '你是房主：離開後' : '你若是房主，'}`
-      + '房主身分會移交給其餘成員中最早加入的人，你重新加入也不會拿回房主權限'
+      + '房主身分會移交給其餘成員（已註冊者優先，再依加入先後），你重新加入也不會拿回房主權限'
   const withHost = (points: string[]) => hostPoint ? [...points, hostPoint] : points
   if (status === 'lobby') {
     return withHost(solo

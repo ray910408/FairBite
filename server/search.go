@@ -120,6 +120,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		if errors.Is(err, ErrSearchQuota) {
 			w.Header().Set("Retry-After", "60")
 			jsonError(w, http.StatusTooManyRequests, "搜尋額度已用完或系統忙碌，請稍後再試")
+		} else if errors.Is(err, ErrGuestHostSearch) {
+			jsonError(w, http.StatusForbidden, "訪客需完成註冊後才能搜尋")
 		} else {
 			log.Printf("search quota check failed: %v", err)
 			jsonError(w, http.StatusServiceUnavailable, "搜尋額度檢查失敗，請稍後再試")

@@ -332,7 +332,7 @@ describe('足跡頁房籍查詢', () => {
     rooms(mine, mine, theirs, theirs)
     await renderHistory()
     const text = (await openLeave()).textContent!
-    expect(text.split('你是房主：離開後房主身分會移交給其餘成員中最早加入的人').length - 1).toBe(1)
+    expect(text.split('你是房主：離開後房主身分會移交給其餘成員（已註冊者優先，再依加入先後）').length - 1).toBe(1)
     expect(text).not.toContain('你若是房主')
   })
 
@@ -343,7 +343,7 @@ describe('足跡頁房籍查詢', () => {
     rooms(mine, mine)
     await renderHistory()
     const text = (await openLeave()).textContent
-    expect(text).toContain('你若是房主，房主身分會移交給其餘成員中最早加入的人')
+    expect(text).toContain('你若是房主，房主身分會移交給其餘成員（已註冊者優先，再依加入先後）')
     expect(text).not.toContain('你是房主：')
   })
 
@@ -353,7 +353,7 @@ describe('足跡頁房籍查詢', () => {
     rooms(mine, mine)
     await renderHistory()
     const text = (await openLeave()).textContent
-    expect(text).toContain('你若是房主，房主身分會移交給其餘成員中最早加入的人')
+    expect(text).toContain('你若是房主，房主身分會移交給其餘成員（已註冊者優先，再依加入先後）')
     expect(text).not.toContain('房間現況查不到')
   })
 })

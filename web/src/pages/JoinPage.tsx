@@ -48,7 +48,8 @@ export default function JoinPage() {
     const { data, error: joinError } = await supabase.rpc('join_room', { p_code: code })
     if (generation !== inviteGeneration.current) return
     if (joinError || !data) setError(joinError?.message?.includes('頻繁')
-      ? '嘗試過於頻繁，請稍後再試' : '房間不存在或已開始')
+      ? '嘗試過於頻繁，請稍後再試'
+      : joinError?.message?.includes('人數已滿') ? '房間人數已滿' : '房間不存在或已開始')
     else {
       await applyDefaultPrefs(data)
       if (generation !== inviteGeneration.current) return

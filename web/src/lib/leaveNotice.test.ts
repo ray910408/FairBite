@@ -115,10 +115,10 @@ describe('leaveNotice 單人房不承諾重算', () => {
   })
 })
 
-// 房主退出＝移交給最早加入者（ADR-0007、leave.go 的 update rooms set host_id）：
+// 房主退出＝移交給其餘成員，註冊者優先（ADR-0007、leave.go 的 update rooms set host_id）：
 // lobby 特別誤導——文案說「之後可重新加入」，但回來不會拿回房主權限
 describe('leaveNotice 房主移交', () => {
-  const TRANSFER = '房主身分會移交給其餘成員中最早加入的人，你重新加入也不會拿回房主權限'
+  const TRANSFER = '房主身分會移交給其餘成員（已註冊者優先，再依加入先後），你重新加入也不會拿回房主權限'
 
   it('多人房的房主：明說會移交、回來也拿不回控制權', () => {
     for (const status of ['lobby', 'candidates', 'voting', 'decided'] as const) {

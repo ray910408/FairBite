@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import type { User } from '@supabase/supabase-js'
 import { leaveRooms, validateUpgradeEmail, wakeApi } from '../lib/api'
 import { authErrorMessage } from '../lib/authErrors'
-import { supabase } from '../lib/supabase'
+import { emailCallback, supabase } from '../lib/supabase'
 import { Alert, Logo, Spinner } from '../components/icons'
 import { LeaveConfirm } from '../components/LeaveConfirm'
 
@@ -30,6 +30,7 @@ export default function AuthPage() {
   const [upgradeNotice, setUpgradeNotice] = useState('')
   const [resumeUpgrade, setResumeUpgrade] = useState(false)
   const [pendingUpgrade, setPendingUpgrade] = useState(false)
+  const [confirmedFromEmail, setConfirmedFromEmail] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -53,6 +54,28 @@ export default function AuthPage() {
     }
     const refreshUser = () => void supabase.auth.getUser().then(({ data }) => applyUser(data.user)).catch(() => {})
     refreshUser()
+    // 同步 setState：StrictMode 第二輪看到旗標已消耗就不再設，第一輪設的 state 保留
+    if (emailCallback.failed) {
+      emailCallback.failed = false
+      setUpgradeNotice('驗證連結已失效或已使用過。請重新寄送驗證信，或直接用 Email 與密碼登入。')
+    }
+    // getSession 會等 auth-js 初始化（含 PKCE 換 code）完成才回來
+    if (emailCallback.pending) void supabase.auth.getSession().then(({ data }) => {
+      if (!active) return
+      emailCallback.pending = false
+      const url = new URL(window.location.href)
+      if (url.searchParams.has('code')) {
+        // code 沒被換掉：別的裝置點信（沒有 code_verifier），或同瀏覽器換失敗（flow state 過期）。GoTrue 驗證成功
+        // 才會發 code，所以 Email 已驗證。手上還有 session（同瀏覽器的訪客升級）就交給 refreshUser 接續設密碼，
+        // 不提示；沒有 session 時提示登入，訪客升級只能回原裝置設密碼
+        url.searchParams.delete('code')
+        window.history.replaceState(window.history.state, '', url)
+        if (!data.session) setUpgradeNotice('Email 已完成驗證。請用 Email 與密碼登入；若是訪客升級，請回到寄出驗證信的裝置設定密碼。')
+      } else if (data.session && !data.session.user.is_anonymous && !localStorage.getItem(`guest-upgrade:${data.session.user.id}`)) {
+        // 同一個瀏覽器點了註冊確認信：已換到 session，直接進首頁（訪客升級留在這頁設密碼）
+        setConfirmedFromEmail(true)
+      }
+    }).catch(() => {})
     const { data: authSub } = supabase.auth.onAuthStateChange(() => {
       // Supabase advises against awaiting another auth call inside this callback.
       queueMicrotask(refreshUser)
@@ -153,6 +176,8 @@ export default function AuthPage() {
     }
   }
 
+  if (confirmedFromEmail) return <Navigate to="/" replace />
+
   return (
     <>
     <main className="mx-auto flex min-h-screen w-full max-w-sm flex-col justify-center gap-6 p-4"
@@ -199,8 +224,9 @@ export default function AuthPage() {
             <label className="label" htmlFor="password">密碼</label>
             <input id="password" className="field" type="password"
               autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-              placeholder="至少 6 碼"
-              value={password} onChange={e => setPassword(e.target.value)} required minLength={6} />
+              placeholder={mode === 'register' ? '至少 8 碼' : undefined}
+              // 8 碼是新密碼的下限（config.toml minimum_password_length）；登入不套，舊規則 6 碼的帳號照樣登得進來
+              value={password} onChange={e => setPassword(e.target.value)} required minLength={mode === 'register' ? 8 : 6} />
           </div>}
           {error && !confirmExistingLogin && (
             <p role="alert" className="banner bg-danger-soft text-danger">

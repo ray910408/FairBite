@@ -85,3 +85,12 @@ export function loadRoomDeparture(roomId: string): DeparturePoint | null {
 export function saveRoomDeparture(roomId: string, p: DeparturePoint) {
   writePoint(`room-departure:${roomId}`, p)
 }
+
+// 登出時清掉上面兩種座標快取（supabase.ts 的 SIGNED_OUT）；房間 key 不帶 uid，只能整批清
+export function clearDepartures() {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith('last-departure:') || key.startsWith('room-departure:')) localStorage.removeItem(key)
+    }
+  } catch { /* 封鎖網站資料時本來就寫不進去 */ }
+}

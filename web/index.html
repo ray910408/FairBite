@@ -21,10 +21,21 @@
     </script>
     <!-- 只有標題用 Noto Serif TC；Google Fonts 依 unicode-range 切片，只載畫面上用到的字。
          這支 CSS 本身就上百 KB，直接掛 stylesheet 會擋住首次繪製與 module script：先用 media="print"
-         讓它非阻塞下載，載完再切成 all（標題先用後備字型，display=swap 本來就是這個行為） -->
+         讓它非阻塞下載，載完再切成 all（標題先用後備字型，display=swap 本來就是這個行為）。
+         由腳本建立而不寫 <link onload>：build 產物有 CSP（vite.config.ts），inline 事件屬性會被擋 -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700;900&display=swap" media="print" onload="this.media='all'" />    <meta name="description" content="一群人五分鐘內決定吃哪家：各自設條件，系統過濾加權，轉盤公平抽選。" />
+    <script>
+      (function () {
+        var font = document.createElement('link')
+        font.rel = 'stylesheet'
+        font.href = 'https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700;900&display=swap'
+        font.media = 'print'
+        font.onload = function () { font.media = 'all' }
+        document.head.appendChild(font)
+      })()
+    </script>
+    <meta name="description" content="一群人五分鐘內決定吃哪家：各自設條件，系統過濾加權，轉盤公平抽選。" />
     <!-- 邀請連結貼到 LINE 的預覽卡片；og:image 必須是絕對網址（換網域見 docs/deploy.md） -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content="今天吃什麼" />

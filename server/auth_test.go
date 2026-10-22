@@ -160,7 +160,7 @@ func TestJWKSUnknownKIDCancellationAndCachedKey(t *testing.T) {
 	}
 	h := v.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 	token := func(kid string) string {
-		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"sub": "user", "exp": time.Now().Add(time.Hour).Unix()})
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"sub": "user", "aud": "authenticated", "exp": time.Now().Add(time.Hour).Unix()})
 		tok.Header["kid"] = kid
 		signed, err := tok.SignedString(key)
 		if err != nil {
@@ -245,7 +245,7 @@ func TestJWKSRefreshDeadlineAndRotation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"sub": "user", "exp": time.Now().Add(time.Hour).Unix()})
+			tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"sub": "user", "aud": "authenticated", "exp": time.Now().Add(time.Hour).Unix()})
 			tok.Header["kid"] = "rotated"
 			signed, err := tok.SignedString(key)
 			if err != nil {
@@ -269,10 +269,14 @@ func TestJWKSRefreshDeadlineAndRotation(t *testing.T) {
 
 func signHS256(t *testing.T, secret, sub string) string {
 	t.Helper()
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": sub, "exp": time.Now().Add(time.Hour).Unix(),
+	return signHS256Claims(t, secret, jwt.MapClaims{
+		"sub": sub, "aud": "authenticated", "exp": time.Now().Add(time.Hour).Unix(),
 	})
-	s, err := tok.SignedString([]byte(secret))
+}
+
+func signHS256Claims(t *testing.T, secret string, claims jwt.MapClaims) string {
+	t.Helper()
+	s, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,6 +295,12 @@ func TestAuthMiddleware(t *testing.T) {
 		{"missing token", "", http.StatusUnauthorized, ""},
 		{"malformed token", "not-a-jwt", http.StatusUnauthorized, ""},
 		{"valid token exposes subject", signHS256(t, secret, "user-123"), http.StatusOK, "user-123"},
+		{"wrong audience rejected", signHS256Claims(t, secret, jwt.MapClaims{
+			"sub": "user-123", "aud": "anon", "exp": time.Now().Add(time.Hour).Unix()}), http.StatusUnauthorized, ""},
+		{"missing audience rejected", signHS256Claims(t, secret, jwt.MapClaims{
+			"sub": "user-123", "exp": time.Now().Add(time.Hour).Unix()}), http.StatusUnauthorized, ""},
+		{"missing exp rejected", signHS256Claims(t, secret, jwt.MapClaims{
+			"sub": "user-123", "aud": "authenticated"}), http.StatusUnauthorized, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v, err := NewVerifier()
@@ -340,7 +350,7 @@ func TestAuthMiddlewareJWKS(t *testing.T) {
 	}))
 
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"sub": "rsa-user", "exp": time.Now().Add(time.Hour).Unix(),
+		"sub": "rsa-user", "aud": "authenticated", "exp": time.Now().Add(time.Hour).Unix(),
 	})
 	tok.Header["kid"] = "test-key"
 	signed, err := tok.SignedString(key)

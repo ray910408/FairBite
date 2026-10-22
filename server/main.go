@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 	_ "time/tzdata"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -77,6 +78,14 @@ func main() {
 		log.Print("places provider: mock（設 GOOGLE_PLACES_API_KEY 切換真 API）")
 	}
 	log.Printf("listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port,
-		buildRoutes(verifier, pool, provider, NewOpenMeteoProvider(""), newLimiterStore(RateLimitPerSec, RateLimitBurst))))
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: buildRoutes(verifier, pool, provider, NewOpenMeteoProvider(""), newLimiterStore(RateLimitPerSec, RateLimitBurst)),
+		// 驗身前就能佔住連線的慢速 header／body（Slowloris）要有上限；WriteTimeout 要蓋過 search 的 45 秒 deadline
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	log.Fatal(srv.ListenAndServe())
 }

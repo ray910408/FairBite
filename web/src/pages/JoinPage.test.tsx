@@ -222,6 +222,14 @@ describe('加入房間', () => {
     if (limited === 'resolve_room_invite') expect(mocks.rpc).toHaveBeenCalledTimes(1)
   })
 
+  it('join_room 回人數已滿：照實告知，不說成房間不存在', async () => {
+    mocks.joinRoom.mockResolvedValue({ data: null, error: { message: '房間人數已滿' } })
+    await renderJoin()
+
+    expect(screen.getByRole('alert').textContent).toBe('房間人數已滿')
+    expect(landed()).toBeNull()
+  })
+
   it('錯誤畫面除了重試，也有回首頁的路', async () => {
     mocks.resolveInvite.mockResolvedValue({ data: null, error: { message: 'not found' } })
     await renderJoin()

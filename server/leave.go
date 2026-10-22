@@ -50,7 +50,7 @@ func handleLeave(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, wea
 //	     ▼
 //	查剩餘成員（joined_at, user_id 排序）
 //	     ├─ 無人 ──▶ delete rooms（cascade；dining_history.room_id set null）──▶ commit
-//	     ├─ 有人且我是 host ──▶ update host_id = 最早加入者（繼任）
+//	     ├─ 有人且我是 host ──▶ update host_id = 註冊成員優先的最早加入者（繼任）
 //	     ▼
 //	status ∈ {candidates, shortlisting, voting, pending} ──▶ rescoreRoom（以現任成員重新分割 kept/excluded：
 //	     │                            否決隱性收回、離席者硬排除一併解除——ADR-0007 修訂語意；
@@ -86,9 +86,11 @@ func leaveOneRoom(ctx context.Context, pool *pgxpool.Pool, weather WeatherProvid
 		return tx.Commit(ctx) // 並發已退：冪等
 	}
 	var successor string
+	// 註冊成員優先繼任：訪客房主不能動用付費搜尋（migration 20261022000100），
+	// 讓訪客先接手會卡住房內還有註冊成員的房間；全員皆訪客時才輪到最早加入的訪客。
 	err = tx.QueryRow(ctx, `
 		select user_id from room_members where room_id = $1
-		order by joined_at, user_id limit 1`, roomID).Scan(&successor)
+		order by not public.is_registered_account(user_id), joined_at, user_id limit 1`, roomID).Scan(&successor)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// 末位退房：刪房（candidates/draws/殘票 cascade；dining_history.room_id set null）
 		if _, err := tx.Exec(ctx, `delete from rooms where id = $1`, roomID); err != nil {

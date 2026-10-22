@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from './types'
+import { clearDepartures } from './departure'
 
 const configuredUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseUrl = configuredUrl.startsWith('/')
@@ -19,8 +20,33 @@ async function fetchRetryingStaleClock(input: RequestInfo | URL, init?: RequestI
   return fetch(input, init)
 }
 
+// 驗證信回跳在網址帶 ?code=（PKCE）。auth-js 初始化時，本機留有 code_verifier 就換成 session 並把 code 移除；
+// 在別的裝置點信（沒有 verifier）或換失敗（例如寄信超過 5 分鐘才點，flow state 過期）時 code 會原封不動留著。
+// 連結本身失效（過期、已用過）時 GoTrue 改帶 ?error=…&error_code=…&error_description=…。
+// 先記下落地狀態，AuthPage 等初始化完再分辨，處理完設回 false，之後再進 /auth 不會重複處理。
+const landing = new URLSearchParams(globalThis.location?.search)
+export const emailCallback = { pending: landing.has('code'), failed: landing.has('error') }
+
+// error 參數不清掉會一直留在這個分頁：重寄驗證信時被 emailRedirectTo 帶進新連結（auth-js 看到 error 就不換新的 code），
+// 邀請連結也會帶著它。在 createClient 之前清，auth-js 只會看到乾淨的網址。
+if (emailCallback.failed) {
+  const url = new URL(globalThis.location.href)
+  for (const key of ['error', 'error_code', 'error_description']) url.searchParams.delete(key)
+  globalThis.history.replaceState(globalThis.history.state, '', url)
+}
+
 export const supabase = createClient<Database>(
   supabaseUrl,
   import.meta.env.VITE_SUPABASE_ANON_KEY,
-  { global: { fetch: fetchRetryingStaleClock } },
+  {
+    // implicit（預設）會把網址 #access_token=… 直接存成 session：攻擊者把自己的 token 包成連結，
+    // 點開的人就被換成攻擊者的身分（login CSRF）。PKCE 只認本機 code_verifier 換得到的 code。
+    auth: { flowType: 'pkce' },
+    global: { fetch: fetchRetryingStaleClock },
+  },
 )
+
+// 共用裝置：登出後不留上一個人的出發點座標。掛在事件上，按鈕登出與 refresh token 失效被登出都會清
+supabase.auth.onAuthStateChange(event => {
+  if (event === 'SIGNED_OUT') clearDepartures()
+})

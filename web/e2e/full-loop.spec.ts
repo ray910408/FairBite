@@ -71,11 +71,9 @@ async function signup(page: Page, name: string, verifyTouch = false) {
       return Boolean(verificationUrl)
     }).toBe(true)
     await page.goto(verificationUrl)
-    await expect(page.getByLabel('Email')).toBeVisible()
-    await page.getByRole('button', { name: '登入', exact: true }).first().click()
-    await page.getByLabel('Email').fill(email)
-    await page.getByLabel('密碼').fill('e2e-password-123')
-    await page.getByRole('button', { name: '登入', exact: true }).last().click()
+    // PKCE：同一個瀏覽器點信，回跳的 ?code= 用本機的 code_verifier 換成 session，直接進首頁、網址不留 code
+    await expect(page.getByRole('button', { name: '建立房間' })).toBeVisible()
+    expect(new URL(page.url()).searchParams.has('code')).toBe(false)
   }
   await expect(page.getByRole('button', { name: '建立房間' })).toBeVisible()
 }

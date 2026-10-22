@@ -41,12 +41,8 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; OpenStreetMap contributors', maxZoom: 19,
       }).addTo(map)
-      // 圖磚兩種主題都是淺色，圖釘用 brand-fill（兩主題都夠深）＋on-brand 白圈，跟著主題又不失對比
-      const icon = L.divIcon({
-        className: '',
-        html: '<div style="width:18px;height:18px;border-radius:9999px;background:var(--color-brand-fill);border:3px solid var(--color-on-brand);box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>',
-        iconSize: [18, 18], iconAnchor: [9, 9],
-      })
+      // 圖釘外觀在 index.css 的 .map-pin（取代 Leaflet 預設的白框 leaflet-div-icon）
+      const icon = L.divIcon({ className: 'map-pin', iconSize: [18, 18], iconAnchor: [9, 9] })
       const marker = L.marker([start.lat, start.lng], { draggable: true, icon }).addTo(map)
       // 縮小後點到重複的世界副本時 Leaflet 給的 lng 會超出 ±180（伺服器拒收），一律先 wrap
       marker.on('dragend', () => {

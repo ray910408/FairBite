@@ -21,6 +21,11 @@
    - Sign In / Providers：啟用 **Anonymous Sign-Ins** 與 Email provider。
    - Email：開啟 **Confirm email**。新帳號及匿名訪客綁定 email 都要完成確認；pending confirmation 期間不得建立新房。
    - Security：啟用 **Allow manual linking**，讓匿名身分以原 UID 升級，不建立第二個帳號。
+   - Passwords：**Minimum password length = 8**（與本機 `config.toml`、前端 `minLength` 一致）。
+     **Secure password change 保持關閉**：訪客升級是在舊的匿名 session 上 `updateUser({ password })`，
+     開了會因「需要近期登入」讓升級卡住。
+   - Attack Protection：CAPTCHA **不要只在 Dashboard 打開**——前端的 `signInAnonymously`／`signUp`
+     還沒有帶 `captchaToken`，開了會讓所有登入失敗；要先做前端 Turnstile 整合。
    - URL Configuration：Site URL 設正式站 origin/path，Redirect URLs 加入正式站 auth hash route 及實際使用的 preview URL；不要沿用本機 `127.0.0.1`。
 
    **不要用 `supabase config push` 代替這個開關**：本機 `config.toml` 的
@@ -55,6 +60,9 @@
    之後觸發（見下方「日常 release 的 DB migration」）；Auto-Deploy 沒關的話 Render 仍會搶先部署。
 
 服務名若改過，`WEB_ORIGIN` 不用動，但下一步的 `VITE_API_URL` 要跟著改。
+
+`GO_VERSION` 必須跟 `server/go.mod` 的 `go` 指令同步（`render.yaml` 只是備份，實際值在
+Dashboard → Environment）。升 `go.mod` 的 PR merge **前**先改 Dashboard，否則 Render 會用舊版 Go 建置。
 
 **Free plan 會在閒置 15 分鐘後休眠**，之後第一個請求要等約 50 秒冷啟動。
 登入／註冊頁載入時會立即匿名 GET `${VITE_API_URL}/healthz`（不使用快取），
@@ -216,6 +224,21 @@ Go 若先啟動而配額 schema 尚未存在，搜尋會回 503（fail closed）
   未完成房間在開始投票／投票／抽選時恢復新規則機率；已抽選 UI 顯示「歷史機率已隱藏」。
 - 新 migrations 使用 timestamp，避免與本機曾出現、但不在此 checkout 的 `0026_search_calls`
   版本號衝突。部署前仍須比對目標 migration history；本次只驗證隔離 DB，沒有修改 production。
+
+## 2026-10 安全強化（部署前手動步驟）
+
+Migration `20261022000100` 與 Go／前端的配套修正都向下相容，照日常流程部署即可；merge 前先做：
+
+1. Render Dashboard → Environment：`GO_VERSION` 改成 `1.26.10`（1.25 已停止安全更新）。
+2. Supabase Dashboard → Authentication → Passwords：最短長度改成 8。只影響新設的密碼，既有帳號照常登入。
+3. GCP Console → Places API (New)：設 requests/day 硬上限，並建 Billing budget alert（`TODOS.md` 的花費防線）。
+   DB 端的 `global_paid_daily_limit` 只算 request 數，擋不住 key 外流後在別處被盜用。
+
+行為變更：
+- 房主退房時，註冊成員優先繼任；全員皆訪客時，繼任的訪客（匿名或升級未完成）按搜尋會收到 403「訪客需完成註冊後才能搜尋」。
+- 一間房最多 20 位成員，第 21 位加入時顯示「房間人數已滿」；已在房內的人重新進入不受影響。
+- `profiles.default_prefs` 上限 4KB，且必須是 JSON object（`not valid`：既有列不阻擋部署，新寫入才檢查）。
+- 驗證信改走 PKCE：同一個瀏覽器點信會直接登入；在別台裝置點信只會完成驗證，要再登入。
 
 ## 移除歷史計分人數門檻（2026-09-16）
 
