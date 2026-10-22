@@ -50,12 +50,21 @@ describe('supabase client', () => {
   })
 
   // 留著的 error 會被重寄信的 emailRedirectTo 與邀請連結帶走，新連結因此換不到 session
-  it('驗證連結失效的 ?error= 在 auth-js 讀網址前就清掉，其他參數與 hash 保留', async () => {
+  // GoTrue v2.195 實測的失效回跳形狀：query 帶 error，fragment 整段換成 #error=…，#/auth 不見
+  it('驗證連結失效：auth-js 讀網址前清掉 error 參數、路由放回 #/auth，其他參數保留', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({})))
-    window.history.replaceState(null, '', '/?ref=qr&error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid#/auth')
+    window.history.replaceState(null, '', '/?ref=qr&error=access_denied#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid&sb=')
     const { emailCallback } = await import('./supabase')
     expect(emailCallback.failed).toBe(true)
     expect(window.location.search).toBe('?ref=qr')
+    expect(window.location.hash).toBe('#/auth')
+  })
+
+  it('部署前寄出的 implicit 信失效時只帶 fragment，也一樣處理', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({})))
+    window.history.replaceState(null, '', '/#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid')
+    const { emailCallback } = await import('./supabase')
+    expect(emailCallback.failed).toBe(true)
     expect(window.location.hash).toBe('#/auth')
   })
 

@@ -66,11 +66,11 @@ export default function AuthPage() {
       const url = new URL(window.location.href)
       if (url.searchParams.has('code')) {
         // code 沒被換掉：別的裝置點信（沒有 code_verifier），或同瀏覽器換失敗（flow state 過期）。GoTrue 驗證成功
-        // 才會發 code，所以 Email 已驗證。手上還有 session（同瀏覽器的訪客升級）就交給 refreshUser 接續設密碼，
-        // 不提示；沒有 session 時提示登入，訪客升級只能回原裝置設密碼
+        // 才會發 code，所以 Email 已驗證。同瀏覽器的訪客升級（session 帶升級標記）交給 refreshUser 接續設密碼，
+        // 不提示；其餘（沒有 session，或別台裝置上無關的 session）提示登入，訪客升級只能回原裝置設密碼
         url.searchParams.delete('code')
         window.history.replaceState(window.history.state, '', url)
-        if (!data.session) setUpgradeNotice('Email 已完成驗證。請用 Email 與密碼登入；若是訪客升級，請回到寄出驗證信的裝置設定密碼。')
+        if (!data.session || !localStorage.getItem(`guest-upgrade:${data.session.user.id}`)) setUpgradeNotice('Email 已完成驗證。請用 Email 與密碼登入；若是訪客升級，請回到寄出驗證信的裝置設定密碼。')
       } else if (data.session && !data.session.user.is_anonymous && !localStorage.getItem(`guest-upgrade:${data.session.user.id}`)) {
         // 同一個瀏覽器點了註冊確認信：已換到 session，直接進首頁（訪客升級留在這頁設密碼）
         setConfirmedFromEmail(true)

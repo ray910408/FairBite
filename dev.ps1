@@ -16,7 +16,7 @@ if ($Lan) {
     $ip = (Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'Wi-Fi' | Select-Object -First 1).IPAddress
     if (-not $ip) { throw "找不到 Wi-Fi 介面的 IPv4 位址，請確認已連上無線網路" }
     $url = "https://${ip}:5173"
-    # --host 綁 0.0.0.0 讓手機連得到；平常只綁 localhost（vite.config.ts），同網段的人碰不到 dev proxy
+    # --host 綁 0.0.0.0 讓手機連得到；平常只綁 127.0.0.1（vite.config.ts），同網段的人碰不到 dev proxy
     $viteArgs = 'run dev -- --no-open --host'
     Write-Host ""
     Write-Host "  手機請開：$url" -ForegroundColor Cyan

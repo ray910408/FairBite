@@ -22,16 +22,19 @@ async function fetchRetryingStaleClock(input: RequestInfo | URL, init?: RequestI
 
 // 驗證信回跳在網址帶 ?code=（PKCE）。auth-js 初始化時，本機留有 code_verifier 就換成 session 並把 code 移除；
 // 在別的裝置點信（沒有 verifier）或換失敗（例如寄信超過 5 分鐘才點，flow state 過期）時 code 會原封不動留著。
-// 連結本身失效（過期、已用過）時 GoTrue 改帶 ?error=…&error_code=…&error_description=…。
+// 連結本身失效（過期、已用過）時 GoTrue 改帶 ?error=…，並把整段 fragment 換成 #error=…&error_code=…，
+// #/auth 路由跟著不見（部署前寄出的 implicit 信只帶 fragment 那份）。
 // 先記下落地狀態，AuthPage 等初始化完再分辨，處理完設回 false，之後再進 /auth 不會重複處理。
 const landing = new URLSearchParams(globalThis.location?.search)
-export const emailCallback = { pending: landing.has('code'), failed: landing.has('error') }
+const fragment = new URLSearchParams(globalThis.location?.hash.slice(1))
+export const emailCallback = { pending: landing.has('code'), failed: landing.has('error') || fragment.has('error_code') }
 
 // error 參數不清掉會一直留在這個分頁：重寄驗證信時被 emailRedirectTo 帶進新連結（auth-js 看到 error 就不換新的 code），
-// 邀請連結也會帶著它。在 createClient 之前清，auth-js 只會看到乾淨的網址。
+// 邀請連結也會帶著它。在 createClient 之前清並把路由放回 #/auth，auth-js 只會看到乾淨的網址，AuthPage 也一定會掛上顯示提示。
 if (emailCallback.failed) {
   const url = new URL(globalThis.location.href)
   for (const key of ['error', 'error_code', 'error_description']) url.searchParams.delete(key)
+  url.hash = '#/auth'
   globalThis.history.replaceState(globalThis.history.state, '', url)
 }
 

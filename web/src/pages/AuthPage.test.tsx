@@ -241,6 +241,15 @@ describe('驗證信回跳', () => {
     expect(emailCallback.failed).toBe(false)
   })
 
+  // 例：手機曾以訪客掃 QR 加入（有 session），在手機上點電腦寄出的升級信
+  it('code 沒換掉而 session 跟這封信無關：仍提示 Email 已驗證', async () => {
+    window.history.replaceState(null, '', '/app/?code=abc#/auth')
+    emailCallback.pending = true
+    signedIn({ id: 'phone-guest', is_anonymous: true })
+    await renderAuth()
+    expect(statusText()).toBe(NOTICE)
+  })
+
   it('同一個瀏覽器點註冊確認信（code 已換成 session）：直接進首頁', async () => {
     emailCallback.pending = true
     signedIn({ id: 'new-user', is_anonymous: false, email: 'new@gmail.com', email_confirmed_at: CONFIRMED_AT })

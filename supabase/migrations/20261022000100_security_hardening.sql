@@ -61,7 +61,7 @@ end $$;
 revoke all on function public.create_room(double precision, double precision) from public, anon;
 grant execute on function public.create_room(double precision, double precision) to authenticated;
 
--- H1：房主退房時由最早加入者繼任（server/leave.go），繼任者可能是匿名訪客。若不在此擋，
+-- H1：房主退房時繼任者（server/leave.go）在全員皆訪客的房裡就是匿名訪客。若不在此擋，
 -- 一個註冊帳號建房、匿名帳號輪流繼任搜尋，就能用 N 份帳號額度燒光全域付費額度。
 -- 專屬 SQLSTATE FB001 讓 Go 端回 403 與明確文案（server/quota.go ErrGuestHostSearch）；不用通用的 42501，
 -- 免得日後真正的權限錯誤被誤報成「訪客」。繼任本身已優先交給註冊成員（leave.go），這裡擋的是全員皆訪客的房。

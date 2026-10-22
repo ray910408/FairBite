@@ -69,7 +69,8 @@ export default defineConfig({
   // host 只綁迴環：同網段的人不能經 dev proxy 打本機 API、用掉真的 Places key。明寫 127.0.0.1 而不用預設的
   // localhost：Windows 上 localhost 只綁 ::1，README 與 Auth redirect 用的 https://127.0.0.1:5173 會連不上
   //（瀏覽器開 localhost 會自動退回 127.0.0.1）。手機測試用 dev.ps1 -Lan，它會加 --host 綁 0.0.0.0。
-  // open: 啟動完成後自動開瀏覽器（只會開 localhost，手機端仍需手動輸入區網 IP）。
+  // open: 啟動完成後自動開 https://127.0.0.1:5173（和 localhost 是不同 origin，登入狀態各自獨立；
+  // 手機端仍需手動輸入區網 IP）。
   server: {
     host: '127.0.0.1',
     open: true,
