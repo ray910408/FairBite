@@ -4,7 +4,7 @@ import { buildGoogleMapsPlaceUrl } from '../lib/maps'
 import { isGoogleSourced } from '../lib/placesSource'
 import { restaurantFacts } from '../lib/labels'
 import { chipLabel, decisiveFactors, formatPercents, sortExcluded, sortKept } from '../lib/probability'
-import { SHORTLIST_PICK_MAX, SHORTLIST_PICK_MIN } from '../lib/shortlist'
+import { SHORTLIST_PICK_MAX } from '../lib/shortlist'
 import { VETO_QUOTA } from '../lib/votes'
 import { ArrowDown, ArrowUp, Chevron } from './icons'
 
@@ -69,9 +69,6 @@ export default function CandidateList({ rows, voting, picking }: {
           <h2 className="font-serif text-[1.375rem] font-black tracking-[0.08em]">候選餐廳（{kept.length}）</h2>
           {voting && (
             <p className="mt-0.5 text-xs text-fg-muted">否決額度 {voting.vetoesRemaining}/{VETO_QUOTA}（可收回）</p>
-          )}
-          {picking && (
-            <p className="mt-0.5 text-xs text-fg-muted">已圈 {picking.myCount}/{SHORTLIST_PICK_MAX}（至少 {SHORTLIST_PICK_MIN} 家）</p>
           )}
         </div>
         <ul className="mt-3">

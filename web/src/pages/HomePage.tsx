@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { useMidnightRerender } from '../hooks/useMidnightRerender'
 import { leaveRooms, wakeApi } from '../lib/api'
 import { supabase } from '../lib/supabase'
 import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
-import { buildMealTimeISO, formatMealTime } from '../lib/mealTime'
+import { getPosition } from '../lib/geolocation'
 import { suggestCuisines } from '../lib/prefsLearning'
 import { loadLastDeparture, saveLastDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
@@ -19,6 +18,8 @@ import LocationPicker from '../components/LocationPicker'
 import { RecentRatingPrompt } from '../components/RatingPrompt'
 import CustomWheel from '../components/CustomWheel'
 
+const LOCATE_LIMIT_MS = 10_000
+
 export default function HomePage() {
   const nav = useNavigate()
   const [code, setCode] = useState('')
@@ -26,9 +27,8 @@ export default function HomePage() {
   const [joinError, setJoinError] = useState('')
   const [prefsError, setPrefsError] = useState('')
   const [departure, setDeparture] = useState<DeparturePoint | null>(null)
-  const [mealMode, setMealMode] = useState<'now' | 'custom'>('now')
-  const [mealHH, setMealHH] = useState('')
-  const [mealMM, setMealMM] = useState('')
+  // 沒有上次出發點又抓不到定位：首頁才開選點
+  const [locateFailed, setLocateFailed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [myUserId, setMyUserId] = useState('')
   const [prefs, setPrefs] = useState<Record<string, unknown>>({})
@@ -158,31 +158,7 @@ export default function HomePage() {
     doLeave()
   }
 
-  useMidnightRerender()
-  // 選好就預告今天/明天：比現在早的時刻會滾到明天，建房前先讓房主看見
-  const mealPreview = mealHH && mealMM ? buildMealTimeISO(`${mealHH}:${mealMM}`) : null
-
-  async function persistRoom(pos: DeparturePoint) {
-    const creatorUid = await getUid()
-    if (!creatorUid) return
-    let mealISO: string | null = null
-    if (mealMode === 'custom') {
-      if (!mealHH || !mealMM) {
-        setCreateError('請選擇完整的用餐時間')
-        return
-      }
-      const r = buildMealTimeISO(`${mealHH}:${mealMM}`)
-      if ('error' in r) {
-        setCreateError(r.error)
-        return
-      }
-      // 預告是 render 時算的：停在畫面上跨過所選時刻，送出時會滾到明天，先擋下讓房主看見再按
-      if (mealPreview && 'iso' in mealPreview && mealPreview.iso !== r.iso) {
-        setCreateError(`已過所選時刻，改為${formatMealTime(r.iso)}，確認請再按一次建立房間`)
-        return
-      }
-      mealISO = r.iso
-    }
+  async function persistRoom(creatorUid: string, pos: DeparturePoint) {
     const { data, error } = await supabase.rpc('create_room', {
       p_lat: pos.lat, p_lng: pos.lng,
     })
@@ -190,22 +166,39 @@ export default function HomePage() {
       setCreateError(error.message)
       return
     }
-    if (mealISO) {
-      // 失敗靜默接受：房間以「馬上出發」存在，lobby 可重設（spec §4）
-      await supabase.from('rooms').update({ meal_time: mealISO }).eq('id', data)
-    }
     await applyDefaultPrefs(data)
     saveLastDeparture(creatorUid, pos)
     saveRoomDeparture(data, pos)
     nav(`/room/${data}`)
   }
 
+  // 建房一律「馬上出發」，用餐時間與地點進房後在 lobby 改。create_room 仍要座標，出發點依序取：
+  // 已還原的上次出發點 → 點擊當下補讀（loadSuggestions 的還原是非同步的，可能還沒落地）→
+  // 目前定位 → 都沒有才在卡片裡開選點。抓定位最久 LOCATE_LIMIT_MS，也算在 busy 裡
   async function createRoom() {
-    if (!departure) return
     setBusy(true)
     setCreateError('')
     try {
-      await persistRoom(departure)
+      const creatorUid = await getUid()
+      if (!creatorUid) return
+      let pos = departure ?? loadLastDeparture(creatorUid)
+      if (!pos) {
+        try {
+          // 權限詢問擱著時 getCurrentPosition 不會結束（它的 timeout 不含等授權的時間）：
+          // 不設總時限，「建立中」和共用 busy 的「加入」會一起卡住
+          const coords = await Promise.race([getPosition(navigator.geolocation),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('定位逾時')), LOCATE_LIMIT_MS))])
+          // label 同 LocationPicker 的「使用目前位置」
+          pos = { ...coords, label: '目前位置' }
+        } catch {
+          setLocateFailed(true)
+          return
+        }
+      }
+      // 等定位時離開了首頁（例如點了足跡）：不建房，免得晚點把人拉進一間新房。
+      // suggestionsMounted 只在卸載時設 false，等同頁面的掛載旗標
+      if (!suggestionsMounted.current) return
+      await persistRoom(creatorUid, pos)
     } finally {
       setBusy(false)
     }
@@ -281,51 +274,16 @@ export default function HomePage() {
           </div>
           <h1 className="text-3xl leading-tight font-black tracking-[0.04em]">開一場聚餐決策</h1>
           <p className="text-sm leading-relaxed text-fg-muted">
-            選好出發點與用餐時間建立房間，把邀請碼給大家，各自設好條件就能開始搜尋。
+            建立房間後再設定用餐時間與地點，把邀請連結給大家，各自設好條件就能開始搜尋。
           </p>
-          {authState === 'member' && <LocationPicker value={departure} onChange={handleDepartureChange} />}
-          {authState === 'member' && <div className="space-y-2">
-            <span className="block font-serif text-[0.9375rem] font-bold">用餐時間</span>
-            {/* 墨線框 segmented control：選中反白（同房內設定） */}
-            <div className="grid grid-cols-2 divide-x divide-rule rounded-btn border border-rule">
-              {([['now', '馬上出發'], ['custom', '自訂時間']] as const).map(([key, label]) => (
-                <button key={key} type="button" aria-pressed={mealMode === key}
-                  className={`min-h-11 text-sm font-semibold tracking-[0.1em] transition-colors duration-150 ${
-                    mealMode === key ? 'bg-fg text-canvas' : 'text-fg hover:bg-brand-soft'
-                  }`}
-                  onClick={() => { setMealMode(key); setCreateError('') }}>
-                  {label}
-                </button>
-              ))}
-            </div>
-            {mealMode === 'custom' && (
-              <div className="flex items-center gap-2">
-                <select className="field flex-1" aria-label="用餐時間（時）"
-                  value={mealHH}
-                  onChange={e => { setMealHH(e.target.value); setCreateError('') }}>
-                  <option value="" disabled>時</option>
-                  {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0')).map(h => (
-                    <option key={h} value={h}>{h}</option>
-                  ))}
-                </select>
-                <span className="text-fg-muted">:</span>
-                <select className="field flex-1" aria-label="用餐時間（分）"
-                  value={mealMM}
-                  onChange={e => { setMealMM(e.target.value); setCreateError('') }}>
-                  <option value="" disabled>分</option>
-                  {Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0')).map(m => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {mealMode === 'custom' && mealPreview && 'iso' in mealPreview && (
-              <p role="status" className="text-xs text-fg-muted">{formatMealTime(mealPreview.iso)} 用餐</p>
-            )}
-          </div>}
+          {authState === 'member' && locateFailed && <>
+            <p role="status" className="text-sm text-fg-muted">抓不到目前位置，請選擇出發點</p>
+            <LocationPicker value={departure} onChange={handleDepartureChange} />
+          </>}
           {authState === 'guest' ? (
             <Link to="/auth?mode=register" className="btn btn-primary w-full">註冊後建立房間</Link>
-          ) : authState === 'member' ? <button onClick={createRoom} disabled={busy || !departure || leavePending} className="btn btn-primary w-full">
+          ) : authState === 'member' ? <button onClick={createRoom}
+            disabled={busy || leavePending || (locateFailed && !departure)} className="btn btn-primary w-full">
             {busy && <Spinner className="h-5 w-5" />}
             {busy ? '建立中…' : '建立房間'}
           </button> : authState === 'error' ? (

@@ -302,7 +302,6 @@ describe('CandidateList 投票與圈選', () => {
     render(<CandidateList rows={[candidate('r1'), candidate('r2')]} picking={{
       isPicked: rid => rid === 'r1', counts: { r1: 2 }, myCount: 5, onToggle,
     }} />)
-    expect(screen.getByText('已圈 5/5（至少 3 家）')).toBeTruthy()
     const picked = button('圈選（2 人）')
     const other = button('圈選')
     expect(pressed(picked)).toBe('true')
@@ -1053,8 +1052,17 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
     await renderRoom(lobby({ myUserId: GUEST }))
     expect(queryButton('關閉')).toBeNull()
     expect(queryButton('平均')).toBeNull()
-    expect(document.body.textContent).toContain('探索檔位：平均・用餐時間：')
-    expect(document.body.textContent).toContain('・菜系過濾：關閉')
+    expect(document.body.textContent).toContain('用餐時間：')
+    expect(document.body.textContent).toContain('・探索檔位：平均・菜系過濾：關閉')
+  })
+
+  it('lobby 房主視角：邀請→用餐時間→探索檔位→地點→我的條件（距離在前）→菜系過濾', async () => {
+    await renderRoom(lobby())
+    const order = ['邀請成員', '用餐時間', '探索檔位', '調整用餐地點', '我的條件', '菜系過濾']
+    const headings = [...document.querySelectorAll('h2')].map(h => h.textContent ?? '')
+    expect(headings.filter(h => order.includes(h))).toEqual(order)
+    const text = document.body.textContent ?? ''
+    expect(text.indexOf('距離偏好')).toBeLessThan(text.indexOf('價位偏好'))
   })
 
   // eng review 5A：寫入路徑防線——點了沒寫進 DB（或漏 count 防線）這條會紅
