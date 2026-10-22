@@ -15,7 +15,7 @@ import { EXPLORATION_OPTIONS, ROOM_STATUS_LABEL } from '../lib/labels'
 import { formatMealTime } from '../lib/mealTime'
 import { loadSeenStage, saveSeenStage } from '../lib/seenStage'
 import {
-  SHORTLIST_PICK_MIN, hasMyPick, keptPickCounts, membersBelowMin, pickCounts, shortlistOpen,
+  SHORTLIST_PICK_MAX, SHORTLIST_PICK_MIN, hasMyPick, keptPickCounts, membersBelowMin, pickCounts, shortlistOpen,
 } from '../lib/shortlist'
 import { supabase } from '../lib/supabase'
 import type { Room } from '../lib/types'
@@ -26,7 +26,7 @@ import DrawPanel from '../components/DrawPanel'
 import { MemberList } from '../components/MemberList'
 import RelocationPanel from '../components/RelocationPanel'
 import { RoomHeader } from '../components/RoomHeader'
-import { RoomSettings } from '../components/RoomSettings'
+import { CuisineFilterSetting, ExplorationSetting, MealTimeSetting, RoomSettingsSummary } from '../components/RoomSettings'
 import ShortlistVotePanel from '../components/ShortlistVotePanel'
 import { InviteQRCode } from '../components/InviteQRCode'
 import { Alert, Chevron, Logo, Spinner } from '../components/icons'
@@ -56,6 +56,12 @@ function revealBanner(el: HTMLElement | null) {
   const hidden = banner.getBoundingClientRect().top - 8 - (document.querySelector('header')?.getBoundingClientRect().bottom ?? 0)
   if (hidden < 0) scrollTo({ top: scrollY + hidden - 16, behavior: scrollBehavior() })
 }
+
+// 候選列表下的操作列：候選很多時黏在畫面底部，不必捲到最後才按得到；捲到底時回到原位，不蓋住最後一家。
+// -mx-4／px-4 讓底色撐滿 main 的內距；半透明底同 RoomHeader；pb 讓開 iPhone 的 home indicator。
+// 手機橫放（視窗矮）時不黏：房主初選的操作列約 160px，黏著會把清單擠到只剩一兩行。
+// 掛 data-action-bar 的元素會讓 index.css 替 html 留 scroll-padding，Tab 的焦點才不會被它蓋住
+const ACTION_BAR = 'sticky bottom-0 z-10 -mx-4 bg-canvas/85 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur [@media(max-height:500px)]:static'
 
 export default function RoomPage() {
   const { id = '' } = useParams()
@@ -348,8 +354,10 @@ export default function RoomPage() {
 
   function closeConfirm() {
     setConfirmAsk(null)
-    // 同 closeLeave：背景 inert 要等這次 commit 移除，焦點才回得去觸發的按鈕
-    requestAnimationFrame(() => confirmTriggerRef.current?.focus())
+    // 同 closeLeave：背景 inert 要等這次 commit 移除，焦點才回得去觸發的按鈕。
+    // preventScroll：觸發鈕剛被按過、一定在畫面上；它在底部操作列時正好落在 html 的 scroll-padding 區，
+    // 瀏覽器會當它被遮住而把整頁往下捲
+    requestAnimationFrame(() => confirmTriggerRef.current?.focus({ preventScroll: true }))
   }
 
   function askCancelShortlist(e: React.MouseEvent<HTMLElement>) {
@@ -407,6 +415,14 @@ export default function RoomPage() {
       () => confirmDraw(room!.id, currentDraw!.version))
   }
 
+  // 投票／換地點時在階段最上面；lobby 排在房主設定中間（探索檔位之後）
+  function relocationPanel(status: 'lobby' | 'voting' | 'relocating') {
+    return <RelocationPanel key={room!.id} isHost={isHost} status={status}
+      wantChange={locationVotes.some(v => v.user_id === myUserId)}
+      yesCount={locationVotes.length} memberCount={members.length} busy={relocationBusy}
+      onVote={onLocationVote} onChoose={onChooseLocation} current={loadRoomDeparture(room!.id)} />
+  }
+
   return (
     <>
       {/* dialog 開著時整塊背景 inert：fixed 遮罩擋得住指標（elementFromPoint 實測），
@@ -458,12 +474,7 @@ export default function RoomPage() {
         <h1 ref={stageHeadingRef} tabIndex={-1} className="sr-only">
           目前階段：{ROOM_STATUS_LABEL[room.status]}
         </h1>
-        {(room.status === 'voting' || room.status === 'relocating' || (room.status === 'lobby' && isHost)) && (
-          <RelocationPanel key={room.id} isHost={isHost} status={room.status}
-            wantChange={locationVotes.some(v => v.user_id === myUserId)}
-            yesCount={locationVotes.length} memberCount={members.length} busy={relocationBusy}
-            onVote={onLocationVote} onChoose={onChooseLocation} current={loadRoomDeparture(room.id)} />
-        )}
+        {(room.status === 'voting' || room.status === 'relocating') && relocationPanel(room.status)}
         {room.status === 'lobby' && (isHost ? (
           <section className="card space-y-3">
             <h2 className="text-base font-semibold">邀請成員</h2>
@@ -483,15 +494,24 @@ export default function RoomPage() {
 
         {(room.status === 'candidates' || room.status === 'shortlisting' || room.status === 'voting') && (
           <p className="text-xs text-fg-muted">
-            探索檔位：{EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[1]}
-            ・用餐時間：{formatMealTime(room.meal_time)}
+            用餐時間：{formatMealTime(room.meal_time)}
+            ・探索檔位：{EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[1]}
           </p>
         )}
-        {room.status === 'lobby' && <RoomSettings room={room} isHost={isHost} searching={searching} settings={settings}
-          editingCustom={editingCustom} setEditingCustom={setEditingCustom} draftHH={draftHH} setDraftHH={setDraftHH}
-          draftMM={draftMM} setDraftMM={setDraftMM} />}
+        {/* 房主 lobby 依設定的先後排：邀請→用餐時間→探索檔位→地點→我的條件（距離在前）→菜系過濾→搜尋。
+            菜系過濾放在條件後面：它篩的是大家填的料理偏好 */}
+        {room.status === 'lobby' && (isHost ? (
+          <>
+            <MealTimeSetting room={room} searching={searching} settings={settings}
+              editingCustom={editingCustom} setEditingCustom={setEditingCustom} draftHH={draftHH} setDraftHH={setDraftHH}
+              draftMM={draftMM} setDraftMM={setDraftMM} />
+            <ExplorationSetting room={room} searching={searching} settings={settings} />
+            {relocationPanel('lobby')}
+          </>
+        ) : <RoomSettingsSummary room={room} />)}
         {room.status === 'lobby' && me && <ConditionsForm me={me} isHost={isHost} searchVersion={room.search_version} disabled={searching}
           onFlushAvailable={flush => { conditionsFlush.current = flush ?? (async () => false) }} />}
+        {room.status === 'lobby' && isHost && <CuisineFilterSetting room={room} searching={searching} settings={settings} />}
         {room.status === 'lobby' && isHost && (
           <button className="btn btn-primary w-full"
             disabled={searching || roomSettingsBlocked || !guestsReady} aria-busy={searching}
@@ -515,7 +535,7 @@ export default function RoomPage() {
             )}
             <CandidateList rows={candidates} />
             {isHost && (
-              <div className="grid grid-cols-2 gap-3">
+              <div data-action-bar className={`${ACTION_BAR} grid grid-cols-2 gap-3`}>
                 <button className="btn btn-secondary w-full" disabled={editingConditions || startingVoting}
                   aria-busy={editingConditions} onClick={askEditConditions}>
                   {editingConditions ? <><Spinner className="h-5 w-5" />處理中…</> : '修改條件'}
@@ -539,29 +559,35 @@ export default function RoomPage() {
               myCount: picksByMember[myUserId] ?? 0,
               onToggle: onTogglePick,
             }} />
-            {isHost && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <button className="btn btn-secondary w-full"
-                    disabled={editingConditions || startingVoting || shortlistBusy}
-                    aria-busy={editingConditions} onClick={askEditConditions}>
-                    {editingConditions ? <><Spinner className="h-5 w-5" />處理中…</> : '修改條件'}
-                  </button>
-                  <button className="btn btn-quiet w-full"
-                    disabled={shortlistBusy || startingVoting || editingConditions}
-                    aria-busy={shortlistBusy} onClick={askCancelShortlist}>
-                    {shortlistBusy ? <><Spinner className="h-5 w-5" />處理中…</> : '取消初選'}
+            {/* 圈選進度也放進操作列：圈到一半不必捲回清單頂端看還差幾家 */}
+            <div data-action-bar className={`${ACTION_BAR} space-y-3`}>
+              <p className="text-center text-sm text-fg-muted">
+                已圈 {picksByMember[myUserId] ?? 0}/{SHORTLIST_PICK_MAX}（至少 {SHORTLIST_PICK_MIN} 家）
+              </p>
+              {isHost && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <button className="btn btn-secondary w-full"
+                      disabled={editingConditions || startingVoting || shortlistBusy}
+                      aria-busy={editingConditions} onClick={askEditConditions}>
+                      {editingConditions ? <><Spinner className="h-5 w-5" />處理中…</> : '修改條件'}
+                    </button>
+                    <button className="btn btn-quiet w-full"
+                      disabled={shortlistBusy || startingVoting || editingConditions}
+                      aria-busy={shortlistBusy} onClick={askCancelShortlist}>
+                      {shortlistBusy ? <><Spinner className="h-5 w-5" />處理中…</> : '取消初選'}
+                    </button>
+                  </div>
+                  <button className="btn btn-primary w-full"
+                    disabled={shortlistUnfinished > 0 || startingVoting || editingConditions || shortlistBusy}
+                    aria-busy={startingVoting} onClick={onStartVoting}>
+                    {startingVoting ? <><Spinner className="h-5 w-5" />處理中…</>
+                      : shortlistUnfinished > 0 ? `還有 ${shortlistUnfinished} 人沒圈滿 ${SHORTLIST_PICK_MIN} 家`
+                      : '開始投票'}
                   </button>
                 </div>
-                <button className="btn btn-primary w-full"
-                  disabled={shortlistUnfinished > 0 || startingVoting || editingConditions || shortlistBusy}
-                  aria-busy={startingVoting} onClick={onStartVoting}>
-                  {startingVoting ? <><Spinner className="h-5 w-5" />處理中…</>
-                    : shortlistUnfinished > 0 ? `還有 ${shortlistUnfinished} 人沒圈滿 ${SHORTLIST_PICK_MIN} 家`
-                    : '開始投票'}
-                </button>
-              </div>
-            )}
+              )}
+            </div>
           </>
         )}
         {room.status === 'voting' && (
@@ -578,11 +604,13 @@ export default function RoomPage() {
               </p>
             )}
             {isHost && (
-              <button className="btn btn-primary w-full"
-                disabled={keptCount === 0 || pendingAction !== null}
-                aria-busy={pendingAction === 'draw'} onClick={onDraw}>
-                {pendingAction === 'draw' ? <><Spinner className="h-5 w-5" />抽選中…</> : '啟動轉盤'}
-              </button>
+              <div data-action-bar className={ACTION_BAR}>
+                <button className="btn btn-primary w-full"
+                  disabled={keptCount === 0 || pendingAction !== null}
+                  aria-busy={pendingAction === 'draw'} onClick={onDraw}>
+                  {pendingAction === 'draw' ? <><Spinner className="h-5 w-5" />抽選中…</> : '啟動轉盤'}
+                </button>
+              </div>
             )}
           </>
         )}

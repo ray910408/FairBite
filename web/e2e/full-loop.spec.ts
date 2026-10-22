@@ -35,8 +35,8 @@ function waitForRoomRealtime(page: Page) {
 
 // e2e 一律選午後的固定時段，結果不隨執行時刻變動：凌晨跑 CI 也是午後的 mock 營業池，不會夜間假紅。
 // 已過所選時刻就是明天（buildMealTimeISO 的規則），所以畫面上的標籤是「今天」或「明天」。
-// 選好到按「建立房間」之間若跨過所選時刻，HomePage 會擋下要求再按一次（預告是今天、送出變明天）；
-// 15:00 前 5 分鐘內改選 15:30 避開這個邊界——兩個時段 mock 營業中的店完全相同
+// 用餐時間在房內 lobby 設：所選時刻幾分鐘內就到的話，跑到搜尋時已經過了，營業判定改以當下計算
+//（server roomEvalTime 的 max(now, meal_time)）；15:00 前 5 分鐘內改選 15:30 避開這個邊界——兩個時段 mock 營業中的店完全相同
 function mealTimeForE2E(now = new Date()): string {
   const at1500 = new Date(now)
   at1500.setHours(15, 0, 0, 0)
@@ -80,29 +80,27 @@ async function signup(page: Page, name: string, verifyTouch = false) {
   await expect(page.getByRole('button', { name: '建立房間' })).toBeVisible()
 }
 
-async function createRoom(a: Page, verifyTouch = false) {
-  if (verifyTouch) await expectButtonsAtLeast44px(a, ['馬上出發', '自訂時間'])
-  await a.getByRole('button', { name: '選擇出發點' }).click()
-  await a.getByRole('button', { name: '使用目前位置' }).click()
-  await expect(a.getByText('目前位置', { exact: true })).toBeVisible()
-  await expect(a.locator('.leaflet-container')).toBeVisible()
-  await a.getByRole('button', { name: '完成' }).click()
-  const meal = mealTimeForE2E()
-  const [hh, mm] = meal.split(':')
-  await a.getByRole('button', { name: '自訂時間' }).click()
-  await a.getByLabel('用餐時間（時）').selectOption(hh)
-  await a.getByLabel('用餐時間（分）').selectOption(mm)
+// 首頁不選點也不選用餐時間：房主的 context 都給了 geolocation 權限，建房直接用目前位置；
+// 用餐時間進房後在 lobby 的用餐時間卡設（首頁建房一律「馬上出發」）
+async function createRoom(a: Page) {
   const aRealtimeReady = waitForRoomRealtime(a)
   await a.getByRole('button', { name: '建立房間' }).click()
   await expect(a.getByText('成員（1）')).toBeVisible()
   await aRealtimeReady
   const code = (await a.locator('header button.font-mono').innerText()).trim()
   expect(code).toMatch(/^[A-Z0-9]{12}$/)
+  const meal = mealTimeForE2E()
+  const [hh, mm] = meal.split(':')
+  await a.getByRole('button', { name: '自訂時間' }).click()
+  await a.getByLabel('用餐時間（時）').selectOption(hh)
+  await a.getByLabel('用餐時間（分）').selectOption(mm)
+  // 卡片上的時刻來自 rooms 列（寫入後經 Realtime 回來），看得到才算落庫
+  await expect(a.getByText(new RegExp(`(今天|明天) ${meal}`))).toBeVisible()
   return { code, meal }
 }
 
 async function createAndJoinRoom(a: Page, b: Page, verifyTouch = false) {
-  const { code, meal } = await createRoom(a, verifyTouch)
+  const { code, meal } = await createRoom(a)
   const bRealtimeReady = waitForRoomRealtime(b)
   await b.getByLabel('邀請碼').fill(code)
   await b.getByRole('button', { name: '加入', exact: true }).click()
@@ -184,8 +182,8 @@ test('邀請碼由 browser native validation 阻擋無效 join_room RPC', async 
 })
 
 // Round 5（ADR-0007 2026-08-16 修訂）：回首頁不再靜默退房——HomePage mount 查到房籍
-// 就跳確認，按下「離開房間」才真的退。「加入」只由 leavePending 閘門控制（「建立房間」
-// 還要有出發點，加入方沒有），拿它當 settle 訊號對兩邊都成立。
+// 就跳確認，按下「離開房間」才真的退。「加入」只由 leavePending 閘門控制，而且會員與訪客
+// 都有（訪客看到的是「註冊後建立房間」連結，沒有「建立房間」鈕），拿它當 settle 訊號對兩邊都成立。
 async function leaveViaHome(page: Page) {
   await page.goto('/')
   await page.getByRole('button', { name: '離開房間' }).click()
@@ -255,10 +253,7 @@ test('Task 10 慢搜尋提示、卸載清理與登出閘門', async ({ browser }
 
   try {
     await signup(page, 'task10')
-    await page.getByRole('button', { name: '選擇出發點' }).click()
-    await page.getByRole('button', { name: '使用目前位置' }).click()
-    await page.getByRole('button', { name: '完成' }).click()
-    await page.getByRole('button', { name: '建立房間' }).click()
+    await page.getByRole('button', { name: '建立房間' }).click() // 有定位權限：直接用目前位置建房
     await expect(page.getByText('成員（1）')).toBeVisible()
 
     let searchArrivedResolve: (() => void) | undefined
@@ -378,7 +373,7 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
 
     // D10 #3：房主切到探索；成員同步在摘要卡看到狀態與說明，且沒有可改的開關。
     await a.getByRole('button', { name: '探索', exact: true }).click()
-    await expect(b.getByText(/^探索檔位：探索・/)).toBeVisible()
+    await expect(b.getByText(/・探索檔位：探索・/)).toBeVisible()
     await expect(b.getByText('沒去過的店加成加倍、常中選的店降權，鼓勵換口味', { exact: true })).toBeVisible()
     for (const label of ['熟悉', '平均', '探索']) {
       await expect(b.getByRole('button', { name: label, exact: true })).toHaveCount(0)

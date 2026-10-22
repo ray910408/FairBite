@@ -183,6 +183,34 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
         </p>
       )}
 
+      {/* 距離、交通排最前面：和出發點有關的先填（房主畫面上，地點卡就排在這張卡上面） */}
+      <label className="block space-y-1">
+        <span className="flex items-baseline justify-between">
+          {/* 「距離偏好」不是「可接受距離」：半徑取全員平均，這個值不是個人的硬上限，
+              設得再緊也可能收到更遠的候選（見 search.go averageMemberRadius） */}
+          <span className="label">距離偏好</span>
+          <span className="font-mono text-sm font-semibold text-brand">{form.max_distance_m} 公尺</span>
+        </span>
+        <input type="range" min={300} max={3000} step={100} className="h-6 w-full"
+          disabled={frozen}
+          value={form.max_distance_m}
+          onChange={e => save({ max_distance_m: +e.target.value })} />
+      </label>
+
+      <div role="group" aria-labelledby="transport-label">
+        <span id="transport-label" className="label">交通方式</span>
+        {/* 字級大／特大的窄螢幕三顆並排不下：整顆換到下一列，不把「大眾運輸」折成直排 */}
+        <div className="mt-2 flex flex-wrap gap-2">
+          {TRANSPORTS.map(([v, label]) => (
+            <button key={v} type="button" aria-pressed={form.transport === v}
+              disabled={frozen}
+              className={`chip flex-1 justify-center whitespace-nowrap ${form.transport === v
+                ? 'border-brand bg-brand-fill text-on-brand hover:bg-brand-fill-hover' : ''}`}
+              onClick={() => save({ transport: v })}>{label}</button>
+          ))}
+        </div>
+      </div>
+
       <label className="block space-y-1">
         <span className="flex items-baseline justify-between">
           <span className="label">價位偏好</span>
@@ -241,33 +269,6 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
               className={`chip justify-center px-2 ${form.dietary.includes(v)
                 ? 'border-danger bg-danger text-on-danger hover:bg-danger' : ''}`}
               onClick={() => save({ dietary: toggle(form.dietary, v) })}>{label}</button>
-          ))}
-        </div>
-      </div>
-
-      <label className="block space-y-1">
-        <span className="flex items-baseline justify-between">
-          {/* 「距離偏好」不是「可接受距離」：半徑取全員平均，這個值不是個人的硬上限，
-              設得再緊也可能收到更遠的候選（見 search.go averageMemberRadius） */}
-          <span className="label">距離偏好</span>
-          <span className="font-mono text-sm font-semibold text-brand">{form.max_distance_m} 公尺</span>
-        </span>
-        <input type="range" min={300} max={3000} step={100} className="h-6 w-full"
-          disabled={frozen}
-          value={form.max_distance_m}
-          onChange={e => save({ max_distance_m: +e.target.value })} />
-      </label>
-
-      <div role="group" aria-labelledby="transport-label">
-        <span id="transport-label" className="label">交通方式</span>
-        {/* 字級大／特大的窄螢幕三顆並排不下：整顆換到下一列，不把「大眾運輸」折成直排 */}
-        <div className="mt-2 flex flex-wrap gap-2">
-          {TRANSPORTS.map(([v, label]) => (
-            <button key={v} type="button" aria-pressed={form.transport === v}
-              disabled={frozen}
-              className={`chip flex-1 justify-center whitespace-nowrap ${form.transport === v
-                ? 'border-brand bg-brand-fill text-on-brand hover:bg-brand-fill-hover' : ''}`}
-              onClick={() => save({ transport: v })}>{label}</button>
           ))}
         </div>
       </div>
