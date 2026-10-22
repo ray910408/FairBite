@@ -218,10 +218,11 @@
   }
   /* 房間頁黏在底部的操作列（RoomPage ACTION_BAR）：Tab 到視窗底的按鈕時，瀏覽器只在焦點出了視窗才捲，
      被操作列蓋住不算。留出操作列的高度，焦點才會捲到它上方（WCAG 2.4.11）；矮視窗的操作列不黏，不必留。
-     邊界寫成 max-height:500px 的反面，和 ACTION_BAR 共用：縮放時視窗高度可能是 500.5 這種小數 */
+     邊界寫成 max-height:500px 的反面，和 ACTION_BAR 共用：縮放時視窗高度可能是 500.5 這種小數。
+     10rem 是房主初選操作列（最高的一種，約 156px）；iPhone 的 home indicator 會把操作列的 pb 撐大，一併加上 */
   @media not all and (max-height: 500px) {
     html:has([data-action-bar]) {
-      scroll-padding-bottom: 10rem;
+      scroll-padding-bottom: calc(10rem + env(safe-area-inset-bottom, 0px));
     }
   }
 }
