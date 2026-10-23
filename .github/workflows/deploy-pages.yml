@@ -34,9 +34,8 @@ jobs:
       - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1
         with:
           version: 2.113.0
-      - run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=" >> "$GITHUB_ENV" # 映像走預設備援，原因見 ci.yml db job
-      # -x 與 env 同 ci.yml db job：不起 Studio、Storage、Edge Functions、log 收集
-      - run: supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector
+      # -x、env 與映像備援同 ci.yml db job：不起 Studio、Storage、Edge Functions、log 收集
+      - run: SUPABASE_INTERNAL_IMAGE_REGISTRY= supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector
         env:
           SUPABASE_STORAGE_ENABLED: "false"
           SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false"
