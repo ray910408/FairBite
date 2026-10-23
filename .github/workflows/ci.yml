@@ -54,6 +54,10 @@ jobs:
       - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1
         with:
           version: 2.113.0
+      # setup-cli 會 export SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io；CLI 一看到這個 override 就只拉 ghcr，
+      # 預設的 ECR → ghcr → Docker Hub 備援整條關掉（cli-go internal/utils/docker.go GetRegistryImageUrls）。
+      # 2026-10-22 ghcr 限流（toomanyrequests）時 db／e2e 連拉兩次都紅；清空讓 CLI 走預設備援
+      - run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=" >> "$GITHUB_ENV"
       # -x 只擋服務容器，擋不掉 Storage 的 init container 與 pg-delta 的 catalog export（要拉
       # storage-api、edge-runtime 映像，約 40 秒）。本專案不用 Storage，pg-delta 只給 db diff／db pull
       # 這類 schema 比對用，CI 的 start 用不到，所以只在這幾步關掉；SUPABASE_* 環境變數會覆寫
@@ -100,6 +104,7 @@ jobs:
       - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1
         with:
           version: 2.113.0
+      - run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=" >> "$GITHUB_ENV" # 映像走預設備援，原因見 db job
       # supabase start 要 1.5 分鐘，丟背景跟下面的安裝步驟重疊，到「Wait for Supabase」再收結果。
       # 背景 shell 繼承 bash -e，所以用 && || 收 exit code，不然失敗時連 fail 都寫不出來。
       # 不起 E2E 用不到的服務（Studio、Storage、Edge Functions、log 收集）；env 同 db job
