@@ -17,7 +17,8 @@ async function builtHtml(env: Record<string, string>) {
     const [name, ...values] = d.split(' ')
     return [name, values]
   }))
-  return { html, directives }
+  const js = outputs.flatMap(o => o.output).map(file => file.type === 'chunk' ? file.code : '').join('\n')
+  return { html, directives, js }
 }
 
 afterEach(() => vi.unstubAllEnvs())
@@ -39,6 +40,16 @@ describe('build 產物的 Content-Security-Policy', () => {
     // CSP 要在任何 script 之前生效；inline 事件屬性（onload= 等）不在雜湊範圍內，會被擋
     expect(html.indexOf('Content-Security-Policy')).toBeLessThan(html.indexOf('<script'))
     expect(html).not.toMatch(/<[^>]+\son[a-z]+=/i)
+  }, 60_000)
+
+  // style-src 沒有 'unsafe-inline'：HTML 的 style=""、setAttribute('style')、innerHTML 字串裡的 style= 都會被擋，
+  // 只有 CSSOM（React 的 style prop、Leaflet 的 el.style.x）能用。CSP 只在 build 注入，dev 與 E2E 看不到，這裡守住
+  it('產物不靠 style 屬性設樣式', async () => {
+    const { html, directives, js } = await builtHtml({ VITE_SUPABASE_URL: 'https://example.supabase.co' })
+    expect(directives.get('style-src')).not.toContain("'unsafe-inline'")
+    expect(js).toContain('.style.') // 確認掃到的是含 React／Leaflet 的完整產物
+    expect(html).not.toMatch(/<[^>]+\sstyle=/i)
+    expect(js).not.toMatch(/setAttribute\(\s*["']style["']|style=\\?["']/)
   }, 60_000)
 
   it('相對路徑（本機 proxy）退回同源', async () => {
