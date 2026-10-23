@@ -58,7 +58,11 @@ jobs:
       # storage-api、edge-runtime 映像，約 40 秒）。本專案不用 Storage，pg-delta 只給 db diff／db pull
       # 這類 schema 比對用，CI 的 start 用不到，所以只在這幾步關掉；SUPABASE_* 環境變數會覆寫
       # config.toml，本機開發與後續步驟不受影響。
-      - run: supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector
+      # setup-cli 會 export SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io；start 一看到這個 override 就只拉 ghcr，
+      # 預設的 ECR → ghcr → Docker Hub 備援整條關掉（cli-go internal/utils/docker.go GetRegistryImageUrls）。
+      # 2026-10-22 ghcr 限流時 start 連兩次紅，所以只對 start 這一行清空。gen types／test db 是直接
+      # docker run 單一映像、沒有備援，維持 setup-cli 的 ghcr（清空會改拉 ECR，撞過匿名流量上限）。
+      - run: SUPABASE_INTERNAL_IMAGE_REGISTRY= supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector
         env:
           SUPABASE_STORAGE_ENABLED: "false"
           SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false"
@@ -102,13 +106,13 @@ jobs:
           version: 2.113.0
       # supabase start 要 1.5 分鐘，丟背景跟下面的安裝步驟重疊，到「Wait for Supabase」再收結果。
       # 背景 shell 繼承 bash -e，所以用 && || 收 exit code，不然失敗時連 fail 都寫不出來。
-      # 不起 E2E 用不到的服務（Studio、Storage、Edge Functions、log 收集）；env 同 db job
+      # 不起 E2E 用不到的服務（Studio、Storage、Edge Functions、log 收集）；env 與映像備援同 db job
       - name: Start Supabase (background)
         env:
           SUPABASE_STORAGE_ENABLED: "false"
           SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false"
         run: |
-          (supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector \
+          (SUPABASE_INTERNAL_IMAGE_REGISTRY= supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector \
             > "$RUNNER_TEMP/supabase.log" 2>&1 && echo ok || echo fail) > "$RUNNER_TEMP/supabase.status" &
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:

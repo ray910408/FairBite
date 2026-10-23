@@ -213,7 +213,7 @@ export default function HomePage() {
       if (error || !data) {
         setJoinError(error?.message?.includes('頻繁')
           ? '嘗試過於頻繁，請稍後再試'
-          : '房間不存在或已開始')
+          : error?.message?.includes('人數已滿') ? '房間人數已滿' : '房間不存在或已開始')
       } else {
         await applyDefaultPrefs(data)
         nav(`/room/${data}`)

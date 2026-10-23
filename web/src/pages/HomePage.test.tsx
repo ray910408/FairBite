@@ -623,6 +623,15 @@ describe('HomePage 邀請碼 native validation', () => {
     expect(input.value).toBe('A1B2C3D4E5F7')
     expect(screen.queryByRole('alert')).toBeNull()
   })
+
+  it('join_room 回人數已滿：照實告知，不說成房間不存在', async () => {
+    mocks.joinRoom.mockResolvedValue({ data: null, error: { message: '房間人數已滿' } })
+    await renderHome()
+    fireEvent.change(screen.getByRole('textbox', { name: '邀請碼' }), { target: { value: 'A1B2C3D4E5F6' } })
+    fireEvent.click(button('加入'))
+    await settle()
+    expect(within(joinCard()).getByRole('alert').textContent).toBe('房間人數已滿')
+  })
 })
 
 describe('HomePage 退房閘門', () => {

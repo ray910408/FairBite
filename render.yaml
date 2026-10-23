@@ -16,9 +16,9 @@ services:
     # 實際設定在 Settings → Auto-Deploy: Off
     autoDeployTrigger: "off" # 加引號：YAML 1.1 會把裸 off 解析成布林 false
     envVars:
-      # go.mod 是 1.25，Render 原生 builder 的預設版本可能較舊
+      # 跟 server/go.mod 的 go 指令同步（1.25 已停止安全更新）；Render 原生 builder 的預設版本可能較舊
       - key: GO_VERSION
-        value: 1.25.0
+        value: 1.26.10
       # CORS 只吃單一來源，且不含路徑：GitHub Pages 的 origin 是 user site 根網域
       - key: WEB_ORIGIN
         value: https://ray910408.github.io

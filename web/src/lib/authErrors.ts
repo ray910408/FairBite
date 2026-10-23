@@ -1,6 +1,6 @@
 // Supabase AuthError 的 message 一律是英文，UI 全中文所以改用 code 對照表
 const MESSAGES: Record<string, string> = {
-  weak_password: '密碼至少需要 6 碼',
+  weak_password: '密碼至少需要 8 碼',
   invalid_credentials: 'Email 或密碼錯誤',
   user_already_exists: '這個 Email 已經註冊過了',
   email_exists: '這個 Email 已經註冊過了',

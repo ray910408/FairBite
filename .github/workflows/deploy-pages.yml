@@ -9,10 +9,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# 預設只讀；寫入權限只發給真正需要的 job（Pages 部署），跑第三方碼的 job 拿不到
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # 同時只跑一個部署，且不取消進行中的（取消到一半會留下半套 Pages 狀態）
 concurrency:
@@ -20,20 +19,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  migrate:
+  # 先在 runner 的本機 stack 重放全部 migrations＋pgTAP，紅就不碰 production：
+  # push 觸發的 CI 與本 workflow 平行跑，不能指望 CI 先紅（Codex P1）
+  # pgTAP＋DB-backed Go 測試都綠才碰 production，與 ci.yml db job 同套驗證。
+  # 這個 job 會執行第三方 Go 依賴，所以不碰任何 production secret。
+  verify:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       # pin 同 ci.yml：供應鏈防護，也避免解析 latest 打 GitHub API 撞 rate limit
       - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1
         with:
           version: 2.113.0
-      # 先在 runner 的本機 stack 重放全部 migrations＋pgTAP，紅就不碰 production：
-      # push 觸發的 CI 與本 workflow 平行跑，不能指望 CI 先紅（Codex P1）
-      # pgTAP＋DB-backed Go 測試都綠才碰 production，與 ci.yml db job 同套驗證。
-      # -x 與 env 同 ci.yml db job：不起 Studio、Storage、Edge Functions、log 收集
-      - run: supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector
+      # -x、env 與映像備援同 ci.yml db job：不起 Studio、Storage、Edge Functions、log 收集
+      - run: SUPABASE_INTERNAL_IMAGE_REGISTRY= supabase start -x studio,postgres-meta,storage-api,edge-runtime,logflare,vector
         env:
           SUPABASE_STORAGE_ENABLED: "false"
           SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false"
@@ -46,6 +48,19 @@ jobs:
         working-directory: server
         env:
           TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+
+  # 帶 production DB 密碼的 job 只跑 Supabase CLI，不執行 repo 內的任何依賴碼：
+  # 同一台 runner 先跑過被投毒的依賴，就能竄改後面的 step 截走密碼
+  migrate:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1
+        with:
+          version: 2.113.0
       - run: supabase link --project-ref zltocdydngmdnutzarlq
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -108,14 +123,14 @@ jobs:
           echo "::error::Render 沒有在時限內上線 $GITHUB_SHA"
           exit 1
 
-  deploy:
+  # npm ci＋build 會執行第三方套件，所以跟拿 pages／id-token 寫入權限的 deploy 拆開
+  build:
     needs: deploy-api # 間接也等 migrate：前端最後上，新畫面不會打到還沒部署的 API
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
@@ -128,5 +143,16 @@ jobs:
       - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
         with:
           path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

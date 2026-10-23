@@ -31,7 +31,7 @@ describe('authErrorMessage', () => {
     expect(authErrorMessage(err('unexpected_failure', 'internal server details'))).toBe('操作失敗，請稍後再試')
   })
   it('weak_password 轉中文', () =>
-    expect(authErrorMessage(err('weak_password'))).toBe('密碼至少需要 6 碼'))
+    expect(authErrorMessage(err('weak_password'))).toBe('密碼至少需要 8 碼'))
   it('invalid_credentials 轉中文', () =>
     expect(authErrorMessage(err('invalid_credentials'))).toBe('Email 或密碼錯誤'))
   it('user_already_exists 轉中文', () =>

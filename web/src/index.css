@@ -288,6 +288,14 @@
   details[open] .disclosure-chevron {
     rotate: 180deg;
   }
+  /* LocationPicker 的圖釘（Leaflet divIcon 的 className，尺寸由 iconSize 給）。圖磚兩種主題都是淺色，
+     用 brand-fill（兩主題都夠深）＋on-brand 白圈。寫成 class：build 的 CSP 不放行 inline style 屬性 */
+  .map-pin {
+    border-radius: 9999px;
+    background: var(--color-brand-fill);
+    border: 3px solid var(--color-on-brand);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  }
 }
 
 /* <details> 展開／收合：::details-content 配 interpolate-size 才能從 0 過渡到 auto。

@@ -656,6 +656,7 @@ export type Database = {
           default_prefs: Json
         }[]
       }
+      is_registered_account: { Args: { p_uid: string }; Returns: boolean }
       is_room_lobby_locked: { Args: { p_room_id: string }; Returns: boolean }
       is_room_member: { Args: { p_room_id: string }; Returns: boolean }
       join_room: { Args: { p_code: string }; Returns: string }

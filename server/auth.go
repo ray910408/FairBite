@@ -18,6 +18,7 @@ const userIDKey ctxKey = "userID"
 
 type Verifier struct {
 	keyfuncCtx  func(context.Context) jwt.Keyfunc
+	methods     []string // 依驗章模式收斂：JWKS 不收 HS256、secret 模式只收 HS256
 	verifySlots chan struct{}
 }
 
@@ -42,6 +43,7 @@ func NewVerifier() (*Verifier, error) {
 			return nil, err
 		}
 		v.keyfuncCtx = kf.KeyfuncCtx
+		v.methods = []string{"ES256", "RS256"}
 		return v, nil
 	}
 	secret := []byte(os.Getenv("SUPABASE_JWT_SECRET"))
@@ -51,6 +53,7 @@ func NewVerifier() (*Verifier, error) {
 	v.keyfuncCtx = func(context.Context) jwt.Keyfunc {
 		return func(t *jwt.Token) (any, error) { return secret, nil }
 	}
+	v.methods = []string{"HS256"}
 	return v, nil
 }
 
@@ -75,8 +78,9 @@ func (v *Verifier) Middleware(next http.Handler) http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), jwksRefreshTimeout)
 		claims := jwt.MapClaims{}
+		// Supabase 使用者 token（含匿名登入）的 aud 一律是 authenticated；anon／service key 沒有 sub 也沒有這個 aud
 		_, err := jwt.ParseWithClaims(raw, claims, v.keyfuncCtx(ctx),
-			jwt.WithValidMethods([]string{"HS256", "RS256", "ES256"}))
+			jwt.WithValidMethods(v.methods), jwt.WithAudience("authenticated"), jwt.WithExpirationRequired())
 		if err == nil {
 			err = ctx.Err()
 		}

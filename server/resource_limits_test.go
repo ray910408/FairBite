@@ -83,6 +83,28 @@ func TestLimiterStoreBoundAndRecovery(t *testing.T) {
 	}
 }
 
+func TestLimiterAtCapacityReclaimsReplenishedBucketsWithoutIdleWait(t *testing.T) {
+	now := clockNow()
+	setTestClock(t, func() time.Time { return now })
+	s := newLimiterStore(2, 1)
+	for i := 0; i < limiterMaxEntries; i++ {
+		s.allow(fmt.Sprint(i))
+	}
+	// 0.9 秒時 bucket 已補滿（2/s、burst 1），但提早清理每秒最多一次：還不能清
+	now = now.Add(900 * time.Millisecond)
+	if s.allow("early") {
+		t.Fatal("forced sweep must be throttled to once per second")
+	}
+	// 1 秒後每個 bucket 都已補滿，但距上次使用不到 1 分鐘：舊版會讓新身分一律 429。
+	now = now.Add(100 * time.Millisecond)
+	if !s.allow("newcomer") {
+		t.Fatal("replenished buckets must not lock out new identities")
+	}
+	if s.allow("newcomer") {
+		t.Fatal("newcomer bucket must still be rate limited")
+	}
+}
+
 func TestLimiterCleanupNeverResetsUnreplenishedBucket(t *testing.T) {
 	s := newLimiterStore(0, 1)
 	if !s.allow("original") {
