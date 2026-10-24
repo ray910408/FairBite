@@ -23,7 +23,7 @@ it('shows a persistent voting checkbox and strict-majority tally', () => {
 
 it('gates the picker by status and host role', () => {
   const waiting = renderToStaticMarkup(<RelocationPanel {...props} status="relocating" />)
-  expect(waiting).toContain('等待房主選擇新地點')
+  expect(waiting).toContain('等待發起人選擇新地點')
   expect(waiting).not.toContain('確認新地點')
 
   const host = renderToStaticMarkup(<RelocationPanel {...props} isHost status="relocating" />)

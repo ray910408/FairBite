@@ -32,7 +32,7 @@ const byClass = (needle: string) => (el: NodeLike) => cls(el).includes(needle)
 type Props = Parameters<typeof LeaveConfirm>[0]
 
 function render(overrides: Partial<Props> = {}) {
-  return LeaveConfirm({ title: '離開房間？', actions: 'ACTIONS', children: 'BODY', ...overrides })
+  return LeaveConfirm({ title: '退出聚餐？', actions: 'ACTIONS', children: 'BODY', ...overrides })
 }
 
 describe('LeaveConfirm 外殼', () => {
@@ -43,7 +43,7 @@ describe('LeaveConfirm 外殼', () => {
     expect(dialog?.props?.['aria-labelledby']).toBe('leave-title')
     const title = findNode(tree, el => el.type === 'h2')
     expect(title?.props?.id).toBe('leave-title')
-    expect(textContent(title)).toBe('離開房間？')
+    expect(textContent(title)).toBe('退出聚餐？')
   })
 
   // 卡片限高在視窗內，只讓中段捲動；標題與按鈕組 shrink-0 永遠構得到
@@ -59,7 +59,7 @@ describe('LeaveConfirm 外殼', () => {
     expect(textContent(scroller)).toBe('BODY')
 
     expect(findNode(scroller, byClass('shrink-0'))).toBeUndefined() // 控制項不在捲動區內
-    expect(textContent(findNode(tree, el => el.type === 'h2'))).toBe('離開房間？')
+    expect(textContent(findNode(tree, el => el.type === 'h2'))).toBe('退出聚餐？')
     const actions = findNode(dialog, el => textContent(el) === 'ACTIONS' && cls(el) !== '')
     expect(cls(actions)).toContain('shrink-0')
     expect(cls(actions)).toContain('flex-col') // 320px 一律直排

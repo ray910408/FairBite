@@ -705,7 +705,7 @@ func TestSearchHostValidationHoldsRoomLockThroughTransition(t *testing.T) {
 	}
 }
 
-// 末位退房刪房後，舊分頁送來的動作要回 404「房間不存在」，不是叫人「重新整理」的 409
+// 末位退房刪房後，舊分頁送來的動作要回 404「找不到這場聚餐」，不是叫人「重新整理」的 409
 // ——重新整理後看到的也只會是找不到房間。
 func TestActionsOnRoomDeletedByLastLeaveReturn404(t *testing.T) {
 	pool, roomID, users, rs := seedShortlistRoom(t, "candidates", 1, 4)
@@ -730,8 +730,8 @@ func TestActionsOnRoomDeletedByLastLeaveReturn404(t *testing.T) {
 		{"cancel-shortlist", ""},
 	} {
 		w := pendingPost(t, h, users[0], "/api/rooms/"+roomID+"/"+tc.path, tc.body)
-		if w.Code != http.StatusNotFound || strings.TrimSpace(w.Body.String()) != `{"error":"房間不存在"}` {
-			t.Errorf("%s on deleted room = %d %s, want 404 房間不存在", tc.path, w.Code, w.Body.String())
+		if w.Code != http.StatusNotFound || strings.TrimSpace(w.Body.String()) != `{"error":"找不到這場聚餐"}` {
+			t.Errorf("%s on deleted room = %d %s, want 404 找不到這場聚餐", tc.path, w.Code, w.Body.String())
 		}
 	}
 }

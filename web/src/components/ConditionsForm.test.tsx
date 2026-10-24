@@ -28,8 +28,8 @@ const me: MemberRow = {
   max_distance_m: 1000, transport: 'walking', ready: false,
 }
 
-const CONDITION_ERROR = '儲存失敗：房間可能已開始選餐，條件已凍結'
-const READY_ERROR = '準備狀態更新失敗：請確認最新地點與房間狀態後再試'
+const CONDITION_ERROR = '儲存失敗：聚餐可能已開始選餐，條件已凍結'
+const READY_ERROR = '準備狀態更新失敗：請確認最新地點與聚餐狀態後再試'
 const FAILED: WriteResult = { error: { message: 'boom' }, count: null }
 
 beforeEach(() => {

@@ -40,9 +40,9 @@ export function InviteQRCode({ code }: { code: string }) {
     <div className="flex flex-col items-center gap-2">
       {/* 唯一允許的 raw 色：QR 必須淺底深碼＋白色 quiet zone，深色主題反相會讓相機掃不到 */}
       <div className="rounded-btn border border-border bg-white p-2">
-        <QRCodeSVG value={url} size={176} marginSize={2} title={`加入房間 ${code}`} />
+        <QRCodeSVG value={url} size={176} marginSize={2} title={`加入聚餐 ${code}`} />
       </div>
-      <p className="text-center text-xs text-fg-muted">用手機相機掃描加入房間</p>
+      <p className="text-center text-xs text-fg-muted">用手機相機掃描加入聚餐</p>
       {/* px-2：320px 卡片內兩顆並排各約 123px，預設 px-4 會把六個字擠到換行 */}
       <div className="grid w-full auto-cols-fr grid-flow-col gap-2">
         {canShare && (

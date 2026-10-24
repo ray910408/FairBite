@@ -31,7 +31,7 @@ func handleLeave(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, wea
 	}
 	for _, roomID := range roomIDs {
 		if err := leaveOneRoom(ctx, pool, weather, roomID, uid); err != nil {
-			serverError(w, fmt.Errorf("leave room %s: %w", roomID, err), "退出房間失敗，請稍後再試")
+			serverError(w, fmt.Errorf("leave room %s: %w", roomID, err), "退出聚餐失敗，請稍後再試")
 			return
 		}
 	}

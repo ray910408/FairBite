@@ -42,17 +42,17 @@ func TestRoomActionErrorMapping(t *testing.T) {
 		wantCode int
 		wantMsg  string
 	}{
-		{"room row gone", pendingError, ErrRoomNotFound, http.StatusNotFound, "房間不存在"},
-		{"wrapped room row gone", shortlistError, fmt.Errorf("lock: %w", ErrRoomNotFound), http.StatusNotFound, "房間不存在"},
-		{"not host", pendingError, ErrNotHost, http.StatusForbidden, "只有房主可以執行此操作"},
-		{"not member", shortlistError, ErrNotMember, http.StatusForbidden, "你不是這個房間的成員"},
+		{"room row gone", pendingError, ErrRoomNotFound, http.StatusNotFound, "找不到這場聚餐"},
+		{"wrapped room row gone", shortlistError, fmt.Errorf("lock: %w", ErrRoomNotFound), http.StatusNotFound, "找不到這場聚餐"},
+		{"not host", pendingError, ErrNotHost, http.StatusForbidden, "只有發起人可以執行此操作"},
+		{"not member", shortlistError, ErrNotMember, http.StatusForbidden, "你不是這場聚餐的成員"},
 		{"pending conflict", pendingError, ErrConflict, http.StatusConflict, "抽選結果已更新，請重新整理"},
 		{"draw row missing stays 409", pendingError, pgx.ErrNoRows, http.StatusConflict, "抽選結果已更新，請重新整理"},
-		{"shortlist conflict", shortlistError, ErrConflict, http.StatusConflict, "房間狀態已更新，請重新整理"},
+		{"shortlist conflict", shortlistError, ErrConflict, http.StatusConflict, "聚餐狀態已更新，請重新整理"},
 		{"shortlist rejection keeps its text", shortlistError, shortlistRejected("目前不在初選階段"), http.StatusConflict, "目前不在初選階段"},
 		{"pending db failure", pendingError, errors.New("pending boom"), http.StatusInternalServerError, "資料庫錯誤，請稍後再試"},
 		{"shortlist db failure", shortlistError, errors.New("shortlist boom"), http.StatusInternalServerError, "資料庫錯誤，請稍後再試"},
-		{"location conflict", locationError, ErrConflict, http.StatusConflict, "房間狀態已更新，請重新整理"},
+		{"location conflict", locationError, ErrConflict, http.StatusConflict, "聚餐狀態已更新，請重新整理"},
 		{"location db failure", locationError, errors.New("location boom"), http.StatusInternalServerError, "資料庫錯誤，請稍後再試"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,7 +75,7 @@ func TestRoomActionErrorMapping(t *testing.T) {
 	// roomError 多一個 conflictMsg 參數，塞不進上面的表：同樣緊接 Caller 直接呼叫
 	w = httptest.NewRecorder()
 	_, _, line, _ = runtime.Caller(0)
-	roomError(w, errors.New("room boom"), "房間狀態已變更") // 必須緊接上一行：呼叫端就是 line+1
+	roomError(w, errors.New("room boom"), "聚餐狀態已變更") // 必須緊接上一行：呼叫端就是 line+1
 	wantLogAt["room boom"] = line + 1
 	checkBody(t, w, http.StatusInternalServerError, "資料庫錯誤，請稍後再試")
 

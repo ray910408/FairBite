@@ -491,7 +491,7 @@ describe('RoomPage 抽選與待確認', () => {
 
     fireEvent.click(button('排除並回到準備階段'))
     expect(within(dialog()).getByRole('heading', { name: '這是最後一家候選' })).toBeTruthy()
-    expect(dialog().textContent).toContain('排除後就沒有候選了：全房會回到準備階段')
+    expect(dialog().textContent).toContain('排除後就沒有候選了：整場聚餐會回到準備階段')
     expect(api.redrawRoom).not.toHaveBeenCalled()
 
     fireEvent.click(inDialog('排除並回到準備階段'))
@@ -685,7 +685,7 @@ describe('RoomPage 載入失敗（QA ISSUE-002）', () => {
     const state = roomState(null, { loadError: true, myUserId: '' })
     await renderRoom(state)
     expect(document.body.textContent).not.toContain('找不到房間')
-    expect(screen.getByText('房間載入失敗，請稍後再試')).toBeTruthy()
+    expect(screen.getByText('聚餐載入失敗，請稍後再試')).toBeTruthy()
     fireEvent.click(button('重試'))
     expect(state.refetch).toHaveBeenCalled()
   })
@@ -693,7 +693,7 @@ describe('RoomPage 載入失敗（QA ISSUE-002）', () => {
   it('找不到房間時可回首頁，也可重試（token 刷新失敗造成的假 not-found 能自行復原）', async () => {
     const state = roomState(null, { notFound: true, myUserId: '' })
     await renderRoom(state)
-    expect(screen.getByText('找不到房間，或你不是成員')).toBeTruthy()
+    expect(screen.getByText('找不到這場聚餐，或你不是成員')).toBeTruthy()
     expect(screen.getByRole('link', { name: '回首頁' }).getAttribute('href')).toBe('/')
     fireEvent.click(button('重試'))
     expect(state.refetch).toHaveBeenCalled()
@@ -821,7 +821,7 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
     expect(state.refetch).not.toHaveBeenCalled()
     // 唯一的錯誤是條件表單自己的儲存失敗
     expect(screen.getAllByRole('alert').map(alert => alert.textContent))
-      .toEqual(['儲存失敗：房間可能已開始選餐，條件已凍結'])
+      .toEqual(['儲存失敗：聚餐可能已開始選餐，條件已凍結'])
     expect(button('確認用餐地點').disabled).toBe(false)
   })
 
@@ -1025,10 +1025,10 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
 
   it.each([
     ['lobby', false, '設好條件後，按畫面下方的「我準備好了」'],
-    ['lobby', true, '已準備好，等房主開始搜尋'],
-    ['candidates', false, '候選出爐了，等房主開始投票'],
-    ['voting', false, '投完票後，等房主啟動轉盤'],
-    ['pending', false, '等房主確認，或排除這家重轉'],
+    ['lobby', true, '已準備好，等發起人開始搜尋'],
+    ['candidates', false, '候選出爐了，等發起人開始投票'],
+    ['voting', false, '投完票後，等發起人啟動轉盤'],
+    ['pending', false, '等發起人確認，或排除這家重轉'],
   ] as const)('成員視角在 %s（ready=%s）講清楚在等誰', async (status, ready, hint) => {
     await renderRoom(roomState({ status }, { myUserId: GUEST,
       members: [hostMember, guestMember({ ready })], candidates: [candidate('r1')] }))
@@ -1040,7 +1040,7 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
     await renderRoom(roomState({ status: 'candidates' }, { myUserId: GUEST, candidates: many }))
     const text = document.body.textContent
     expect(text).toContain('候選很多：可以先表決要不要初選')
-    expect(text).not.toContain('候選出爐了，等房主開始投票')
+    expect(text).not.toContain('候選出爐了，等發起人開始投票')
   })
 
   it('自己準備好但還有人沒準備：講在等其他人，不說在等房主', async () => {
@@ -1048,7 +1048,7 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
       members: [hostMember, guestMember({ ready: true }), member('user-c', '小C')] }))
     const text = document.body.textContent
     expect(text).toContain('已準備好，還在等 1 人')
-    expect(text).not.toContain('等房主開始搜尋')
+    expect(text).not.toContain('等發起人開始搜尋')
   })
 
   it('候選全滅時只留死路橫幅，不叫成員等轉盤', async () => {
@@ -1056,16 +1056,16 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
       candidates: [candidate('r1', { status: 'excluded', exclusion_kinds: ['veto'] })] }))
     const text = document.body.textContent
     expect(text).toContain('候選已全數被否決')
-    expect(text).not.toContain('等房主啟動轉盤')
+    expect(text).not.toContain('等發起人啟動轉盤')
   })
 
   it('房主視角、或還不知道自己是誰時不顯示等待提示', async () => {
     const host = await renderRoom(roomState({ status: 'candidates' }, { candidates: [candidate('r1')] }))
-    expect(document.body.textContent).not.toContain('等房主')
+    expect(document.body.textContent).not.toContain('等發起人')
     host.unmount()
 
     await renderRoom(roomState({ status: 'candidates' }, { myUserId: '', candidates: [candidate('r1')] }))
-    expect(document.body.textContent).not.toContain('等房主')
+    expect(document.body.textContent).not.toContain('等發起人')
   })
 
   it('uid 還沒讀到時不把房主當成員提示', async () => {
@@ -1309,7 +1309,7 @@ describe('初選（Shortlist）', () => {
     expect(text).toContain('已圈 3 家')
     expect(text).toContain('圈選中 1/3')
     expect(text).not.toContain('已準備')
-    expect(text).toContain('全員圈滿 3 家後房主可以開始投票；沒人圈的店不進轉盤')
+    expect(text).toContain('全員圈滿 3 家後發起人可以開始投票；沒人圈的店不進轉盤')
   })
 
   it('初選中房主：有人沒圈滿時開始投票 disabled 並說明人數，圈滿後可開始', async () => {
@@ -1414,8 +1414,8 @@ describe('回首頁離席確認', () => {
     expect(homeLink().getAttribute('aria-busy')).toBe('true')
 
     const leave = await screen.findByRole('dialog')
-    expect(within(leave).getByRole('heading', { name: '離開房間？' })).toBeTruthy()
-    expect(leave.textContent).toContain('你目前還在房間 ABC123 裡')
+    expect(within(leave).getByRole('heading', { name: '退出聚餐？' })).toBeTruthy()
+    expect(leave.textContent).toContain('你目前還有一場進行中的聚餐（ABC123）')
     // 人數與房主身分來自查詢：1 人、host_id 不是自己
     for (const line of leaveNotice('voting', 1, 'ABC123', false)) expect(leave.textContent).toContain(line)
     expect(mocks.from).toHaveBeenCalledWith('room_members')
@@ -1436,7 +1436,7 @@ describe('回首頁離席確認', () => {
     await settle()
     const dialogs = screen.getAllByRole('dialog')
     expect(dialogs).toHaveLength(1)
-    expect(within(dialogs[0]).getByRole('heading', { name: '離開房間？' })).toBeTruthy()
+    expect(within(dialogs[0]).getByRole('heading', { name: '退出聚餐？' })).toBeTruthy()
   })
 
   // useRoom 的 refetch 只在查到列時更新 room（查無列才清成 null）——rooms 查詢暫時失敗／Realtime 斷線時
@@ -1456,9 +1456,9 @@ describe('回首頁離席確認', () => {
       data: [leaveRow('room-1', 'ABC123', 'voting'), leaveRow('room-9', 'OLD999', 'lobby')], error: null })
     await renderRoom(lobby())
     const leave = await openLeave()
-    expect(leave.textContent).toContain('你目前在 2 個房間裡，回首頁會一次全部離開')
-    expect(leave.textContent).toContain('房間 ABC123')
-    expect(leave.textContent).toContain('房間 OLD999')
+    expect(leave.textContent).toContain('你目前有 2 場進行中的聚餐，回首頁會一次全部退出')
+    expect(leave.textContent).toContain('聚餐 ABC123')
+    expect(leave.textContent).toContain('聚餐 OLD999')
     expect(within(leave).getByRole('link', { name: '回到 OLD999' }).getAttribute('href')).toBe('/room/room-9')
   })
 
@@ -1481,7 +1481,7 @@ describe('回首頁離席確認', () => {
       mocks.memberRows.mockResolvedValue({ data: [leaveRow('room-9', 'OLD999', status)], error: null })
       await renderRoom(decided())
       fireEvent.click(finish())
-      expect((await screen.findByRole('dialog')).textContent).toContain('房間 OLD999')
+      expect((await screen.findByRole('dialog')).textContent).toContain('進行中的聚餐（OLD999）')
     })
 
     it('只剩這間但查到的狀態不是定案：照常開框', async () => {
@@ -1515,14 +1515,14 @@ describe('回首頁離席確認', () => {
         data: [leaveRow('room-1', 'ABC123', 'decided'), leaveRow('room-9', 'OLD999', 'lobby')], error: null })
       await renderRoom(decided())
       fireEvent.click(finish())
-      expect((await screen.findByRole('dialog')).textContent).toContain('房間 OLD999')
+      expect((await screen.findByRole('dialog')).textContent).toContain('聚餐 OLD999')
     })
 
     it('header 的回首頁在定案房照樣先問，文案只剩兩句', async () => {
       inRoom('decided')
       await renderRoom(decided())
       const leave = await openLeave()
-      expect(leave.textContent).toContain('離開後就回不到這個房間了')
+      expect(leave.textContent).toContain('離開後就回不到這場聚餐了')
       expect(leave.textContent).not.toContain('投票')
     })
   })
@@ -1531,7 +1531,7 @@ describe('回首頁離席確認', () => {
     mocks.memberRows.mockResolvedValue({ data: null, error: { message: 'boom' } })
     await renderRoom(lobby())
     const leave = await openLeave()
-    expect(leave.textContent).toContain('房間現況查不到')
+    expect(leave.textContent).toContain('聚餐現況查不到')
     expect(leave.textContent).not.toContain('可用邀請碼重新加入')
     expect(leave.textContent).not.toContain('會直接被刪除')
   })
@@ -1650,7 +1650,7 @@ describe('回首頁離席確認', () => {
     inRoom('voting')
     await renderRoom(lobby())
     const leave = await openLeave()
-    fireEvent.click(within(leave).getByRole('link', { name: '離開房間' }))
+    fireEvent.click(within(leave).getByRole('link', { name: '退出聚餐' }))
     expect(await screen.findByText('首頁 {"leaveConfirmed":true}')).toBeTruthy()
   })
 

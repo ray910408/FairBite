@@ -184,14 +184,14 @@ export default function RoomPage() {
     if (loadError) return (
       <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
         <Logo className="h-12 w-12 opacity-60" />
-        <p className="text-fg-muted">房間載入失敗，請稍後再試</p>
+        <p className="text-fg-muted">聚餐載入失敗，請稍後再試</p>
         <button type="button" className="btn btn-primary px-6" onClick={() => { void refetch() }}>重試</button>
       </main>
     )
     return notFound ? (
       <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 p-6 text-center">
         <Logo className="h-12 w-12 opacity-60" />
-        <p className="text-fg-muted">找不到房間，或你不是成員</p>
+        <p className="text-fg-muted">找不到這場聚餐，或你不是成員</p>
         <Link to="/" className="btn btn-primary px-6">回首頁</Link>
         {/* 背景分頁 token 過期且刷新失敗時，查詢會以 anon 身分送出而查無列；給一條不必離房的復原路 */}
         <button type="button" className="btn btn-quiet px-6" onClick={() => { void refetch() }}>重試</button>
@@ -199,7 +199,7 @@ export default function RoomPage() {
     ) : (
       <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-fg-muted">
         <Spinner className="h-7 w-7 text-brand" />
-        <p className="text-sm">讀取房間…</p>
+        <p className="text-sm">讀取聚餐…</p>
       </div>
     )
   }
@@ -215,11 +215,11 @@ export default function RoomPage() {
   const keptCount = candidates.filter(c => c.status === 'kept').length
   const guestHint = isHost || !me ? undefined : ({
     lobby: !me.ready ? '設好條件後，按畫面下方的「我準備好了」'
-      : guestsReady ? '已準備好，等房主開始搜尋' : `已準備好，還在等 ${guestsNotReady} 人`,
+      : guestsReady ? '已準備好，等發起人開始搜尋' : `已準備好，還在等 ${guestsNotReady} 人`,
     candidates: shortlistOpen(keptCount, members.length)
-      ? '候選很多：可以先表決要不要初選，之後等房主開始投票' : '候選出爐了，等房主開始投票',
-    voting: keptCount > 0 ? '投完票後，等房主啟動轉盤' : undefined,
-    pending: '等房主確認，或排除這家重轉',
+      ? '候選很多：可以先表決要不要初選，之後等發起人開始投票' : '候選出爐了，等發起人開始投票',
+    voting: keptCount > 0 ? '投完票後，等發起人啟動轉盤' : undefined,
+    pending: '等發起人確認，或排除這家重轉',
   } as Partial<Record<Room['status'], string>>)[room.status]
   // 初選：圈選只算仍是 kept 的候選（同 server keptPicksSQL）
   const picksByMember = keptPickCounts(shortlistPicks, candidates)
@@ -551,7 +551,7 @@ export default function RoomPage() {
         {room.status === 'shortlisting' && (
           <>
             <p className="text-sm text-fg-muted">
-              全員圈滿 {SHORTLIST_PICK_MIN} 家後房主可以開始投票；沒人圈的店不進轉盤
+              全員圈滿 {SHORTLIST_PICK_MIN} 家後發起人可以開始投票；沒人圈的店不進轉盤
             </p>
             <CandidateList rows={candidates} picking={{
               isPicked: rid => hasMyPick(shortlistPicks, myUserId, rid),
@@ -600,7 +600,7 @@ export default function RoomPage() {
                 <Alert className="h-5 w-5 shrink-0" />
                 <span>{isVetoDeadEnd(candidates)
                   ? '候選已全數被否決，需有人收回否決才能抽選'
-                  : '候選已全數失效（可能都打烊了），請建立新房間重新搜尋'}</span>
+                  : '候選已全數失效（可能都打烊了），請發起新的聚餐重新搜尋'}</span>
               </p>
             )}
             {isHost && (
@@ -632,7 +632,7 @@ export default function RoomPage() {
             }} finishing={finishRequested && leaveChecking}
             // 只剩這一家時重轉必然排光候選、全房回準備階段：先講清楚再送
             onRedraw={keptCount > 1 ? onRedraw : e => askConfirm(e, { title: '這是最後一家候選',
-              body: '排除後就沒有候選了：全房會回到準備階段，要調整條件或換地點後重新搜尋。',
+              body: '排除後就沒有候選了：整場聚餐會回到準備階段，要調整條件或換地點後重新搜尋。',
               confirmLabel: '排除並回到準備階段', onConfirm: onRedraw })} />
         )}
         </div>
@@ -641,7 +641,7 @@ export default function RoomPage() {
 
       {leaveDialog && (
         // 320px 直排、sm 以上並排——按鈕不壓縮成兩行字
-        <LeaveConfirm title="離開房間？" onClose={closeLeave} actionsClassName="sm:flex-row"
+        <LeaveConfirm title="退出聚餐？" onClose={closeLeave} actionsClassName="sm:flex-row"
           actions={<>
             <button type="button" autoFocus className="btn btn-quiet w-full sm:flex-1"
               onClick={closeLeave}>
@@ -649,7 +649,7 @@ export default function RoomPage() {
             </button>
             {/* 使用者在這裡已經看過後果：帶旗標過去讓 HomePage mount 直接退房，不再問第二次 */}
             <Link to="/" state={{ leaveConfirmed: true }}
-              className="btn w-full bg-danger text-on-danger sm:flex-1">離開房間</Link>
+              className="btn w-full bg-danger text-on-danger sm:flex-1">退出聚餐</Link>
           </>}>
           <LeaveRoomsBody target={leaveDialog} />
         </LeaveConfirm>

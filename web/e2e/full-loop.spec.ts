@@ -72,17 +72,17 @@ async function signup(page: Page, name: string, verifyTouch = false) {
     }).toBe(true)
     await page.goto(verificationUrl)
     // PKCE：同一個瀏覽器點信，回跳的 ?code= 用本機的 code_verifier 換成 session，直接進首頁、網址不留 code
-    await expect(page.getByRole('button', { name: '建立房間' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '發起聚餐' })).toBeVisible()
     expect(new URL(page.url()).searchParams.has('code')).toBe(false)
   }
-  await expect(page.getByRole('button', { name: '建立房間' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '發起聚餐' })).toBeVisible()
 }
 
 // 首頁不選點也不選用餐時間：房主的 context 都給了 geolocation 權限，建房直接用目前位置；
 // 用餐時間進房後在 lobby 的用餐時間卡設（首頁建房一律「馬上出發」）
 async function createRoom(a: Page) {
   const aRealtimeReady = waitForRoomRealtime(a)
-  await a.getByRole('button', { name: '建立房間' }).click()
+  await a.getByRole('button', { name: '發起聚餐' }).click()
   await expect(a.getByText('成員（1）')).toBeVisible()
   await aRealtimeReady
   const code = (await a.locator('header button.font-mono').innerText()).trim()
@@ -184,7 +184,7 @@ test('邀請碼由 browser native validation 阻擋無效 join_room RPC', async 
 // 都有（訪客看到的是「註冊後建立房間」連結，沒有「建立房間」鈕），拿它當 settle 訊號對兩邊都成立。
 async function leaveViaHome(page: Page) {
   await page.goto('/')
-  await page.getByRole('button', { name: '離開房間' }).click()
+  await page.getByRole('button', { name: '退出聚餐' }).click()
   await expect(page.getByRole('button', { name: '加入', exact: true })).toBeEnabled()
 }
 
@@ -251,7 +251,7 @@ test('Task 10 慢搜尋提示、卸載清理與登出閘門', async ({ browser }
 
   try {
     await signup(page, 'task10')
-    await page.getByRole('button', { name: '建立房間' }).click() // 有定位權限：直接用目前位置建房
+    await page.getByRole('button', { name: '發起聚餐' }).click() // 有定位權限：直接用目前位置建房
     await expect(page.getByText('成員（1）')).toBeVisible()
 
     let searchArrivedResolve: (() => void) | undefined
@@ -334,7 +334,7 @@ test('Task 10 慢搜尋提示、卸載清理與登出閘門', async ({ browser }
     const logout = page.getByRole('button', { name: '登出' })
     await expect(logout).toBeDisabled()
     await expect(page.locator('[role="status"]')
-      .filter({ hasText: '正在確認房間狀態，確認後才能登出' })).toBeVisible()
+      .filter({ hasText: '正在確認聚餐狀態，確認後才能登出' })).toBeVisible()
     expect(await page.evaluate(() =>
       (globalThis as unknown as { __task10Timer?: { cleared: boolean } })
         .__task10Timer?.cleared)).toBe(true)
@@ -343,9 +343,9 @@ test('Task 10 慢搜尋提示、卸載清理與登出閘門', async ({ browser }
     await expect(slowStatus).toHaveCount(0)
     releaseSearch?.()
     releaseMembership()
-    await expect(page.getByRole('dialog', { name: '你還在房間裡' })).toBeVisible()
+    await expect(page.getByRole('dialog', { name: '你還有進行中的聚餐' })).toBeVisible()
     await expect(logout).toBeDisabled()
-    await page.getByRole('button', { name: '離開房間' }).click()
+    await page.getByRole('button', { name: '退出聚餐' }).click()
     await expect(logout).toBeEnabled()
   } finally {
     await ctx.close()
@@ -704,7 +704,7 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     // Round 4 退房全鏈：A（末位成員）回首頁 → 房被刪 → 重訪房間 URL 得 not-found。
     await leaveViaHome(a)
     await a.goto(roomUrl)
-    await expect(a.getByText('找不到房間，或你不是成員')).toBeVisible()
+    await expect(a.getByText('找不到這場聚餐，或你不是成員')).toBeVisible()
   } finally {
     await ctxA.close()
     await ctxB.close()
@@ -726,7 +726,7 @@ test('QR 訪客、改地點、房主繼任與排除重轉閉環', async ({ brows
   try {
     await signup(host, 'qrHost')
     const { code } = await createRoom(host)
-    await expect(host.locator('svg').filter({ has: host.locator('title', { hasText: `加入房間 ${code}` }) })).toBeVisible()
+    await expect(host.locator('svg').filter({ has: host.locator('title', { hasText: `加入聚餐 ${code}` }) })).toBeVisible()
     await host.getByRole('button', { name: '複製邀請連結' }).click()
     await expect(host.getByText('邀請連結已複製')).toBeVisible()
     const invitation = await host.evaluate(() =>
@@ -760,7 +760,7 @@ test('QR 訪客、改地點、房主繼任與排除重轉閉環', async ({ brows
     await expect(guest.getByLabel('我想換地點')).toBeChecked()
     await expect(host.getByRole('button', { name: '啟動轉盤' })).toBeEnabled()
     await host.getByLabel('我想換地點').click()
-    await expect(guest.getByText('等待房主選擇新地點')).toBeVisible()
+    await expect(guest.getByText('等待發起人選擇新地點')).toBeVisible()
     await expect(host.getByRole('button', { name: '啟動轉盤' })).toHaveCount(0)
 
     await leaveViaHome(host)
@@ -801,8 +801,8 @@ test('QR 訪客、改地點、房主繼任與排除重轉閉環', async ({ brows
     await expect(other.getByRole('listitem')).toContainText(finalWinner)
     await expect(other.getByRole('listitem')).not.toContainText(firstWinner)
     await leaveViaHome(guest)
-    await expect(guest.getByRole('button', { name: '建立房間' })).toHaveCount(0)
-    await expect(guest.getByRole('link', { name: '註冊後建立房間' })).toBeVisible()
+    await expect(guest.getByRole('button', { name: '發起聚餐' })).toHaveCount(0)
+    await expect(guest.getByRole('link', { name: '註冊後發起聚餐' })).toBeVisible()
   } finally {
     await hostContext.close()
     await guestContext.close()

@@ -934,7 +934,7 @@ func TestSearchSingleFlightPerRoom(t *testing.T) {
 			codes, firstResponse.Body.String(), secondResponse.Body.String())
 	}
 	for _, response := range []*httptest.ResponseRecorder{firstResponse, secondResponse} {
-		if response.Code == http.StatusConflict && !strings.Contains(response.Body.String(), "房間狀態已變更") {
+		if response.Code == http.StatusConflict && !strings.Contains(response.Body.String(), "聚餐狀態已變更") {
 			t.Fatalf("並發衝突應沿用房間狀態訊息，body %s", response.Body.String())
 		}
 	}
@@ -2101,7 +2101,7 @@ func TestVotingFlow(t *testing.T) {
 			t.Fatalf("非法 restaurant_id vote: want 422 with message got %d %s", w.Code, w.Body.String())
 		}
 	}
-	if w := vote(memberID, "00000000-0000-0000-0000-00000000dead", "up", "cast"); w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "不在本房的候選名單中") {
+	if w := vote(memberID, "00000000-0000-0000-0000-00000000dead", "up", "cast"); w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "不在這場聚餐的候選名單中") {
 		t.Fatalf("非候選餐廳 vote: want 422 with message got %d %s", w.Code, w.Body.String())
 	}
 

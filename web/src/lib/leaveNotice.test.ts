@@ -9,13 +9,13 @@ describe('leaveNotice', () => {
   it('lobby 單人：房間必被刪、邀請碼必失效，不承諾可重加入', () => {
     const points = leaveNotice('lobby', 1, 'ABC123', false)
     expect(points.join('\n')).not.toContain(REJOIN)
-    expect(points[0]).toBe('你是房間裡唯一的人，離開後這個房間會直接刪除')
+    expect(points[0]).toBe('你是這場聚餐唯一的成員，離開後這場聚餐會直接刪除')
     expect(points[1]).toContain('邀請碼 ABC123 會跟著失效')
   })
 
   it('lobby 多人：刪房是條件句，且承諾之後可用邀請碼重新加入', () => {
     const points = leaveNotice('lobby', 3, 'ABC123', false)
-    expect(points).toContain('你若是最後一位成員，房間會直接被刪除')
+    expect(points).toContain('你若是最後一位成員，這場聚餐會直接被刪除')
     expect(points.join('\n')).toContain(`之後${REJOIN}`)
   })
 
@@ -47,7 +47,7 @@ describe('leaveNotice', () => {
   it('decided：只講結果在足跡、回不來，不論人數與房主', () => {
     for (const [count, host] of [[3, true], [1, false], [null, null]] as const) {
       expect(leaveNotice('decided', count, 'ABC123', host))
-        .toEqual(['房間已定案，抽中的結果之後在「足跡」查看', '離開後就回不到這個房間了'])
+        .toEqual(['聚餐已定案，抽中的結果之後在「足跡」查看', '離開後就回不到這場聚餐了'])
     }
   })
 
@@ -59,7 +59,7 @@ describe('leaveNotice', () => {
 
   it('relocating：說明選點後才重新開放加入', () => {
     const points = leaveNotice('relocating', 3, 'ABC123', false)
-    expect(points.join('\n')).toContain('房主選好新地點並回到等待階段後')
+    expect(points.join('\n')).toContain('發起人選好新地點並回到等待階段後')
     expect(points.join('\n')).not.toContain('候選盤面會重新計算')
   })
 
@@ -67,14 +67,14 @@ describe('leaveNotice', () => {
   it('null：不說「唯一的人」，也不給無條件的重加入承諾', () => {
     const lobby = leaveNotice('lobby', null, 'ABC123', false)
     expect(lobby.join('\n')).not.toContain('你是房間裡唯一的人')
-    expect(lobby).toContain('你若是最後一位成員，房間會直接被刪除') // 兩種人數下都成立
+    expect(lobby).toContain('你若是最後一位成員，這場聚餐會直接被刪除') // 兩種人數下都成立
     expect(lobby.join('\n')).not.toContain(`之後${REJOIN}`) // 無條件版不得出現
-    expect(lobby.join('\n')).toContain(`只要房間還在（你不是最後一位），之後仍${REJOIN}`)
+    expect(lobby.join('\n')).toContain(`只要聚餐還在（你不是最後一位），之後仍${REJOIN}`)
 
     for (const status of ['candidates', 'voting'] as const) {
       const points = leaveNotice(status, null, 'ABC123', false)
       expect(points.join('\n')).not.toContain('你是房間裡唯一的人')
-      expect(points).toContain('你若是最後一位成員，房間會直接被刪除')
+      expect(points).toContain('你若是最後一位成員，這場聚餐會直接被刪除')
     }
   })
 })
@@ -86,7 +86,7 @@ describe('leaveNotice 單人房不承諾重算', () => {
     const points = leaveNotice('candidates', 1, 'ABC123', false)
     const text = points.join('\n')
     for (const promise of RESCORE) expect(text).not.toContain(promise)
-    expect(points[0]).toBe('你是房間裡唯一的人，離開後這個房間會直接刪除')
+    expect(points[0]).toBe('你是這場聚餐唯一的成員，離開後這場聚餐會直接刪除')
     expect(text).toContain('候選名單會跟著刪除')
     expect(text).toContain('無法用邀請碼重新加入')
   })
@@ -95,7 +95,7 @@ describe('leaveNotice 單人房不承諾重算', () => {
     const points = leaveNotice('shortlisting', 1, 'ABC123', false)
     const text = points.join('\n')
     for (const promise of RESCORE) expect(text).not.toContain(promise)
-    expect(points[0]).toBe('你是房間裡唯一的人，離開後這個房間會直接刪除')
+    expect(points[0]).toBe('你是這場聚餐唯一的成員，離開後這場聚餐會直接刪除')
     expect(text).toContain('候選名單與你的圈選會跟著刪除')
     expect(text).toContain('無法用邀請碼重新加入')
   })
@@ -104,7 +104,7 @@ describe('leaveNotice 單人房不承諾重算', () => {
     const points = leaveNotice('voting', 1, 'ABC123', false)
     const text = points.join('\n')
     for (const promise of RESCORE) expect(text).not.toContain(promise)
-    expect(points[0]).toBe('你是房間裡唯一的人，離開後這個房間會直接刪除')
+    expect(points[0]).toBe('你是這場聚餐唯一的成員，離開後這場聚餐會直接刪除')
     expect(text).toContain('你的票和整份候選名單會跟著刪除')
   })
 
@@ -120,11 +120,11 @@ describe('leaveNotice 單人房不承諾重算', () => {
 // 房主退出＝移交給其餘成員，註冊者優先（ADR-0007、leave.go 的 update rooms set host_id）：
 // lobby 特別誤導——文案說「之後可重新加入」，但回來不會拿回房主權限
 describe('leaveNotice 房主移交', () => {
-  const TRANSFER = '房主身分會移交給其餘成員（已註冊者優先，再依加入先後），你重新加入也不會拿回房主權限'
+  const TRANSFER = '發起人身分會移交給其餘成員（已註冊者優先，再依加入先後），你重新加入也不會拿回發起人權限'
 
   it('多人房的房主：明說會移交、回來也拿不回控制權', () => {
     for (const status of ['lobby', 'candidates', 'voting'] as const) {
-      expect(leaveNotice(status, 3, 'ABC123', true).join('\n')).toContain(`你是房主：離開後${TRANSFER}`)
+      expect(leaveNotice(status, 3, 'ABC123', true).join('\n')).toContain(`你是發起人：離開後${TRANSFER}`)
     }
   })
 
@@ -140,9 +140,9 @@ describe('leaveNotice 房主移交', () => {
 
   // isHost = null（拿不到 uid）／memberCount = null（人數不可判定）：不猜，用條件句
   it('不可判定時退回「你若是房主」的條件句', () => {
-    expect(leaveNotice('lobby', 3, 'ABC123', null).join('\n')).toContain(`你若是房主，${TRANSFER}`)
-    expect(leaveNotice('lobby', null, 'ABC123', true).join('\n')).toContain(`你若是房主，${TRANSFER}`)
-    expect(leaveNotice('lobby', null, 'ABC123', null).join('\n')).toContain(`你若是房主，${TRANSFER}`)
+    expect(leaveNotice('lobby', 3, 'ABC123', null).join('\n')).toContain(`你若是發起人，${TRANSFER}`)
+    expect(leaveNotice('lobby', null, 'ABC123', true).join('\n')).toContain(`你若是發起人，${TRANSFER}`)
+    expect(leaveNotice('lobby', null, 'ABC123', null).join('\n')).toContain(`你若是發起人，${TRANSFER}`)
     expect(leaveNotice('lobby', null, 'ABC123', false).join('\n')).not.toContain('移交')
   })
 })

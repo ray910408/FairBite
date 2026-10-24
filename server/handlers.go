@@ -106,7 +106,7 @@ func roomIDFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 	roomID := r.PathValue("id")
 	var parsed pgtype.UUID
 	if err := parsed.Scan(roomID); err != nil {
-		jsonError(w, http.StatusNotFound, "房間不存在")
+		jsonError(w, http.StatusNotFound, "找不到這場聚餐")
 		return "", false
 	}
 	return roomID, true
@@ -121,14 +121,14 @@ func loadHostRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (R
 	room, err := LoadRoom(r.Context(), pool, roomID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			jsonError(w, http.StatusNotFound, "房間不存在")
+			jsonError(w, http.StatusNotFound, "找不到這場聚餐")
 		} else {
 			serverError(w, err, "資料庫錯誤，請稍後再試")
 		}
 		return room, false
 	}
 	if room.HostID != UserID(r) {
-		jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
+		jsonError(w, http.StatusForbidden, "只有發起人可以執行此操作")
 		return room, false
 	}
 	return room, true
@@ -168,11 +168,11 @@ func roomRowErr(err error) error {
 func writeError(w http.ResponseWriter, err error, conflictMsg string) {
 	switch {
 	case errors.Is(err, ErrRoomNotFound):
-		jsonError(w, http.StatusNotFound, "房間不存在")
+		jsonError(w, http.StatusNotFound, "找不到這場聚餐")
 	case errors.Is(err, ErrNotHost):
-		jsonError(w, http.StatusForbidden, "只有房主可以執行此操作")
+		jsonError(w, http.StatusForbidden, "只有發起人可以執行此操作")
 	case errors.Is(err, ErrNotMember):
-		jsonError(w, http.StatusForbidden, "你不是這個房間的成員")
+		jsonError(w, http.StatusForbidden, "你不是這場聚餐的成員")
 	case errors.Is(err, ErrConflict), errors.Is(err, pgx.ErrNoRows):
 		jsonError(w, http.StatusConflict, conflictMsg)
 	default:
@@ -195,7 +195,7 @@ func loadMemberRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) 
 	room, err := LoadRoom(r.Context(), pool, roomID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			jsonError(w, http.StatusNotFound, "房間不存在")
+			jsonError(w, http.StatusNotFound, "找不到這場聚餐")
 		} else {
 			serverError(w, err, "資料庫錯誤，請稍後再試")
 		}
@@ -209,7 +209,7 @@ func loadMemberRoom(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) 
 		return room, false
 	}
 	if !isMember {
-		jsonError(w, http.StatusForbidden, "你不是這個房間的成員")
+		jsonError(w, http.StatusForbidden, "你不是這場聚餐的成員")
 		return room, false
 	}
 	return room, true
@@ -234,11 +234,11 @@ func handleStartVoting(w http.ResponseWriter, r *http.Request, pool *pgxpool.Poo
 	}
 	defer tx.Rollback(ctx)
 	if err := TransitionRoom(ctx, tx, room.ID, from, "voting"); err != nil {
-		roomError(w, err, "房間狀態已變更")
+		roomError(w, err, "聚餐狀態已變更")
 		return
 	}
 	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
-		roomError(w, err, "房間狀態已變更")
+		roomError(w, err, "聚餐狀態已變更")
 		return
 	}
 	room, err = LoadRoom(ctx, tx, room.ID)
@@ -303,11 +303,11 @@ func handleEditConditions(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 	}
 	defer tx.Rollback(ctx)
 	if err := TransitionRoom(ctx, tx, room.ID, from, "lobby"); err != nil {
-		roomError(w, err, "房間狀態已變更")
+		roomError(w, err, "聚餐狀態已變更")
 		return
 	}
 	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
-		roomError(w, err, "房間狀態已變更")
+		roomError(w, err, "聚餐狀態已變更")
 		return
 	}
 	if _, err := tx.Exec(ctx, `delete from room_candidates where room_id = $1`, room.ID); err != nil {
@@ -362,7 +362,7 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 	defer tx.Rollback(ctx)
 	// 刻意的 no-op UPDATE：同時取得 rooms row lock 並檢查階段，勿最佳化移除。
 	if err := TransitionRoom(ctx, tx, room.ID, "voting", "voting"); err != nil {
-		roomError(w, err, "房間不在投票階段")
+		roomError(w, err, "聚餐不在投票階段")
 		return
 	}
 	room, err = LoadRoom(ctx, tx, room.ID)
@@ -381,12 +381,12 @@ func handleVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		switch {
 		// 僅在 loadMemberRoom 檢查後、投票交易取鎖前被退房的競態窗內可達；覆蓋率看不到，勿誤刪
 		case errors.Is(err, ErrNotMember):
-			jsonError(w, http.StatusForbidden, "你不是這個房間的成員")
+			jsonError(w, http.StatusForbidden, "你不是這場聚餐的成員")
 		case errors.Is(err, ErrNotCandidate):
-			jsonError(w, http.StatusUnprocessableEntity, "這家餐廳不在本房的候選名單中")
+			jsonError(w, http.StatusUnprocessableEntity, "這家餐廳不在這場聚餐的候選名單中")
 		case errors.Is(err, ErrVetoQuotaExceeded):
 			jsonError(w, http.StatusConflict,
-				fmt.Sprintf("否決額度已用完（每人同房同時最多 %d 個）", VetoQuota))
+				fmt.Sprintf("否決額度已用完（每人在同一場聚餐最多 %d 個）", VetoQuota))
 		default:
 			serverError(w, err, "資料庫錯誤，請稍後再試")
 		}
@@ -455,7 +455,7 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 		return
 	}
 	if room.Status != "voting" {
-		jsonError(w, http.StatusConflict, "房間狀態不允許抽選")
+		jsonError(w, http.StatusConflict, "聚餐狀態不允許抽選")
 		return
 	}
 	expectedSearchVersion := room.SearchVersion
@@ -469,11 +469,11 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 	var version int64
 	if err := tx.QueryRow(ctx, `update rooms set status='pending', draw_version=draw_version+1
 		where id=$1 and status='voting' returning draw_version`, room.ID).Scan(&version); err != nil {
-		roomError(w, err, "房間狀態已變更") // ErrNoRows：已不在 voting（或房間已刪），同屬 409
+		roomError(w, err, "聚餐狀態已變更") // ErrNoRows：已不在 voting（或房間已刪），同屬 409
 		return
 	}
 	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
-		roomError(w, err, "房間狀態已變更")
+		roomError(w, err, "聚餐狀態已變更")
 		return
 	}
 	room, err = LoadRoom(ctx, tx, room.ID)
@@ -500,7 +500,7 @@ func handleDraw(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, weat
 				return
 			}
 		}
-		jsonError(w, http.StatusConflict, "候選已全數失效（可能都打烊了），請建立新房間重新搜尋")
+		jsonError(w, http.StatusConflict, "候選已全數失效（可能都打烊了），請發起新的聚餐重新搜尋")
 		return
 	}
 	winner, seed := Draw(result.Kept)

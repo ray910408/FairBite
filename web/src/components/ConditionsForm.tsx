@@ -71,7 +71,7 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
         writesValid.current = false
         // 舊 request 失敗只能立 error gate，不能抹掉更新 generation 的畫面。
         if (pending.generation === editGeneration.current) setForm(savedRef.current)
-        setSaveError('儲存失敗：房間可能已開始選餐，條件已凍結')
+        setSaveError('儲存失敗：聚餐可能已開始選餐，條件已凍結')
       } else {
         if (pending.generation > durableGeneration.current) {
           durableGeneration.current = pending.generation
@@ -142,7 +142,7 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
     if (currentVersion.current !== searchVersion) return
     if (!saved) {
       setForm(f => ({ ...f, ready: !next }))
-      setSaveError('準備狀態更新失敗：請確認最新地點與房間狀態後再試')
+      setSaveError('準備狀態更新失敗：請確認最新地點與聚餐狀態後再試')
     } else {
       savedRef.current = { ...savedRef.current, ready: next }
       // ready=false 只解除凍結；不能掩蓋仍未由較新 condition generation 修復的 failure gate。

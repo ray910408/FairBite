@@ -236,10 +236,10 @@ export default function HistoryPage() {
         // 按鈕在 320px 一律直排。「回到房間」補上 ADR-0007 說的不經首頁入口；
         // 多房時改掛在各房區塊內（LeaveRoomsBody），不替使用者猜要回哪一間
         return (
-          <LeaveConfirm title="回首頁會離開房間" onClose={closeLeave}
+          <LeaveConfirm title="回首頁會退出聚餐" onClose={closeLeave}
             actions={<>
               {rooms.length === 1 && (
-                <Link to={`/room/${rooms[0].id}`} className="btn btn-primary w-full">回到房間</Link>
+                <Link to={`/room/${rooms[0].id}`} className="btn btn-primary w-full">回到聚餐</Link>
               )}
               <button type="button" autoFocus className="btn btn-quiet w-full" onClick={closeLeave}>
                 取消

@@ -87,12 +87,12 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		return
 	}
 	if room.Status != "lobby" {
-		jsonError(w, http.StatusConflict, "房間狀態已變更")
+		jsonError(w, http.StatusConflict, "聚餐狀態已變更")
 		return
 	}
 	// Places 呼叫付費，同房並發搜尋只放行一個。
 	if _, loaded := inFlight.LoadOrStore(room.ID, struct{}{}); loaded {
-		jsonError(w, http.StatusConflict, "房間狀態已變更")
+		jsonError(w, http.StatusConflict, "聚餐狀態已變更")
 		return
 	}
 	defer inFlight.Delete(room.ID)
@@ -319,14 +319,14 @@ func freezeSearchCandidates(w http.ResponseWriter, r *http.Request, pool *pgxpoo
 	// Provider call 期間可能發生房主繼任；先在 room lock 下重驗權限，避免向前房主洩漏 readiness。
 	// 唯一成員同期退房、房間被刪則是 ErrRoomNotFound → 404。
 	if err := assertHostInTx(ctx, tx, room.ID, UserID(r)); err != nil {
-		roomError(w, err, "房間狀態已變更")
+		roomError(w, err, "聚餐狀態已變更")
 		return EngineResult{}, false
 	}
 	members, found, err := freezeAndLoadMembers(ctx, tx, &room, fetchedRadius, fetchedCuisines, fetched.found)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrConflict):
-			jsonError(w, http.StatusConflict, "房間狀態已變更")
+			jsonError(w, http.StatusConflict, "聚餐狀態已變更")
 		case errors.Is(err, ErrMembersChanged):
 			jsonError(w, http.StatusConflict, searchConditionsChangedMessage)
 		case errors.Is(err, ErrSearchChanged):
@@ -407,7 +407,7 @@ func rejectChangedSearchSnapshot(w http.ResponseWriter, ctx context.Context, q q
 	case errors.Is(err, ErrSearchChanged):
 		jsonError(w, http.StatusConflict, "搜尋位置已更新，請重新搜尋")
 	case errors.Is(err, ErrRoomNotFound):
-		jsonError(w, http.StatusNotFound, "房間不存在")
+		jsonError(w, http.StatusNotFound, "找不到這場聚餐")
 	default:
 		serverError(w, err, "資料庫錯誤，請稍後再試")
 	}
