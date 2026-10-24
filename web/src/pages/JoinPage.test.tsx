@@ -81,7 +81,7 @@ async function renderJoin() {
 
 const landed = () => screen.queryByText(/^到了 /)?.textContent ?? null
 const dialog = () => screen.getByRole('dialog')
-const departure = () => within(dialog()).getByRole<HTMLButtonElement>('button', { name: '離開並加入' })
+const departure = () => within(dialog()).getByRole<HTMLButtonElement>('button', { name: '退出並加入' })
 const joinCalls = () => mocks.rpc.mock.calls.filter(([name]) => name === 'join_room')
 const leavePage = () => fireEvent.click(screen.getByRole('link', { name: '離開這頁' }))
 const switchInvite = () => fireEvent.click(screen.getByRole('link', { name: '換一張邀請' }))
@@ -143,7 +143,7 @@ describe('加入房間', () => {
   // 房籍查不到還硬加入，就可能同時待在兩間（加入前必須先離開原房）：不猜，報錯等重試
   it.each([
     ['登入狀態查不到', '目前無法確認登入狀態，請稍後再試'],
-    ['房籍查不到', '目前無法確認你的房間狀態，請稍後再試'],
+    ['房籍查不到', '目前無法確認你的聚餐狀態，請稍後再試'],
     ['邀請解析斷線', '目前無法確認邀請，請檢查網路後再試'],
   ])('%s：不加入，給重試與回首頁', async (failure, message) => {
     if (failure === '登入狀態查不到') mocks.getSession.mockRejectedValue(new Error('offline'))
@@ -226,14 +226,14 @@ describe('加入房間', () => {
     mocks.joinRoom.mockResolvedValue({ data: null, error: { message: '房間人數已滿' } })
     await renderJoin()
 
-    expect(screen.getByRole('alert').textContent).toBe('房間人數已滿')
+    expect(screen.getByRole('alert').textContent).toBe('聚餐人數已滿')
     expect(landed()).toBeNull()
   })
 
   it('錯誤畫面除了重試，也有回首頁的路', async () => {
     mocks.resolveInvite.mockResolvedValue({ data: null, error: { message: 'not found' } })
     await renderJoin()
-    expect(screen.getByRole('alert').textContent).toBe('房間不存在或已開始')
+    expect(screen.getByRole('alert').textContent).toBe('找不到這場聚餐，或聚餐已開始')
 
     fireEvent.click(screen.getByRole('button', { name: '重新嘗試' }))
     await settle()
@@ -250,14 +250,14 @@ describe('確認離房後才加入', () => {
     inOldRoom()
     await renderJoin()
     const leave = dialog()
-    expect(within(leave).getByRole('heading', { name: '你目前在另一個房間' })).toBeTruthy()
-    expect(leave.textContent).toContain('你目前還在房間 OLD111 裡')
+    expect(within(leave).getByRole('heading', { name: '你目前在另一場聚餐' })).toBeTruthy()
+    expect(leave.textContent).toContain('你目前還有一場進行中的聚餐（OLD111）')
     expect(screen.getByRole('main').hasAttribute('inert')).toBe(true)
     expect(screen.getByRole('main').contains(leave)).toBe(false)
     expect(screen.queryByText('正在確認邀請…')).toBeNull()
     expect(joinCalls()).toHaveLength(0)
 
-    const cancel = within(leave).getByRole('button', { name: '取消並回原房' })
+    const cancel = within(leave).getByRole('button', { name: '取消並回原本的聚餐' })
     expect(document.activeElement).toBe(cancel) // 預設落在不會離房的那顆
     fireEvent.click(cancel)
     expect(landed()).toBe('到了 /room/old-room（REPLACE）')
@@ -272,7 +272,7 @@ describe('確認離房後才加入', () => {
     await settle()
 
     // 錯誤要顯示在還開著的確認框裡：背景整塊 inert，報讀與焦點都到不了外面那則
-    expect(within(dialog()).getByRole('alert').textContent).toBe('原房間離席未完成；請重新確認房間狀態後再試')
+    expect(within(dialog()).getByRole('alert').textContent).toBe('原本的聚餐還沒退出完成；請重新確認聚餐狀態後再試')
     expect(departure().disabled).toBe(false)
     expect(screen.getByRole('main').hasAttribute('inert')).toBe(true)
     expect(mocks.resolveInvite).toHaveBeenCalledTimes(1) // 只有進頁那一次
@@ -328,9 +328,9 @@ describe('確認離房後才加入', () => {
     vi.mocked(fetchLeaveRooms).mockResolvedValueOnce([leaveRoom('old-room', 'OLD111', true), leaveRoom('live-room', 'LIVE22')])
     await renderJoin()
     const text = dialog().textContent
-    expect(text).toContain('你目前在 2 個房間裡')
-    expect(text).toContain('房間 OLD111')
-    expect(text).toContain('房間 LIVE22')
+    expect(text).toContain('你目前有 2 場進行中的聚餐')
+    expect(text).toContain('聚餐 OLD111')
+    expect(text).toContain('聚餐 LIVE22')
     expect(leaveRooms).not.toHaveBeenCalled()
     expect(joinCalls()).toHaveLength(0)
   })
@@ -338,7 +338,7 @@ describe('確認離房後才加入', () => {
   it('多房時不替使用者猜回哪一間：沒有「取消並回原房」，從各房的回房鈕回去', async () => {
     vi.mocked(fetchLeaveRooms).mockResolvedValueOnce([leaveRoom('first-room', 'FIRST1'), leaveRoom('second-room', 'SECND2')])
     await renderJoin()
-    expect(within(dialog()).queryByRole('button', { name: '取消並回原房' })).toBeNull()
+    expect(within(dialog()).queryByRole('button', { name: '取消並回原本的聚餐' })).toBeNull()
     // 預設落在不會離房的那顆
     expect(document.activeElement).toBe(within(dialog()).getByRole('button', { name: '回到 FIRST1' }))
 
@@ -413,7 +413,7 @@ describe('邀請世代守衛', () => {
     await renderJoin()
     switchInvite()
     await settle()
-    expect(screen.getByRole('heading', { name: '加入房間 DEF456' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '加入聚餐 DEF456' })).toBeTruthy()
 
     await act(async () => old.resolve({ data: null, error: { message: 'not found' } }))
     await settle()
@@ -476,7 +476,7 @@ describe('邀請世代守衛', () => {
     expect(joinCalls()).toHaveLength(0)
     if (exit === '離頁') expect(landed()).toBe('到了 /elsewhere（PUSH）')
     else {
-      expect(screen.getByRole('heading', { name: '加入房間 DEF456' })).toBeTruthy()
+      expect(screen.getByRole('heading', { name: '加入聚餐 DEF456' })).toBeTruthy()
       if (action === 'guest') expect(guestButton().disabled).toBe(false)
       else expect(departure().disabled).toBe(false)
     }

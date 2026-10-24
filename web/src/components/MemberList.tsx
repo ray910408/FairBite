@@ -48,9 +48,9 @@ export function MemberList({ room, members, picksByMember, votesByMember }: {
             </span>
             <span aria-hidden="true" className="leader" />
             {m.user_id === room.host_id && (
-              // 括號只給報讀器：印章裡只蓋「房主」兩字
+              // 括號只給報讀器：印章裡只蓋「發起人」三字
               <span className="seal px-1 py-0 text-xs">
-                <span className="sr-only">（</span>房主<span className="sr-only">）</span>
+                <span className="sr-only">（</span>發起人<span className="sr-only">）</span>
               </span>
             )}
             {memberStatus(room, m, picksByMember, votesByMember)}

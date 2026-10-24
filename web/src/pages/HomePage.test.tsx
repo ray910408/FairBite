@@ -107,7 +107,7 @@ vi.mock('../components/LocationPicker', async () => {
 const ME = 'user-1'
 const HERE = mocks.picked
 const inRoom: LeaveRoom = { id: 'room-1', code: 'ABC123', status: 'lobby', memberCount: 2, isHost: false, stale: false }
-const LOGOUT_WAIT = '正在確認房間狀態，確認後才能登出'
+const LOGOUT_WAIT = '正在確認聚餐狀態，確認後才能登出'
 
 // 首頁這一筆 history entry 現在的 state 與導航方式：看得出旗標有沒有用 replace 當場消耗掉
 function EntryProbe() {
@@ -198,7 +198,7 @@ describe('HomePage persistRoom', () => {
       return { data: 'room-1', error: null }
     })
     await renderHome()
-    fireEvent.click(button('建立房間'))
+    fireEvent.click(button('發起聚餐'))
     await settle()
 
     const located = { lat: HERE.lat, lng: HERE.lng, label: '目前位置' }
@@ -212,14 +212,14 @@ describe('HomePage persistRoom', () => {
   it('發起時未登入便不建立房間', async () => {
     vi.mocked(getUid).mockResolvedValue(null)
     await renderHome()
-    fireEvent.click(button('建立房間'))
+    fireEvent.click(button('發起聚餐'))
     await settle()
 
     expect(getPosition).not.toHaveBeenCalled()
     expect(createCalls()).toEqual([])
     expect(localStorage.getItem('room-departure:room-1')).toBeNull()
     expect(onRoomPage()).toBeNull()
-    expect(button('建立房間').disabled).toBe(false)
+    expect(button('發起聚餐').disabled).toBe(false)
   })
 })
 
@@ -231,7 +231,7 @@ describe('HomePage 建房的出發點', () => {
   it('有上次出發點時直接建房，不呼叫 getPosition', async () => {
     await renderHome()
     rememberDeparture(HERE)
-    fireEvent.click(button('建立房間'))
+    fireEvent.click(button('發起聚餐'))
     await settle()
 
     expect(getPosition).not.toHaveBeenCalled()
@@ -244,9 +244,9 @@ describe('HomePage 建房的出發點', () => {
     const located = deferred<{ lat: number; lng: number }>()
     vi.mocked(getPosition).mockReturnValue(located.promise)
     await renderHome()
-    fireEvent.click(button('建立房間'))
+    fireEvent.click(button('發起聚餐'))
     await settle()
-    expect(button(/建立中/).disabled).toBe(true) // 定位最久 10 秒：沒有回饋會被當成沒反應而連按
+    expect(button(/發起中/).disabled).toBe(true) // 定位最久 10 秒：沒有回饋會被當成沒反應而連按
     expect(createCalls()).toEqual([])
 
     await act(async () => located.resolve({ lat: 25.033, lng: 121.565 }))
@@ -261,17 +261,17 @@ describe('HomePage 建房的出發點', () => {
   it('getPosition 失敗時顯示選點、不呼叫 create_room；選好再按才建房', async () => {
     await renderHome()
     expect(screen.queryByText(/^出發點：/)).toBeNull() // 平常不顯示選點
-    fireEvent.click(button('建立房間'))
+    fireEvent.click(button('發起聚餐'))
     await settle()
 
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(createCalls()).toEqual([])
     expect(within(createCard()).getByText(LOCATE_FAILED).getAttribute('role')).toBe('status')
     expect(screen.getByText('出發點：未選')).toBeTruthy()
-    expect(button('建立房間').disabled).toBe(true) // 選好出發點前不能再按
+    expect(button('發起聚餐').disabled).toBe(true) // 選好出發點前不能再按
 
     pickDeparture()
-    fireEvent.click(button('建立房間'))
+    fireEvent.click(button('發起聚餐'))
     await settle()
     expect(getPosition).toHaveBeenCalledTimes(1) // 選好的點優先，不再抓定位
     expect(createCalls()).toEqual([['create_room', { p_lat: 25.0478, p_lng: 121.517 }]])
@@ -284,9 +284,9 @@ describe('HomePage 建房的出發點', () => {
     vi.mocked(getPosition).mockReturnValue(new Promise(() => {}))
     await renderHome()
     vi.useFakeTimers()
-    fireEvent.click(button('建立房間'))
+    fireEvent.click(button('發起聚餐'))
     await act(async () => { await vi.advanceTimersByTimeAsync(9_999) })
-    expect(button(/建立中/).disabled).toBe(true)
+    expect(button(/發起中/).disabled).toBe(true)
     expect(button('加入').disabled).toBe(true)
 
     await act(async () => { await vi.advanceTimersByTimeAsync(1) })
@@ -299,7 +299,7 @@ describe('HomePage 建房的出發點', () => {
     const located = deferred<{ lat: number; lng: number }>()
     vi.mocked(getPosition).mockReturnValue(located.promise)
     const view = await renderHome()
-    fireEvent.click(button('建立房間'))
+    fireEvent.click(button('發起聚餐'))
     await settle()
     view.unmount()
 
@@ -315,22 +315,31 @@ describe('HomePage 錯誤就地顯示（QA ISSUE-003）', () => {
     rememberDeparture(HERE)
     mocks.createRoom.mockResolvedValue({ data: null, error: { message: '建房失敗' } })
     await renderHome()
-    fireEvent.click(button('建立房間'))
+    fireEvent.click(button('發起聚餐'))
     await settle()
     expect(within(createCard()).getByRole('alert').textContent).toBe('建房失敗')
     expect(joinCard().textContent).not.toContain('建房失敗')
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     expect(onRoomPage()).toBeNull()
   })
+
+  it('DB 的舊用詞建房錯誤換成畫面用詞', async () => {
+    rememberDeparture(HERE)
+    mocks.createRoom.mockResolvedValue({ data: null, error: { message: '建房額度已用完，請稍後再試' } })
+    await renderHome()
+    fireEvent.click(button('發起聚餐'))
+    await settle()
+    expect(within(createCard()).getByRole('alert').textContent).toBe('發起聚餐的次數已達上限，請稍後再試')
+  })
 })
 
 describe('HomePage guest 建房邊界', () => {
-  const REGISTER = '註冊後建立房間'
+  const REGISTER = '註冊後發起聚餐'
 
   it('帳號狀態尚未確認時不顯示建房或註冊入口', async () => {
     mocks.getUser.mockReturnValue(new Promise(() => {}))
     await renderHome()
-    expect(queryButton('建立房間')).toBeNull()
+    expect(queryButton('發起聚餐')).toBeNull()
     expect(screen.queryByRole('link', { name: REGISTER })).toBeNull()
     expect(screen.getByText('正在確認帳號狀態…').getAttribute('role')).toBe('status')
   })
@@ -345,7 +354,7 @@ describe('HomePage guest 建房邊界', () => {
     await renderHome()
     const register = screen.queryByRole('link', { name: REGISTER })
     expect(register?.getAttribute('href') ?? null).toBe(expected === 'guest' ? '/auth?mode=register' : null)
-    expect(queryButton('建立房間') !== null).toBe(expected === 'member')
+    expect(queryButton('發起聚餐') !== null).toBe(expected === 'member')
   })
 
   it.each([
@@ -360,7 +369,7 @@ describe('HomePage guest 建房邊界', () => {
   ])('%s 時 fail closed 並可重試', async (_name, arrange) => {
     arrange()
     await renderHome()
-    expect(queryButton('建立房間')).toBeNull()
+    expect(queryButton('發起聚餐')).toBeNull()
     expect(screen.queryByRole('link', { name: REGISTER })).toBeNull()
     expect(screen.getByRole('alert').textContent).toContain('無法確認帳號狀態，請重新檢查')
 
@@ -368,7 +377,7 @@ describe('HomePage guest 建房邊界', () => {
     mocks.getUser.mockResolvedValue({ data: { user: { id: 'member-1', is_anonymous: false } }, error: null })
     fireEvent.click(button('重新檢查'))
     await settle()
-    expect(button('建立房間')).toBeTruthy()
+    expect(button('發起聚餐')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
@@ -376,7 +385,7 @@ describe('HomePage guest 建房邊界', () => {
     blockStorage('guest-upgrade:')
     rememberDeparture(HERE)
     await renderHome()
-    fireEvent.click(button('建立房間'))
+    fireEvent.click(button('發起聚餐'))
     await settle()
     expect(createCalls()).toHaveLength(1)
     expect(onRoomPage()).toBe('房間頁 /room/room-1')
@@ -387,7 +396,7 @@ describe('HomePage guest 建房邊界', () => {
     mocks.getUser.mockResolvedValue({ data: { user: { id: 'guest-1', is_anonymous: true } }, error: null })
     await renderHome()
     expect(screen.getByRole('link', { name: REGISTER }).getAttribute('href')).toBe('/auth?mode=register')
-    expect(queryButton('建立房間')).toBeNull()
+    expect(queryButton('發起聚餐')).toBeNull()
   })
 })
 
@@ -397,7 +406,7 @@ describe('HomePage 口味建議查詢失敗（Task 11）', () => {
   const ate = (rating: number, tag: string) => ({ rating, restaurants: { cuisine_tags: [tag] } })
   const failed: Result = { data: null, error: new Error('query failed') }
   const okPrefs: Result = { data: { default_prefs: { cuisines: [] } }, error: null }
-  const LOAD_ERROR = '口味建議暫時載入失敗；不影響建房與本次房內條件'
+  const LOAD_ERROR = '口味建議暫時載入失敗；不影響發起聚餐與本次聚餐條件'
   const suggestion = () => screen.queryByText(/根據你的用餐紀錄/)?.textContent ?? null
 
   beforeEach(() => {
@@ -446,7 +455,7 @@ describe('HomePage 口味建議查詢失敗（Task 11）', () => {
     await renderHome()
     expect(screen.getByText(LOAD_ERROR)).toBeTruthy()
 
-    fireEvent.click(button('建立房間'))
+    fireEvent.click(button('發起聚餐'))
     await settle()
     expect(getPosition).not.toHaveBeenCalled()
     expect(createCalls()).toEqual([['create_room', { p_lat: 25.033, p_lng: 121.565 }]])
@@ -457,7 +466,7 @@ describe('HomePage 口味建議查詢失敗（Task 11）', () => {
     mocks.history.mockResolvedValueOnce(failed)
     await renderHome()
     expect(screen.getByText(LOAD_ERROR).closest('[role="status"]')).not.toBeNull()
-    expect(button('建立房間').disabled).toBe(false)
+    expect(button('發起聚餐').disabled).toBe(false)
     expect(button('加入').disabled).toBe(false)
   })
 
@@ -617,7 +626,7 @@ describe('HomePage 邀請碼 native validation', () => {
     fireEvent.click(button('加入'))
     await settle()
     expect(mocks.rpc).toHaveBeenCalledWith('join_room', { p_code: 'A1B2C3D4E5F6' })
-    expect(within(joinCard()).getByRole('alert').textContent).toBe('房間不存在或已開始')
+    expect(within(joinCard()).getByRole('alert').textContent).toBe('找不到這場聚餐，或聚餐已開始')
 
     fireEvent.change(input, { target: { value: 'A1B2C3D4E5F7' } })
     expect(input.value).toBe('A1B2C3D4E5F7')
@@ -630,7 +639,7 @@ describe('HomePage 邀請碼 native validation', () => {
     fireEvent.change(screen.getByRole('textbox', { name: '邀請碼' }), { target: { value: 'A1B2C3D4E5F6' } })
     fireEvent.click(button('加入'))
     await settle()
-    expect(within(joinCard()).getByRole('alert').textContent).toBe('房間人數已滿')
+    expect(within(joinCard()).getByRole('alert').textContent).toBe('聚餐人數已滿')
   })
 })
 
@@ -638,13 +647,13 @@ describe('HomePage 退房閘門', () => {
   it('leave 未 settle 前建立房間與加入都禁用', async () => {
     vi.mocked(fetchLeaveRooms).mockReturnValue(new Promise(() => {}))
     await renderHome()
-    expect(button('建立房間').disabled).toBe(true)
+    expect(button('發起聚餐').disabled).toBe(true)
     expect(button('加入').disabled).toBe(true)
   })
 
   it('leave settle 後兩鈕解禁', async () => {
     await renderHome()
-    expect(button('建立房間').disabled).toBe(false)
+    expect(button('發起聚餐').disabled).toBe(false)
     expect(button('加入').disabled).toBe(false)
   })
 })
@@ -683,10 +692,10 @@ describe('HomePage 登出閘門', () => {
   it('查詢逾時（回 null）：保守 dialog 出得來，按離開房間後登出鍵回到可用', async () => {
     vi.mocked(fetchLeaveRooms).mockResolvedValue(null) // 逾時與查詢失敗同一條路徑
     await renderHome()
-    expect(dialog().textContent).toContain('房間現況查不到')
+    expect(dialog().textContent).toContain('聚餐現況查不到')
     expect(button('登出').disabled).toBe(true) // 決定前仍鎖著
 
-    fireEvent.click(inDialog('離開房間'))
+    fireEvent.click(inDialog('退出聚餐'))
     await settle()
     expect(leaveRooms).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('dialog')).toBeNull()
@@ -699,7 +708,7 @@ describe('HomePage mount 離席確認', () => {
   it('查到房間不自動退房，改開離席確認', async () => {
     vi.mocked(fetchLeaveRooms).mockResolvedValue([inRoom])
     await renderHome()
-    expect(screen.getByRole('dialog', { name: '你還在房間裡' })).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: '你還有進行中的聚餐' })).toBeTruthy()
     expect(leaveRooms).not.toHaveBeenCalled()
     // 閘門不得在使用者決定前解除
     expect(screen.getByText(LOGOUT_WAIT)).toBeTruthy()
@@ -734,9 +743,9 @@ describe('HomePage mount 離席確認', () => {
     vi.mocked(fetchLeaveRooms).mockResolvedValue([{ ...inRoom, stale: true }, { ...inRoom, id: 'room-2', code: 'DEF456' }])
     await renderHome()
     const text = dialog().textContent
-    expect(text).toContain('你還在 2 個房間裡')
-    expect(text).toContain('房間 ABC123')
-    expect(text).toContain('房間 DEF456')
+    expect(text).toContain('你還有 2 場進行中的聚餐')
+    expect(text).toContain('聚餐 ABC123')
+    expect(text).toContain('聚餐 DEF456')
     expect(leaveRooms).not.toHaveBeenCalled()
   })
 
@@ -744,7 +753,7 @@ describe('HomePage mount 離席確認', () => {
   it('房籍查詢失敗不靜默退房，改開保守 dialog', async () => {
     vi.mocked(fetchLeaveRooms).mockResolvedValue(null)
     await renderHome()
-    expect(dialog().textContent).toContain('房間現況查不到')
+    expect(dialog().textContent).toContain('聚餐現況查不到')
     expect(leaveRooms).not.toHaveBeenCalled()
     expect(button('加入').disabled).toBe(true)
   })
@@ -768,7 +777,7 @@ describe('HomePage mount 離席確認', () => {
     rememberDeparture(HERE)
     await renderHome({ leaveConfirmed: true }) // 房內確認過的那一次：直接退房並消耗旗標
     expect(leaveRooms).toHaveBeenCalledTimes(1)
-    fireEvent.click(button('建立房間'))
+    fireEvent.click(button('發起聚餐'))
     await settle()
     expect(onRoomPage()).toBe('房間頁 /room/room-1')
 
@@ -777,7 +786,7 @@ describe('HomePage mount 離席確認', () => {
     await settle()
     expect(entry().nav).toBe('POP')
     expect(fetchLeaveRooms).toHaveBeenCalledTimes(1)
-    expect(dialog().textContent).toContain('你還在房間 ABC123 裡')
+    expect(dialog().textContent).toContain('你還有一場進行中的聚餐（ABC123）')
     expect(leaveRooms).toHaveBeenCalledTimes(1) // 新建的房沒有被靜默退掉
   })
 
@@ -802,7 +811,7 @@ describe('HomePage 離席確認 dialog', () => {
   it('dialog 開著時建房與加入維持禁用', async () => {
     await renderHome()
     expect(dialog()).toBeTruthy()
-    expect(button('建立房間').disabled).toBe(true)
+    expect(button('發起聚餐').disabled).toBe(true)
     expect(button('加入').disabled).toBe(true)
   })
 
@@ -811,11 +820,11 @@ describe('HomePage 離席確認 dialog', () => {
     vi.mocked(leaveRooms).mockReturnValue(leave.promise)
     await renderHome()
     const text = dialog().textContent
-    expect(text).toContain('你還在房間 ABC123 裡')
-    expect(text).toContain('你若是最後一位成員，房間會直接被刪除')
+    expect(text).toContain('你還有一場進行中的聚餐（ABC123）')
+    expect(text).toContain('你若是最後一位成員，這場聚餐會直接被刪除')
     expectNotice(text, 'lobby', 2, 'ABC123', false)
 
-    fireEvent.click(inDialog('離開房間'))
+    fireEvent.click(inDialog('退出聚餐'))
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(leaveRooms).toHaveBeenCalledTimes(1)
     expect(button('加入').disabled).toBe(true) // 退房還在飛
@@ -829,7 +838,7 @@ describe('HomePage 離席確認 dialog', () => {
   it('首頁 best-effort 離席失敗仍解除閘門，不產生未處理 rejection', async () => {
     vi.mocked(leaveRooms).mockRejectedValue(new Error('offline'))
     await renderHome()
-    fireEvent.click(inDialog('離開房間'))
+    fireEvent.click(inDialog('退出聚餐'))
     await settle()
     expect(leaveRooms).toHaveBeenCalledTimes(1)
     expect(button('加入').disabled).toBe(false)
@@ -839,8 +848,8 @@ describe('HomePage 離席確認 dialog', () => {
   it('取消（回到房間）導回房間且不退房', async () => {
     await renderHome()
     // 焦點落在安全的那顆：Enter 一按不會就退房
-    expect(document.activeElement).toBe(inDialog('回到房間'))
-    fireEvent.click(inDialog('回到房間'))
+    expect(document.activeElement).toBe(inDialog('回到聚餐'))
+    fireEvent.click(inDialog('回到聚餐'))
     expect(onRoomPage()).toBe('房間頁 /room/room-1')
     expect(leaveRooms).not.toHaveBeenCalled()
   })
@@ -853,10 +862,10 @@ describe('HomePage 離席確認 dialog', () => {
     ])
     await renderHome()
     const text = dialog().textContent
-    expect(text).toContain('你還在 2 個房間裡')
+    expect(text).toContain('你還有 2 場進行中的聚餐')
     expect(text).toContain('邀請碼 AAA111 會跟著失效') // lobby 單人
     expect(text).toContain('抽中的結果之後在「足跡」查看') // decided
-    expect(within(dialog()).queryByRole('button', { name: '回到房間' })).toBeNull() // 不替使用者猜要回哪一間
+    expect(within(dialog()).queryByRole('button', { name: '回到聚餐' })).toBeNull() // 不替使用者猜要回哪一間
     expect(document.activeElement).toBe(inDialog('回到 AAA111'))
 
     fireEvent.click(inDialog('回到 BBB222'))
@@ -867,13 +876,13 @@ describe('HomePage 離席確認 dialog', () => {
     vi.mocked(fetchLeaveRooms).mockResolvedValue(null)
     await renderHome()
     const text = dialog().textContent
-    expect(text).toContain('房間現況查不到')
+    expect(text).toContain('聚餐現況查不到')
     expect(text).not.toContain('可用邀請碼重新加入')
     expect(text).not.toContain('會直接被刪除')
-    expect(within(dialog()).queryByRole('button', { name: '回到房間' })).toBeNull()
+    expect(within(dialog()).queryByRole('button', { name: '回到聚餐' })).toBeNull()
     // 不確定就先重新整理：焦點落在這顆，不是離開房間
     expect(document.activeElement).toBe(inDialog('重新整理再試'))
-    expect(inDialog('離開房間')).toBeTruthy()
+    expect(inDialog('退出聚餐')).toBeTruthy()
   })
 
   // fixed 遮罩擋得住指標，對 tab 順序毫無作用：沒有 inert，鍵盤可以 tab 到背景的
@@ -883,12 +892,12 @@ describe('HomePage 離席確認 dialog', () => {
     vi.mocked(fetchLeaveRooms).mockReturnValue(rooms.promise)
     await renderHome()
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(button('建立房間').closest('[inert]')).toBeNull()
+    expect(button('發起聚餐').closest('[inert]')).toBeNull()
 
     await act(async () => rooms.resolve([inRoom]))
     await settle()
     // 背景真的含著會被鍵盤觸發的控制項（建立房間）與整個主內容
-    const background = button('建立房間').closest<HTMLElement>('[inert]')
+    const background = button('發起聚餐').closest<HTMLElement>('[inert]')
     expect(background).not.toBeNull()
     expect(background!.contains(screen.getByRole('main'))).toBe(true)
     expect(background!.contains(dialog())).toBe(false)

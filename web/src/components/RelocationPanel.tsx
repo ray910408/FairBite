@@ -52,7 +52,7 @@ export default function RelocationPanel({
   if (!isHost) {
     return status === 'relocating' ? (
       <section className="card space-y-2" aria-live="polite">
-        <p className="text-sm text-fg-muted">等待房主選擇新地點</p>
+        <p className="text-sm text-fg-muted">等待發起人選擇新地點</p>
       </section>
     ) : null
   }

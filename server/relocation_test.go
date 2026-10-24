@@ -133,8 +133,8 @@ func TestLocationMajorityAndReset(t *testing.T) {
 	}
 	// 版本衝突是房間狀態變了，不是抽選結果變了：文案不能沿用 pendingError 的「抽選結果已更新」
 	if w := locationRequest(pool, roomID, users[0], `{"lat":25.2,"lng":121.7,"version":0}`, true); w.Code != 409 ||
-		!strings.Contains(w.Body.String(), "房間狀態已更新，請重新整理") {
-		t.Fatalf("stale version: want 409 房間狀態已更新，請重新整理, got %d %s", w.Code, w.Body.String())
+		!strings.Contains(w.Body.String(), "聚餐狀態已更新，請重新整理") {
+		t.Fatalf("stale version: want 409 聚餐狀態已更新，請重新整理, got %d %s", w.Code, w.Body.String())
 	}
 	call(users[0], `{"lat":25.1,"lng":121.6,"version":1}`, 200, true)
 	if err := pool.QueryRow(context.Background(), `select search_version from rooms where id=$1`, roomID).Scan(&version); err != nil {
@@ -326,8 +326,8 @@ func TestHandleSearchRoomDeletedDuringSearchReturns404(t *testing.T) {
 				pool: pool, roomID: roomID, fail: tc.fail, deleteRoom: true, found: tc.found,
 			})
 			search := pendingPost(t, h, users[0], "/api/rooms/"+roomID+"/search", "")
-			if search.Code != http.StatusNotFound || !strings.Contains(search.Body.String(), "房間不存在") {
-				t.Fatalf("want 404 房間不存在, got %d %s", search.Code, search.Body.String())
+			if search.Code != http.StatusNotFound || !strings.Contains(search.Body.String(), "找不到這場聚餐") {
+				t.Fatalf("want 404 找不到這場聚餐, got %d %s", search.Code, search.Body.String())
 			}
 		})
 	}

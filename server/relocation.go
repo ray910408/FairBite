@@ -29,7 +29,7 @@ func passLocationMajority(ctx context.Context, tx pgx.Tx, roomID string) (bool, 
 // locationError：改地點兩個端點的錯誤對映（薄 wrapper，log 深度見 writeError）。
 // 409 是房間版本或階段變了，不是抽選結果，所以不走 pendingError。
 func locationError(w http.ResponseWriter, err error) {
-	writeError(w, err, "房間狀態已更新，請重新整理")
+	writeError(w, err, "聚餐狀態已更新，請重新整理")
 }
 
 func handleLocationVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) {
@@ -65,11 +65,11 @@ func handleLocationVote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Po
 		return
 	}
 	if !member {
-		jsonError(w, http.StatusForbidden, "只有房間成員可以表決")
+		jsonError(w, http.StatusForbidden, "只有聚餐成員可以表決")
 		return
 	}
 	if status != "voting" || version != *req.Version {
-		jsonError(w, http.StatusConflict, "房間狀態已更新")
+		jsonError(w, http.StatusConflict, "聚餐狀態已更新")
 		return
 	}
 	if *req.Want {

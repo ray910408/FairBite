@@ -474,8 +474,8 @@ describe('訪客登入既有帳號', () => {
 
   // 離房走 leaveRooms()（60 秒逾時）：HTTP 失敗、斷線、逾時都講同一句，明說身分沒換
   it.each([
-    ['leave-http', '離開目前房間失敗，仍保留訪客身分；請稍後再試'],
-    ['leave-network', '離開目前房間失敗，仍保留訪客身分；請稍後再試'],
+    ['leave-http', '退出目前的聚餐失敗，仍保留訪客身分；請稍後再試'],
+    ['leave-network', '退出目前的聚餐失敗，仍保留訪客身分；請稍後再試'],
     ['login-credentials', 'Email 或密碼錯誤'],
     ['login-network', '連線失敗，請檢查網路後再試'],
   ])('切換帳號失敗 %s 在仍開著的確認框裡顯示錯誤', async (failure, message) => {
@@ -491,7 +491,7 @@ describe('訪客登入既有帳號', () => {
     await renderAuth()
     fillLogin('member@example.com')
     await submit()
-    fireEvent.click(within(dialog()).getByRole('button', { name: '離房並登入' }))
+    fireEvent.click(within(dialog()).getByRole('button', { name: '退出聚餐並登入' }))
     await settle()
 
     expect(fetchMock).toHaveBeenCalledWith('/api/leave', {
@@ -499,7 +499,7 @@ describe('訪客登入既有帳號', () => {
     })
     expect(within(dialog()).getByRole('alert').textContent).toBe(message)
     expect(screen.getAllByRole('alert')).toHaveLength(1) // 表單那邊被蓋住，不重複顯示
-    expect(within(dialog()).getByRole<HTMLButtonElement>('button', { name: '離房並登入' }).disabled).toBe(false)
+    expect(within(dialog()).getByRole<HTMLButtonElement>('button', { name: '退出聚餐並登入' }).disabled).toBe(false)
     expect(landed()).toBeNull()
     if (failure.startsWith('leave-')) expect(auth.signInWithPassword).not.toHaveBeenCalled()
     else expect(auth.signInWithPassword).toHaveBeenCalledExactlyOnceWith({ email: 'member@example.com', password: 'password123' })
@@ -519,7 +519,7 @@ describe('訪客登入既有帳號', () => {
     await submit()
     const leave = deferred<Response>()
     fetchMock.mockImplementation(async url => url === '/api/leave' ? leave.promise : new Response('{}'))
-    const confirm = within(dialog()).getByRole<HTMLButtonElement>('button', { name: '離房並登入' })
+    const confirm = within(dialog()).getByRole<HTMLButtonElement>('button', { name: '退出聚餐並登入' })
     fireEvent.click(confirm)
     await settle()
     expect(confirm.disabled).toBe(true) // 離房途中不能再送第二次
@@ -555,7 +555,7 @@ describe('訪客升級成正式帳號', () => {
       { email: 'guest@gmail.com' }, { emailRedirectTo: `${window.location.origin}/app/?ref=qr#/auth` },
     )
     expect(auth.signUp).not.toHaveBeenCalled()
-    expect(statusText()).toBe('驗證信已寄出。請先完成 Email 驗證，再回來設定密碼；目前訪客房籍與紀錄都會保留。')
+    expect(statusText()).toBe('驗證信已寄出。請先完成 Email 驗證，再回來設定密碼；目前訪客身分的聚餐與紀錄都會保留。')
     expect(landed()).toBeNull()
   })
 
@@ -586,7 +586,7 @@ describe('訪客升級成正式帳號', () => {
       await renderAuth()
       fillLogin('member@example.com')
       await submit()
-      fireEvent.click(within(dialog()).getByRole('button', { name: '離房並登入' }))
+      fireEvent.click(within(dialog()).getByRole('button', { name: '退出聚餐並登入' }))
       await settle()
     }
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(['/healthz'])

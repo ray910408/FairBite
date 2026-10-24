@@ -21,12 +21,12 @@ export function leaveNotice(
 ): string[] {
   const solo = memberCount !== null && memberCount <= 1
   const deletePoint = solo
-    ? '你是房間裡唯一的人，離開後這個房間會直接刪除'
-    : '你若是最後一位成員，房間會直接被刪除'
+    ? '你是這場聚餐唯一的成員，離開後這場聚餐會直接刪除'
+    : '你若是最後一位成員，這場聚餐會直接被刪除'
   // 肯定句要「確定是房主」且「確定還有別人」；任一不可判定就退回「你若是房主」
   const hostPoint = solo || isHost === false ? null
-    : `${isHost && memberCount !== null ? '你是房主：離開後' : '你若是房主，'}`
-      + '房主身分會移交給其餘成員（已註冊者優先，再依加入先後），你重新加入也不會拿回房主權限'
+    : `${isHost && memberCount !== null ? '你是發起人：離開後' : '你若是發起人，'}`
+      + '發起人身分會移交給其餘成員（已註冊者優先，再依加入先後），你重新加入也不會拿回發起人權限'
   const withHost = (points: string[]) => hostPoint ? [...points, hostPoint] : points
   if (status === 'lobby') {
     return withHost(solo
@@ -36,28 +36,28 @@ export function leaveNotice(
       : ['你設定的條件會作廢，不再影響這場決策',
         deletePoint,
         memberCount === null
-          ? '目前還在等待中：只要房間還在（你不是最後一位），之後仍可用邀請碼重新加入；房主一開始搜尋就不能再加入'
-          : '目前還在等待中，之後可用邀請碼重新加入；房主一開始搜尋就不能再加入'])
+          ? '目前還在等待中：只要聚餐還在（你不是最後一位），之後仍可用邀請碼重新加入；發起人一開始搜尋就不能再加入'
+          : '目前還在等待中，之後可用邀請碼重新加入；發起人一開始搜尋就不能再加入'])
   }
   // 定案後房間沒有下一步（單次房，ADR-0004）：票、房主移交、末位刪房都不再影響任何人，
   // 同席紀錄也不隨刪房消失（CONTEXT.md 房間）。講了只是嚇人，只留看結果的地方與回不來這件事
   if (status === 'decided') {
-    return ['房間已定案，抽中的結果之後在「足跡」查看', '離開後就回不到這個房間了']
+    return ['聚餐已定案，抽中的結果之後在「足跡」查看', '離開後就回不到這場聚餐了']
   }
   if (status === 'pending') {
     return withHost(solo
       ? [deletePoint,
         '待確認結果與整份候選名單會跟著刪除，不會寫入足跡',
         '離開後無法用邀請碼重新加入']
-      : ['待確認結果不會因你離開而寫入足跡，房主仍可確認或排除重轉',
+      : ['待確認結果不會因你離開而寫入足跡，發起人仍可確認或排除重轉',
         deletePoint,
         '目前無法用邀請碼重新加入；若候選耗盡回到等待階段，同一邀請碼才會重新開放'])
   }
   if (status === 'relocating') {
     return withHost(solo
-      ? [deletePoint, '等待選擇的新地點與房間條件會一起消失', '離開後無法用邀請碼重新加入']
+      ? [deletePoint, '等待選擇的新地點與聚餐條件會一起消失', '離開後無法用邀請碼重新加入']
       : ['你的條件會退出這場重新搜尋', deletePoint,
-        '房主選好新地點並回到等待階段後，只要房間還在就能再用同一邀請碼加入'])
+        '發起人選好新地點並回到等待階段後，只要聚餐還在就能再用同一邀請碼加入'])
   }
   // candidates 階段還沒有票（贊成／否決鈕只在 voting 出現，RoomPage 的 CandidateList
   // 只有 voting 才拿到 voting prop）；離席在這裡是條件退出重算（ADR-0007、leave.go 的 rescore）

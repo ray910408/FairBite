@@ -156,8 +156,8 @@ describe('足跡頁回首頁離席確認', () => {
     rooms(leaveRow('room-1', 'ABC123', 'voting'))
     await renderHistory()
     const leave = await openLeave()
-    expect(within(leave).getByRole('heading', { name: '回首頁會離開房間' })).toBeTruthy()
-    expect(leave.textContent).toContain('你目前還在房間 ABC123 裡')
+    expect(within(leave).getByRole('heading', { name: '回首頁會退出聚餐' })).toBeTruthy()
+    expect(leave.textContent).toContain('你目前還有一場進行中的聚餐（ABC123）')
     expectNotice(leave.textContent, 'voting', 1, 'ABC123', false)
     expect(mocks.from).toHaveBeenCalledWith('room_members')
     expect(screen.queryByText(/^首頁/)).toBeNull()
@@ -183,10 +183,10 @@ describe('足跡頁回首頁離席確認', () => {
     mocks.memberRows.mockResolvedValue({ data: null, error: { message: 'boom' } })
     await renderHistory()
     const leave = await openLeave()
-    expect(leave.textContent).toContain('房間現況查不到')
+    expect(leave.textContent).toContain('聚餐現況查不到')
     expect(leave.textContent).not.toContain('可用邀請碼重新加入')
     expect(leave.textContent).not.toContain('會直接被刪除')
-    expect(within(leave).queryByRole('link', { name: '回到房間' })).toBeNull() // 不知道回哪間
+    expect(within(leave).queryByRole('link', { name: '回到聚餐' })).toBeNull() // 不知道回哪間
     expect(within(leave).getByRole('link', { name: '仍要回首頁' }).getAttribute('href')).toBe('/')
   })
 
@@ -214,7 +214,7 @@ describe('足跡頁回首頁離席確認', () => {
     rooms(leaveRow('room-1', 'ABC123', 'voting'))
     await renderHistory()
     const leave = await openLeave(screen.getByRole('link', { name: '回首頁開一場' }))
-    expect(leave.textContent).toContain('你目前還在房間 ABC123 裡')
+    expect(leave.textContent).toContain('你目前還有一場進行中的聚餐（ABC123）')
     expect(screen.queryByText(/^首頁/)).toBeNull()
   })
 
@@ -226,7 +226,7 @@ describe('足跡頁回首頁離席確認', () => {
     const frames = captureFrames()
     await renderHistory()
     let leave = await openLeave()
-    expect(within(leave).getByRole('link', { name: '回到房間' }).getAttribute('href')).toBe('/room/room-1')
+    expect(within(leave).getByRole('link', { name: '回到聚餐' }).getAttribute('href')).toBe('/room/room-1')
     expect(within(leave).getByRole('link', { name: '仍要回首頁' }).getAttribute('href')).toBe('/')
     const cancel = within(leave).getByRole('button', { name: '取消' })
     expect(document.activeElement).toBe(cancel) // autoFocus 落在取消
@@ -269,9 +269,9 @@ describe('足跡頁回首頁離席確認', () => {
     rooms(leaveRow('room-1', 'ABC123', 'voting'), leaveRow('room-1', 'ABC123', 'voting'))
     await renderHistory()
     const text = (await openLeave()).textContent
-    expect(text).toContain('你目前還在房間 ABC123 裡')
+    expect(text).toContain('你目前還有一場進行中的聚餐（ABC123）')
     expect(text).toContain('你的投票會即刻作廢，候選盤面會重新計算')
-    expect(text).toContain('你若是最後一位成員，房間會直接被刪除')
+    expect(text).toContain('你若是最後一位成員，這場聚餐會直接被刪除')
   })
 
   // P2-A：leave 是全退，兩個房籍都要講（舊房 leave 逾時後又建新房就會這樣）
@@ -281,17 +281,17 @@ describe('足跡頁回首頁離席確認', () => {
     await renderHistory()
     const leave = await openLeave()
     const text = leave.textContent!
-    expect(text).toContain('你目前在 2 個房間裡，回首頁會一次全部離開')
-    expect(text).toContain('房間 AAA111')
-    expect(text).toContain('房間 BBB222')
+    expect(text).toContain('你目前有 2 場進行中的聚餐，回首頁會一次全部退出')
+    expect(text).toContain('聚餐 AAA111')
+    expect(text).toContain('聚餐 BBB222')
     expect(text).toContain('邀請碼 AAA111 會跟著失效') // lobby 單人
     expect(text).toContain('你的投票會即刻作廢，候選盤面會重新計算') // voting 多人
     // 房主移交只講在有人可以繼任的那一間（AAA111 單人房是直接刪房）
-    expect(text.split('房主身分會移交給').length - 1).toBe(1)
+    expect(text.split('發起人身分會移交給').length - 1).toBe(1)
     expect(within(leave).getByRole('link', { name: '回到 AAA111' }).getAttribute('href')).toBe('/room/room-1')
     expect(within(leave).getByRole('link', { name: '回到 BBB222' }).getAttribute('href')).toBe('/room/room-2')
     // 不替使用者猜要回哪一間
-    expect(within(leave).queryByRole('link', { name: '回到房間' })).toBeNull()
+    expect(within(leave).queryByRole('link', { name: '回到聚餐' })).toBeNull()
   })
 })
 
@@ -302,7 +302,7 @@ describe('足跡頁房籍查詢', () => {
     await renderHistory()
     rooms(leaveRow('room-9', 'NEW999', 'lobby')) // 另一分頁建了房
     const leave = await openLeave()
-    expect(leave.textContent).toContain('你目前還在房間 NEW999 裡')
+    expect(leave.textContent).toContain('你目前還有一場進行中的聚餐（NEW999）')
     expect(screen.queryByText(/^首頁/)).toBeNull()
   })
 
@@ -332,8 +332,8 @@ describe('足跡頁房籍查詢', () => {
     rooms(mine, mine, theirs, theirs)
     await renderHistory()
     const text = (await openLeave()).textContent!
-    expect(text.split('你是房主：離開後房主身分會移交給其餘成員（已註冊者優先，再依加入先後）').length - 1).toBe(1)
-    expect(text).not.toContain('你若是房主')
+    expect(text.split('你是發起人：離開後發起人身分會移交給其餘成員（已註冊者優先，再依加入先後）').length - 1).toBe(1)
+    expect(text).not.toContain('你若是發起人')
   })
 
   // 拿不到 uid 就不知道自己是不是房主——不猜，交給 leaveNotice 用條件句
@@ -343,8 +343,8 @@ describe('足跡頁房籍查詢', () => {
     rooms(mine, mine)
     await renderHistory()
     const text = (await openLeave()).textContent
-    expect(text).toContain('你若是房主，房主身分會移交給其餘成員（已註冊者優先，再依加入先後）')
-    expect(text).not.toContain('你是房主：')
+    expect(text).toContain('你若是發起人，發起人身分會移交給其餘成員（已註冊者優先，再依加入先後）')
+    expect(text).not.toContain('你是發起人：')
   })
 
   it('getUid 拋錯只讓房主敘述退回條件句，不整份放棄成查不到', async () => {
@@ -353,8 +353,8 @@ describe('足跡頁房籍查詢', () => {
     rooms(mine, mine)
     await renderHistory()
     const text = (await openLeave()).textContent
-    expect(text).toContain('你若是房主，房主身分會移交給其餘成員（已註冊者優先，再依加入先後）')
-    expect(text).not.toContain('房間現況查不到')
+    expect(text).toContain('你若是發起人，發起人身分會移交給其餘成員（已註冊者優先，再依加入先後）')
+    expect(text).not.toContain('聚餐現況查不到')
   })
 })
 

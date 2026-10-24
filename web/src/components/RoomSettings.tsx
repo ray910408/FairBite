@@ -18,7 +18,7 @@ type SettingProps = { room: Room; searching: boolean; settings: RoomSettingsWrit
 export function RoomSettingsSummary({ room }: { room: Room }) {
   return (
     <section className="card animate-rise space-y-1">
-      <h2 className="text-sm font-semibold text-fg-muted">房主的設定</h2>
+      <h2 className="text-sm font-semibold text-fg-muted">發起人的設定</h2>
       {/* 每項整段不折行：320px 時寧可換到下一行，也不要把「菜系過濾」拆成兩半 */}
       <p className="text-sm">
         <span className="whitespace-nowrap">用餐時間：{formatMealTime(room.meal_time)}</span>

@@ -19,6 +19,11 @@ import { RecentRatingPrompt } from '../components/RatingPrompt'
 import CustomWheel from '../components/CustomWheel'
 
 const LOCATE_LIMIT_MS = 10_000
+// create_room 的 raise exception 原文還是舊用詞；改 DB 文案要動 migration，前端換成畫面用詞
+const CREATE_ROOM_MESSAGES: Record<string, string> = {
+  '建房額度已用完，請稍後再試': '發起聚餐的次數已達上限，請稍後再試',
+  '訪客需完成註冊後才能建立房間': '訪客需完成註冊後才能發起聚餐',
+}
 
 export default function HomePage() {
   const nav = useNavigate()
@@ -73,7 +78,7 @@ export default function HomePage() {
     ])
     if (request !== suggestionRequest.current || !suggestionsMounted.current) return
     if (profileError || historyError || lowRowsError) {
-      setSuggestionLoadError('口味建議暫時載入失敗；不影響建房與本次房內條件')
+      setSuggestionLoadError('口味建議暫時載入失敗；不影響發起聚餐與本次聚餐條件')
       return
     }
     if (!profile) return
@@ -164,7 +169,7 @@ export default function HomePage() {
       p_lat: pos.lat, p_lng: pos.lng,
     })
     if (error) {
-      setCreateError(error.message)
+      setCreateError(CREATE_ROOM_MESSAGES[error.message] ?? error.message)
       return
     }
     await applyDefaultPrefs(data)
@@ -214,7 +219,7 @@ export default function HomePage() {
       if (error || !data) {
         setJoinError(error?.message?.includes('頻繁')
           ? '嘗試過於頻繁，請稍後再試'
-          : error?.message?.includes('人數已滿') ? '房間人數已滿' : '房間不存在或已開始')
+          : error?.message?.includes('人數已滿') ? '聚餐人數已滿' : '找不到這場聚餐，或聚餐已開始')
       } else {
         await applyDefaultPrefs(data)
         nav(`/room/${data}`)
@@ -227,7 +232,7 @@ export default function HomePage() {
   return (
     <>
       {/* dialog 開著時整塊背景 inert：fixed 遮罩擋得住指標，對 tab 順序毫無作用——
-          沒有它鍵盤使用者可以 tab 到「建立房間」按 Enter，繞過還沒決定的退房（Codex P2） */}
+          沒有它鍵盤使用者可以 tab 到「發起聚餐」按 Enter，繞過還沒決定的退房（Codex P2） */}
       <div className="min-h-screen" inert={!!leaveTarget}>
       <header className="mx-auto w-full max-w-md px-4 pt-4">
         {/* 字級特大時 320px 並排不下：按鈕組換到下一行並靠右，不撐出水平捲動 */}
@@ -258,7 +263,7 @@ export default function HomePage() {
               // w-0 min-w-full：寬度跟著按鈕欄，不拿自己的字寬撐按鈕欄。否則換行判斷會算進這行字，
               // 每次進首頁查房籍的那一下，320／360px 預設字級的按鈕就會掉到第二行
               <p role="status" className="w-0 min-w-full text-right text-xs text-fg-muted">
-                正在確認房間狀態，確認後才能登出
+                正在確認聚餐狀態，確認後才能登出
               </p>
             )}
           </div>
@@ -275,18 +280,18 @@ export default function HomePage() {
           </div>
           <h1 className="text-3xl leading-tight font-black tracking-[0.04em]">開一場聚餐決策</h1>
           <p className="text-sm leading-relaxed text-fg-muted">
-            建立房間後再設定用餐時間與地點，把邀請連結給大家，各自設好條件就能開始搜尋。
+            發起聚餐後再設定用餐時間與地點，把邀請連結給大家，各自設好條件就能開始搜尋。
           </p>
           {authState === 'member' && locateFailed && <>
             <p role="status" className="text-sm text-fg-muted">抓不到目前位置，請選擇出發點</p>
             <LocationPicker value={departure} onChange={handleDepartureChange} />
           </>}
           {authState === 'guest' ? (
-            <Link to="/auth?mode=register" className="btn btn-primary w-full">註冊後建立房間</Link>
+            <Link to="/auth?mode=register" className="btn btn-primary w-full">註冊後發起聚餐</Link>
           ) : authState === 'member' ? <button onClick={createRoom}
             disabled={busy || leavePending || (locateFailed && !departure)} className="btn btn-primary w-full">
             {busy && <Spinner className="h-5 w-5" />}
-            {busy ? '建立中…' : '建立房間'}
+            {busy ? '發起中…' : '發起聚餐'}
           </button> : authState === 'error' ? (
             <div className="space-y-2">
               <p className="flex items-center gap-2 text-sm text-danger" role="alert">
@@ -335,7 +340,7 @@ export default function HomePage() {
               <span className="font-semibold">
                 {suggestion.map(t => CUISINE_LABEL[t] ?? t).join('、')}
               </span>
-              。要加入預設偏好嗎？之後開房會自動帶入。
+              。要加入預設偏好嗎？之後發起聚餐會自動帶入。
             </p>
             <div className="flex gap-2">
               <button className="btn btn-primary flex-1" onClick={async () => {
@@ -377,37 +382,37 @@ export default function HomePage() {
         // leave 是全退（POST /api/leave 不挑房），所以每個房籍都要講
         const rooms = leaveTarget.kind === 'rooms' ? leaveTarget.rooms : []
         const multi = rooms.length > 1
-        // 「回到房間」是 button 不是 Link：React 的 autoFocus 只對表單控制項生效，
-        // 焦點必須落在安全那顆，不能落在「離開房間」上。
+        // 「回到聚餐」是 button 不是 Link：React 的 autoFocus 只對表單控制項生效，
+        // 焦點必須落在安全那顆，不能落在「退出聚餐」上。
         // 不給 onClose（Esc）：留在首頁又不決定會讓建房/加入永遠禁用，不是合法終態。
         return (
-          <LeaveConfirm title="你還在房間裡"
+          <LeaveConfirm title="你還有進行中的聚餐"
             actions={<>
               {rooms.length === 1 && (
                 <button type="button" autoFocus className="btn btn-primary w-full"
-                  onClick={() => nav(`/room/${rooms[0].id}`)}>回到房間</button>
+                  onClick={() => nav(`/room/${rooms[0].id}`)}>回到聚餐</button>
               )}
               {leaveTarget.kind === 'unknown' && (
                 <button type="button" autoFocus className="btn btn-quiet w-full"
                   onClick={() => window.location.reload()}>重新整理再試</button>
               )}
               <button type="button" className="btn w-full bg-danger text-on-danger"
-                onClick={confirmLeave}>離開房間</button>
+                onClick={confirmLeave}>退出聚餐</button>
             </>}>
             {leaveTarget.kind === 'unknown' && (
               <p className="text-sm text-fg-muted">
-                你可能還在房間裡，但房間現況查不到（連線可能不穩），離開後的影響無法確認
-                ——不確定就先重新整理再試，確定要走再按離開。
+                你可能還有進行中的聚餐，但聚餐現況查不到（連線可能不穩），離開後的影響無法確認
+                ——不確定就先重新整理再試，確定要走再按退出聚餐。
               </p>
             )}
             {rooms.length === 1 && (
               <p className="text-sm text-fg-muted">
-                你回到首頁了，但你還在房間 {rooms[0].code} 裡。離開後果如下：
+                你回到首頁了，但你還有一場進行中的聚餐（{rooms[0].code}）。退出後果如下：
               </p>
             )}
             {multi && (
               <p className="text-sm text-fg-muted">
-                你回到首頁了，但你還在 {rooms.length} 個房間裡，離開會一次全部離開：
+                你回到首頁了，但你還有 {rooms.length} 場進行中的聚餐，退出會一次全部退出：
               </p>
             )}
             {/* 多房時回房入口掛在各房區塊內，不替使用者猜要回哪一間（比照 HistoryPage） */}

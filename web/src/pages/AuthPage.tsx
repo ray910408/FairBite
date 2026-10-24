@@ -124,7 +124,7 @@ export default function AuthPage() {
         localStorage.setItem(`guest-upgrade:${currentUser.id}`, registrationEmail.toLowerCase())
         const { error: updateError } = await supabase.auth.updateUser({ email: registrationEmail }, { emailRedirectTo })
         if (updateError) throw updateError
-        setUpgradeNotice('驗證信已寄出。請先完成 Email 驗證，再回來設定密碼；目前訪客房籍與紀錄都會保留。')
+        setUpgradeNotice('驗證信已寄出。請先完成 Email 驗證，再回來設定密碼；目前訪客身分的聚餐與紀錄都會保留。')
         return
       }
       if (mode === 'login' && currentUser && (currentUser.is_anonymous || !!upgradeEmail)) {
@@ -163,7 +163,7 @@ export default function AuthPage() {
       try {
         await leaveRooms()
       } catch {
-        setError('離開目前房間失敗，仍保留訪客身分；請稍後再試')
+        setError('退出目前的聚餐失敗，仍保留訪客身分；請稍後再試')
         return
       }
       const { error: loginError } = await supabase.auth.signInWithPassword({ email, password })
@@ -210,7 +210,7 @@ export default function AuthPage() {
           {mode === 'register' && !user?.is_anonymous && !resumeUpgrade && !pendingUpgrade && (
             <div className="space-y-1">
               <label className="label" htmlFor="displayName">顯示名稱</label>
-              <input id="displayName" className="field" placeholder="房間裡看到的名字"
+              <input id="displayName" className="field" placeholder="聚餐裡看到的名字"
                 value={displayName} onChange={e => setDisplayName(e.target.value)} required maxLength={80} />
             </div>
           )}
@@ -250,9 +250,9 @@ export default function AuthPage() {
             <button autoFocus className="btn btn-quiet flex-1" type="button"
               onClick={() => setConfirmExistingLogin(false)}>取消</button>
             <button className="btn btn-primary flex-1" type="button" disabled={busy}
-              onClick={switchToExistingAccount}>離房並登入</button>
+              onClick={switchToExistingAccount}>退出聚餐並登入</button>
           </>}>
-          <p className="text-sm text-fg-muted">必須先離開目前房間。訪客紀錄不會合併到既有帳號；離席或登入失敗時不會切換身分。</p>
+          <p className="text-sm text-fg-muted">必須先退出目前的聚餐。訪客紀錄不會合併到既有帳號；離席或登入失敗時不會切換身分。</p>
           {error && <p role="alert" className="banner bg-danger-soft text-danger">
             <Alert className="h-5 w-5 shrink-0" />
             <span>{error}</span>

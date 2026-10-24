@@ -57,16 +57,16 @@ export function LeaveRoomsBody({ target, onReturn }: { target: LeaveTarget; onRe
     <>
       {target.kind === 'unknown' && (
         <p className="text-sm text-fg-muted">
-          你還在房間裡，回首頁就會離開。房間現況查不到（連線可能不穩），
+          你還有進行中的聚餐，回首頁就會退出。聚餐現況查不到（連線可能不穩），
           離開後的影響無法確認——不確定就先取消，稍後再試。
         </p>
       )}
       {rooms.length === 1 && (
-        <p className="text-sm text-fg-muted">你目前還在房間 {rooms[0].code} 裡：</p>
+        <p className="text-sm text-fg-muted">你目前還有一場進行中的聚餐（{rooms[0].code}）：</p>
       )}
       {multi && (
         <p className="text-sm text-fg-muted">
-          你目前在 {rooms.length} 個房間裡，回首頁會一次全部離開：
+          你目前有 {rooms.length} 場進行中的聚餐，回首頁會一次全部退出：
         </p>
       )}
       <LeaveRoomsList rooms={rooms} onReturn={onReturn} />
@@ -82,7 +82,7 @@ export function LeaveRoomsList({ rooms, onReturn }: { rooms: LeaveRoom[]; onRetu
     <>
       {rooms.map((r, i) => (
         <div key={r.id} className={multi ? 'space-y-2 rounded-card border border-border p-3' : ''}>
-          {multi && <p className="text-sm font-semibold">房間 {r.code}</p>}
+          {multi && <p className="text-sm font-semibold">聚餐 {r.code}</p>}
           <ul className="list-disc space-y-1 pl-5 text-sm text-fg-muted">
             {leaveNotice(r.status, r.memberCount, r.code, r.isHost).map(p => <li key={p}>{p}</li>)}
           </ul>

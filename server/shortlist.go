@@ -33,7 +33,7 @@ func shortlistError(w http.ResponseWriter, err error) {
 		jsonError(w, http.StatusConflict, string(rejected))
 		return
 	}
-	writeError(w, err, "房間狀態已更新，請重新整理")
+	writeError(w, err, "聚餐狀態已更新，請重新整理")
 }
 
 // keptPicksSQL：某成員目前仍可抽（kept）的圈選數；被退房重算排除的店不算數

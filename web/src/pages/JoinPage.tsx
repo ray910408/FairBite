@@ -36,7 +36,7 @@ export default function JoinPage() {
     const memberships = await fetchLeaveRooms()
     if (generation !== inviteGeneration.current) return
     if (memberships === null) {
-      setError('目前無法確認你的房間狀態，請稍後再試')
+      setError('目前無法確認你的聚餐狀態，請稍後再試')
       return
     }
     if (memberships.length > 0) {
@@ -49,7 +49,7 @@ export default function JoinPage() {
     if (generation !== inviteGeneration.current) return
     if (joinError || !data) setError(joinError?.message?.includes('頻繁')
       ? '嘗試過於頻繁，請稍後再試'
-      : joinError?.message?.includes('人數已滿') ? '房間人數已滿' : '房間不存在或已開始')
+      : joinError?.message?.includes('人數已滿') ? '聚餐人數已滿' : '找不到這場聚餐，或聚餐已開始')
     else {
       await applyDefaultPrefs(data)
       if (generation !== inviteGeneration.current) return
@@ -66,7 +66,7 @@ export default function JoinPage() {
       if (generation !== inviteGeneration.current) return
       const row = data?.[0]
       if (resolveError || !row) setError(resolveError?.message?.includes('頻繁')
-        ? '嘗試過於頻繁，請稍後再試' : '房間不存在或已開始')
+        ? '嘗試過於頻繁，請稍後再試' : '找不到這場聚餐，或聚餐已開始')
       else await joinResolvedRoom(row, generation)
     } catch {
       if (generation === inviteGeneration.current) setError('目前無法確認邀請，請檢查網路後再試')
@@ -132,7 +132,7 @@ export default function JoinPage() {
       await resolveInvite(generation)
     } catch {
       if (generation !== inviteGeneration.current) return
-      setError('原房間離席未完成；請重新確認房間狀態後再試')
+      setError('原本的聚餐還沒退出完成；請重新確認聚餐狀態後再試')
       setBusy(false)
     }
   }
@@ -143,7 +143,7 @@ export default function JoinPage() {
       inert={!!leaveTarget}>
       <div className="flex flex-col items-center gap-3 text-center">
         <Logo className="h-14 w-14" />
-        <h1 className="text-2xl font-bold">加入房間 {code}</h1>
+        <h1 className="text-2xl font-bold">加入聚餐 {code}</h1>
       </div>
 
       {busy && !leaveTarget && (
@@ -161,7 +161,7 @@ export default function JoinPage() {
                 e.target.setCustomValidity(validGuestNickname(e.target.value) || !e.target.value
                   ? '' : '暱稱最多 80 字')
                 setNickname(e.target.value)
-              }} placeholder="房間裡看到的名字" />
+              }} placeholder="聚餐裡看到的名字" />
           </div>
           <button className="btn btn-primary w-full" type="submit" disabled={busy}>以訪客身分加入</button>
         </form>
@@ -182,18 +182,18 @@ export default function JoinPage() {
 
     </main>
       {leaveTarget && (
-        <LeaveConfirm title="你目前在另一個房間" actionsClassName="sm:flex-row"
+        <LeaveConfirm title="你目前在另一場聚餐" actionsClassName="sm:flex-row"
           actions={<>
             {/* 多房時各房區塊各有「回到 XXX」（LeaveRoomsBody，焦點落在第一顆），不替使用者猜要回哪一間 */}
             {leaveTarget.kind === 'rooms' && leaveTarget.rooms.length === 1 && (
               <button autoFocus className="btn btn-quiet flex-1" type="button"
-                onClick={() => nav(`/room/${leaveTarget.rooms[0].id}`, { replace: true })}>取消並回原房</button>
+                onClick={() => nav(`/room/${leaveTarget.rooms[0].id}`, { replace: true })}>取消並回原本的聚餐</button>
             )}
             <button className="btn btn-primary flex-1" type="button" disabled={busy}
-              onClick={confirmLeaveAndJoin}>離開並加入</button>
+              onClick={confirmLeaveAndJoin}>退出並加入</button>
           </>}>
           {error && <p role="alert" className="banner bg-danger-soft text-danger">{error}</p>}
-          <p className="text-sm text-fg-muted">加入新房前必須先離開目前房間；不會自動切換或保留兩邊房籍。</p>
+          <p className="text-sm text-fg-muted">加入新的聚餐前必須先退出目前的聚餐；不會自動切換，也不會同時留在兩場聚餐。</p>
           <LeaveRoomsBody target={leaveTarget} onReturn={id => nav(`/room/${id}`, { replace: true })} />
         </LeaveConfirm>
       )}
