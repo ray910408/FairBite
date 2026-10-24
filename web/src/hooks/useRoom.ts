@@ -7,7 +7,7 @@ import type {
   CandidateRow, DrawRow, LocationVoteRow, MemberRow, Room, ShortlistPickRow, ShortlistVoteRow, VoteRow,
 } from '../lib/types'
 import { getUid } from '../lib/uid'
-import { VETO_QUOTA, applyVoteMirror, hasMyVote, myVetoCount, upCounts } from '../lib/votes'
+import { VETO_QUOTA, applyVoteMirror, hasMyVote, myVetoCount, upCounts, voteCountsByMember } from '../lib/votes'
 
 export function useRoom(roomId: string) {
   const [room, setRoom] = useState<Room | null>(null)
@@ -199,7 +199,9 @@ export function useRoom(roomId: string) {
     hasMyVote(votes, myUserId, rid, kind)
   const ups = upCounts(votes)
   const vetoesRemaining = VETO_QUOTA - myVetoCount(votes, myUserId)
+  const votesByMember = voteCountsByMember(votes)
 
   return { room, members, candidates, draw, locationVotes, shortlistVotes, shortlistPicks, myUserId, connected,
-    notFound, loadError, refetch, toggleVote, togglePick, hasMyVote: hasMyVoteForRestaurant, ups, vetoesRemaining }
+    notFound, loadError, refetch, toggleVote, togglePick, hasMyVote: hasMyVoteForRestaurant, ups, vetoesRemaining,
+    votesByMember }
 }

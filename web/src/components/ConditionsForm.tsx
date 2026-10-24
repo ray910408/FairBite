@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { ACTION_BAR } from '../lib/actionBar'
 import { supabase } from '../lib/supabase'
 import type { MemberRow } from '../lib/types'
 import { budgetTierLabel, CUISINE_OPTIONS, DIETARY_OPTIONS, TRANSPORT_LABELS } from '../lib/labels'
@@ -173,6 +174,7 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
   }
 
   return (
+    <>
     <div className="card animate-rise space-y-5">
       <h2 className="text-base font-semibold">我的條件</h2>
 
@@ -273,16 +275,20 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
         </div>
       </div>
 
-      {!isHost && (
+    </div>
+    {/* 成員在 lobby 唯一的主要動作：主按鈕樣式、黏在畫面底部（卡片外、階段區塊的直接子元素，才黏得住整段） */}
+    {!isHost && (
+      <div data-action-bar className={ACTION_BAR}>
         <button type="button" aria-pressed={form.ready}
           disabled={disabled}
           className={`btn w-full ${form.ready
-            ? 'bg-ok text-on-ok hover:bg-ok/90' : 'btn-quiet'}`}
+            ? 'bg-ok text-on-ok hover:bg-ok/90' : 'btn-primary'}`}
           onClick={() => toggleReady()}>
           {form.ready && <Check className="h-5 w-5" />}
           {form.ready ? '已準備（點擊取消）' : '我準備好了'}
         </button>
-      )}
-    </div>
+      </div>
+    )}
+    </>
   )
 }

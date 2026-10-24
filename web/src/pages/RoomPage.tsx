@@ -8,6 +8,7 @@ import {
   cancelShortlist, chooseLocation, confirmDraw, drawRoom, editConditions, redrawRoom, searchRoom,
   startVoting, voteLocation, voteShortlist,
 } from '../lib/api'
+import { ACTION_BAR } from '../lib/actionBar'
 import { loadRoomDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
 import { isVetoDeadEnd } from '../lib/deadEnd'
 import { buildInviteUrl } from '../lib/invite'
@@ -57,16 +58,10 @@ function revealBanner(el: HTMLElement | null) {
   if (hidden < 0) scrollTo({ top: scrollY + hidden - 16, behavior: scrollBehavior() })
 }
 
-// 候選列表下的操作列：候選很多時黏在畫面底部，不必捲到最後才按得到；捲到底時回到原位，不蓋住最後一家。
-// -mx-4／px-4 讓底色撐滿 main 的內距；半透明底同 RoomHeader；pb 讓開 iPhone 的 home indicator。
-// 手機橫放（視窗矮）時不黏：房主初選的操作列約 160px，黏著會把清單擠到只剩一兩行。
-// 掛 data-action-bar 的元素會讓 index.css 替 html 留 scroll-padding，Tab 的焦點才不會被它蓋住
-const ACTION_BAR = 'sticky bottom-0 z-10 -mx-4 bg-canvas/85 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur [@media(max-height:500px)]:static'
-
 export default function RoomPage() {
   const { id = '' } = useParams()
   const { room, members, candidates, draw, locationVotes, shortlistVotes, shortlistPicks, myUserId,
-    connected, notFound, loadError, refetch, toggleVote, togglePick, hasMyVote, ups, vetoesRemaining } = useRoom(id)
+    connected, notFound, loadError, refetch, toggleVote, togglePick, hasMyVote, ups, vetoesRemaining, votesByMember } = useRoom(id)
   const [spun, setSpun] = useState(false)
   const [actionError, setActionError] = useState('')
   const [actionWarning, setActionWarning] = useState('')
@@ -140,6 +135,8 @@ export default function RoomPage() {
   const [confirmAsk, setConfirmAsk] = useState<ConfirmAsk | null>(null)
   // 退房確認（ADR-0007：回首頁＝離席）
   const { leaveDialog, leaveChecking, askLeave, closeLeave } = useLeaveDialog({ onOpen: () => setConfirmAsk(null) })
+  // 查房籍中是不是「完成」按的：header 的 logo 也會讓 leaveChecking 為真，忙碌狀態不能掛到「完成」上
+  const [finishRequested, setFinishRequested] = useState(false)
   const confirmTriggerRef = useRef<HTMLElement | null>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const stageHeadingRef = useRef<HTMLHeadingElement>(null)
@@ -217,7 +214,7 @@ export default function RoomPage() {
   // 初選表決開放時成員自己有事可做，不能只叫人等
   const keptCount = candidates.filter(c => c.status === 'kept').length
   const guestHint = isHost || !me ? undefined : ({
-    lobby: !me.ready ? '設好條件後，按最下方「我準備好了」'
+    lobby: !me.ready ? '設好條件後，按畫面下方的「我準備好了」'
       : guestsReady ? '已準備好，等房主開始搜尋' : `已準備好，還在等 ${guestsNotReady} 人`,
     candidates: shortlistOpen(keptCount, members.length)
       ? '候選很多：可以先表決要不要初選，之後等房主開始投票' : '候選出爐了，等房主開始投票',
@@ -463,7 +460,7 @@ export default function RoomPage() {
           </p>
         )}
 
-        <MemberList room={room} members={members} picksByMember={picksByMember} />
+        <MemberList room={room} members={members} picksByMember={picksByMember} votesByMember={votesByMember} />
         {guestHint && <p role="status" className="banner bg-brand-soft text-brand-strong">{guestHint}</p>}
 
         {/* 階段區塊：key 讓換階段時整段重新掛載並淡入（候選逐行浮現也跟著重播）。只淡入不位移：
@@ -512,18 +509,21 @@ export default function RoomPage() {
         {room.status === 'lobby' && me && <ConditionsForm me={me} isHost={isHost} searchVersion={room.search_version} disabled={searching}
           onFlushAvailable={flush => { conditionsFlush.current = flush ?? (async () => false) }} />}
         {room.status === 'lobby' && isHost && <CuisineFilterSetting room={room} searching={searching} settings={settings} />}
+        {/* lobby 有兩三個畫面長：搜尋鈕（與誰還沒準備）黏在底部，房主不必捲到最後才看得到 */}
         {room.status === 'lobby' && isHost && (
-          <button className="btn btn-primary w-full"
-            disabled={searching || roomSettingsBlocked || !guestsReady} aria-busy={searching}
-            onClick={onSearch}>
-            {searching ? <><Spinner className="h-5 w-5" />搜尋中…</>
-              : guestsReady ? '開始搜尋餐廳' : `還有 ${guestsNotReady} 人還沒準備好`}
-          </button>
-        )}
-        {searchSlow && (
-          <p role="status" className="text-center text-sm text-fg-muted">
-            搜尋仍在進行；首次使用可能需要約 15 秒。
-          </p>
+          <div data-action-bar className={`${ACTION_BAR} space-y-3`}>
+            <button className="btn btn-primary w-full"
+              disabled={searching || roomSettingsBlocked || !guestsReady} aria-busy={searching}
+              onClick={onSearch}>
+              {searching ? <><Spinner className="h-5 w-5" />搜尋中…</>
+                : guestsReady ? '開始搜尋餐廳' : `還有 ${guestsNotReady} 人還沒準備好`}
+            </button>
+            {searchSlow && (
+              <p role="status" className="text-center text-sm text-fg-muted">
+                搜尋仍在進行；首次使用可能需要約 15 秒。
+              </p>
+            )}
+          </div>
         )}
         {room.status === 'candidates' && (
           <>
@@ -604,7 +604,12 @@ export default function RoomPage() {
               </p>
             )}
             {isHost && (
-              <div data-action-bar className={ACTION_BAR}>
+              // 投票進度放進操作列：成員列在頁首，捲到清單中段時房主看不到誰還沒投
+              <div data-action-bar className={`${ACTION_BAR} space-y-3`}>
+                {/* role=status：票數靠 Realtime 默默更新，報讀器要聽得到變化 */}
+                <p role="status" className="text-center text-sm text-fg-muted">
+                  {members.filter(m => (votesByMember[m.user_id] ?? 0) > 0).length}/{members.length} 人已投票
+                </p>
                 <button className="btn btn-primary w-full"
                   disabled={keptCount === 0 || pendingAction !== null}
                   aria-busy={pendingAction === 'draw'} onClick={onDraw}>
@@ -621,6 +626,10 @@ export default function RoomPage() {
           <DrawPanel room={room} draw={currentDraw} candidates={candidates} spun={spun} onSpun={() => setSpun(true)}
             me={me} myUserId={myUserId} isHost={isHost} isGuest={isGuest}
             pendingAction={pendingAction} lastCandidate={keptCount <= 1} onConfirm={onConfirmDraw}
+            onFinish={e => {
+              setFinishRequested(true)
+              void askLeave(e, room.id).finally(() => setFinishRequested(false))
+            }} finishing={finishRequested && leaveChecking}
             // 只剩這一家時重轉必然排光候選、全房回準備階段：先講清楚再送
             onRedraw={keptCount > 1 ? onRedraw : e => askConfirm(e, { title: '這是最後一家候選',
               body: '排除後就沒有候選了：全房會回到準備階段，要調整條件或換地點後重新搜尋。',

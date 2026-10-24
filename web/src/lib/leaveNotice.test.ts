@@ -43,10 +43,12 @@ describe('leaveNotice', () => {
     expect(points.join('\n')).not.toContain(`之後${REJOIN}`)
   })
 
-  it('decided：多一句抽中結果只能在足跡查看', () => {
-    const points = leaveNotice('decided', 3, 'ABC123', false)
-    expect(points).toContain('房間已定案，抽中的結果之後只能在「足跡」查看')
-    expect(points.join('\n')).not.toContain(`之後${REJOIN}`)
+  // 定案後沒有下一步：票、移交、刪房都不影響任何人，不拿來嚇人
+  it('decided：只講結果在足跡、回不來，不論人數與房主', () => {
+    for (const [count, host] of [[3, true], [1, false], [null, null]] as const) {
+      expect(leaveNotice('decided', count, 'ABC123', host))
+        .toEqual(['房間已定案，抽中的結果之後在「足跡」查看', '離開後就回不到這個房間了'])
+    }
   })
 
   it('pending：不宣稱未確認結果已寫入足跡，並說明耗盡後可重新加入', () => {
@@ -69,7 +71,7 @@ describe('leaveNotice', () => {
     expect(lobby.join('\n')).not.toContain(`之後${REJOIN}`) // 無條件版不得出現
     expect(lobby.join('\n')).toContain(`只要房間還在（你不是最後一位），之後仍${REJOIN}`)
 
-    for (const status of ['candidates', 'voting', 'decided'] as const) {
+    for (const status of ['candidates', 'voting'] as const) {
       const points = leaveNotice(status, null, 'ABC123', false)
       expect(points.join('\n')).not.toContain('你是房間裡唯一的人')
       expect(points).toContain('你若是最後一位成員，房間會直接被刪除')
@@ -121,7 +123,7 @@ describe('leaveNotice 房主移交', () => {
   const TRANSFER = '房主身分會移交給其餘成員（已註冊者優先，再依加入先後），你重新加入也不會拿回房主權限'
 
   it('多人房的房主：明說會移交、回來也拿不回控制權', () => {
-    for (const status of ['lobby', 'candidates', 'voting', 'decided'] as const) {
+    for (const status of ['lobby', 'candidates', 'voting'] as const) {
       expect(leaveNotice(status, 3, 'ABC123', true).join('\n')).toContain(`你是房主：離開後${TRANSFER}`)
     }
   })

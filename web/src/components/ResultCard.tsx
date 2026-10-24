@@ -1,7 +1,7 @@
 import type { CandidateRow, DrawRow, MemberRow } from '../lib/types'
 import { buildMapsUrl } from '../lib/maps'
 import { formatPercent } from '../lib/probability'
-import { TRANSPORT_LABELS } from '../lib/labels'
+import { restaurantFacts, TRANSPORT_LABELS } from '../lib/labels'
 import { MapPin } from './icons'
 
 // 雙框朱印：外框 3px、內縮 2px 再一圈細線；250ms 後才蓋下（等卡片浮現）
@@ -21,6 +21,7 @@ export default function ResultCard({ draw, candidates, me, confirmed = true }: {
   if (!winner) return null
   const r = winner.restaurants
   const prob = draw.probabilities[draw.winner_restaurant_id]
+  const facts = restaurantFacts(r)
   return (
     // overflow-hidden：印章 delay 期間停在 scale(2.4) 的起始幀，不裁的話會撐出約 47px 水平捲動
     <div className="card menu-frame relative flex animate-rise flex-col gap-2.5 overflow-hidden rounded-btn px-4.5 pt-5 pb-4">
@@ -38,6 +39,8 @@ export default function ResultCard({ draw, candidates, me, confirmed = true }: {
       <div className="flex min-h-18 flex-col justify-center gap-2.5 pr-20">
         {!confirmed && <p className="text-xs tracking-[0.35em] text-brand">抽中待確認</p>}
         <h2 className="text-3xl leading-tight font-black wrap-anywhere">{r.name}</h2>
+        {/* 同候選列：房主按「確認就吃這家」前要看得到評分、價位、菜系 */}
+        {facts.length > 0 && <p className="text-sm">{facts.join('・')}</p>}
       </div>
       <p className="text-sm text-fg-muted">
         {prob == null ? '歷史機率已隱藏，以保護成員隱私；原抽選結果保留' : <>

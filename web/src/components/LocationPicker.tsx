@@ -179,7 +179,8 @@ export default function LocationPicker({ value, onChange, fallbackLabel }: Props
             disabled={locating} aria-busy={locating}>
             {locating ? <><Spinner className="h-4 w-4" />定位中…</> : '使用目前位置'}
           </button>
-          <div ref={mapEl} className="h-56 w-full overflow-hidden rounded-card border border-border" aria-label="出發點地圖" />
+          {/* isolate：Leaflet 圖層 z-index 400 起跳，不關在地圖裡的話，捲到房間頁的黏底操作列（z-10）底下時會蓋過它 */}
+          <div ref={mapEl} className="isolate h-56 w-full overflow-hidden rounded-card border border-border" aria-label="出發點地圖" />
           <p className="text-xs text-fg-muted">搜尋後可拖曳圖釘或點地圖微調</p>
         </div>
       )}

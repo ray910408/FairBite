@@ -135,7 +135,7 @@ function roomState(room: Partial<Room> | null, over: Partial<RoomState> = {}): R
     locationVotes: [], shortlistVotes: [], shortlistPicks: [], myUserId: HOST, connected: true,
     notFound: false, loadError: false, refetch: vi.fn(async () => {}),
     toggleVote: vi.fn(async () => null), togglePick: vi.fn(async () => null),
-    hasMyVote: () => false, ups: {}, vetoesRemaining: 2, ...over,
+    hasMyVote: () => false, ups: {}, vetoesRemaining: 2, votesByMember: {}, ...over,
   }
 }
 
@@ -329,6 +329,13 @@ describe('RoomPage 抽選與待確認', () => {
     expect(queryButton('排除這家並重轉')).toBeNull()
   })
 
+  it('結果卡列出抽中店家的評分、價位、菜系（同候選列）', async () => {
+    const r1 = candidate('r1', { probability: 1 })
+    await renderRoom(pending(HOST, { candidates: [{ ...r1,
+      restaurants: { ...r1.restaurants, rating: 4.2, price_level: 1, cuisine_tags: ['japanese'] } }] }))
+    expect(document.body.textContent).toContain('★4.2・平價・日式')
+  })
+
   it.each([
     ['確認就吃這家', 'confirmDraw', '確認中…'],
     ['排除這家並重轉', 'redrawRoom', '重轉中…'],
@@ -386,6 +393,24 @@ describe('RoomPage 抽選與待確認', () => {
 
     await renderRoom(inStage('voting', HOST))
     expect(button('啟動轉盤')).toBeTruthy()
+  })
+
+  // 投票沒有「投完」的動作：成員列與房主的操作列講誰投了，房主才知道何時轉
+  it('投票中成員列顯示每人（含房主）的票數，不再顯示已準備；操作列顯示已投票人數', async () => {
+    await renderRoom(inStage('voting', HOST, { votesByMember: { [GUEST]: 2 } }))
+    const text = document.body.textContent
+    expect(text).toContain('已投 2 票')
+    expect(text).toContain('還沒投票') // 房主自己也列進度
+    expect(text).not.toContain('已準備')
+    expect(text).toContain('1/2 人已投票')
+  })
+
+  it('搜尋之後的階段不再顯示準備狀態', async () => {
+    for (const status of ['candidates', 'pending'] as const) {
+      const view = await renderRoom(inStage(status, HOST, { draw: DRAW }))
+      expect(document.body.textContent).not.toContain('已準備')
+      view.unmount()
+    }
   })
 
   it('這台看過這次轉盤就不重播：沒看過才轉，轉完記下來，再進來直接是結果卡', async () => {
@@ -999,7 +1024,7 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
   })
 
   it.each([
-    ['lobby', false, '設好條件後，按最下方「我準備好了」'],
+    ['lobby', false, '設好條件後，按畫面下方的「我準備好了」'],
     ['lobby', true, '已準備好，等房主開始搜尋'],
     ['candidates', false, '候選出爐了，等房主開始投票'],
     ['voting', false, '投完票後，等房主啟動轉盤'],
@@ -1435,6 +1460,71 @@ describe('回首頁離席確認', () => {
     expect(leave.textContent).toContain('房間 ABC123')
     expect(leave.textContent).toContain('房間 OLD999')
     expect(within(leave).getByRole('link', { name: '回到 OLD999' }).getAttribute('href')).toBe('/room/room-9')
+  })
+
+  // 定案畫面的「完成，回到首頁」：只剩這間定案房時沒有後果可講，帶 leaveConfirmed 讓首頁直接退
+  describe('定案後的「完成，回到首頁」', () => {
+    const decided = () => pending(HOST, { room: makeRoom({ status: 'decided' }) })
+    const finish = () => screen.getByRole('link', { name: '完成，回到首頁' })
+    beforeEach(() => { localStorage.setItem('wheel-seen:room-1', '4') })
+
+    it('只剩這間定案房：不開框，交給首頁直接退', async () => {
+      inRoom('decided')
+      await renderRoom(decided())
+      fireEvent.click(finish())
+      expect(await screen.findByText('首頁 {"leaveConfirmed":true}')).toBeTruthy()
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+
+    // 「只剩這間」與「已定案」兩個條件各自把關：房籍只有別間房（不論狀態）都要開框
+    it.each(['decided', 'lobby'] as const)('房籍只有別間 %s 房：照常開框', async status => {
+      mocks.memberRows.mockResolvedValue({ data: [leaveRow('room-9', 'OLD999', status)], error: null })
+      await renderRoom(decided())
+      fireEvent.click(finish())
+      expect((await screen.findByRole('dialog')).textContent).toContain('房間 OLD999')
+    })
+
+    it('只剩這間但查到的狀態不是定案：照常開框', async () => {
+      inRoom('pending')
+      await renderRoom(decided())
+      fireEvent.click(finish())
+      expect(await screen.findByRole('dialog')).toBeTruthy()
+    })
+
+    it('查房籍期間只有被按的入口顯示忙碌', async () => {
+      const rows = deferred<SelectResult>()
+      mocks.memberRows.mockReturnValueOnce(rows.promise)
+      await renderRoom(decided())
+      fireEvent.click(homeLink())
+      expect(finish().getAttribute('aria-busy')).toBe('false')
+      await act(async () => rows.resolve({ data: [leaveRow('room-1', 'ABC123', 'decided')], error: null }))
+      fireEvent.click(inDialog('取消'))
+
+      const again = deferred<SelectResult>()
+      mocks.memberRows.mockReturnValueOnce(again.promise)
+      const link = finish() // 忙碌時名稱換成「處理中…」，先抓住元素
+      fireEvent.click(link)
+      expect(link.getAttribute('aria-busy')).toBe('true')
+      expect(link.textContent).toBe('處理中…')
+      await act(async () => again.resolve({ data: [leaveRow('room-1', 'ABC123', 'decided')], error: null }))
+      expect(await screen.findByText('首頁 {"leaveConfirmed":true}')).toBeTruthy()
+    })
+
+    it('還有別的房籍：照常開框（leave 是全退）', async () => {
+      mocks.memberRows.mockResolvedValue({
+        data: [leaveRow('room-1', 'ABC123', 'decided'), leaveRow('room-9', 'OLD999', 'lobby')], error: null })
+      await renderRoom(decided())
+      fireEvent.click(finish())
+      expect((await screen.findByRole('dialog')).textContent).toContain('房間 OLD999')
+    })
+
+    it('header 的回首頁在定案房照樣先問，文案只剩兩句', async () => {
+      inRoom('decided')
+      await renderRoom(decided())
+      const leave = await openLeave()
+      expect(leave.textContent).toContain('離開後就回不到這個房間了')
+      expect(leave.textContent).not.toContain('投票')
+    })
   })
 
   it('房籍查詢失敗改用保守文案，不假裝知道後果', async () => {

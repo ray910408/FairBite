@@ -276,8 +276,8 @@ describe('足跡頁回首頁離席確認', () => {
 
   // P2-A：leave 是全退，兩個房籍都要講（舊房 leave 逾時後又建新房就會這樣）
   it('多房籍：兩個房的邀請碼與各自後果都列出，並各有回房入口', async () => {
-    const decided = leaveRow('room-2', 'BBB222', 'decided', 'me')
-    rooms(leaveRow('room-1', 'AAA111', 'lobby', 'me'), decided, decided, decided)
+    const voting = leaveRow('room-2', 'BBB222', 'voting', 'me')
+    rooms(leaveRow('room-1', 'AAA111', 'lobby', 'me'), voting, voting, voting)
     await renderHistory()
     const leave = await openLeave()
     const text = leave.textContent!
@@ -285,7 +285,7 @@ describe('足跡頁回首頁離席確認', () => {
     expect(text).toContain('房間 AAA111')
     expect(text).toContain('房間 BBB222')
     expect(text).toContain('邀請碼 AAA111 會跟著失效') // lobby 單人
-    expect(text).toContain('抽中的結果之後只能在「足跡」查看') // decided 多人
+    expect(text).toContain('你的投票會即刻作廢，候選盤面會重新計算') // voting 多人
     // 房主移交只講在有人可以繼任的那一間（AAA111 單人房是直接刪房）
     expect(text.split('房主身分會移交給').length - 1).toBe(1)
     expect(within(leave).getByRole('link', { name: '回到 AAA111' }).getAttribute('href')).toBe('/room/room-1')
