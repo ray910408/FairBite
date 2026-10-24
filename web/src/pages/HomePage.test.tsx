@@ -855,7 +855,7 @@ describe('HomePage 離席確認 dialog', () => {
     const text = dialog().textContent
     expect(text).toContain('你還在 2 個房間裡')
     expect(text).toContain('邀請碼 AAA111 會跟著失效') // lobby 單人
-    expect(text).toContain('抽中的結果之後只能在「足跡」查看') // decided 多人
+    expect(text).toContain('抽中的結果之後在「足跡」查看') // decided
     expect(within(dialog()).queryByRole('button', { name: '回到房間' })).toBeNull() // 不替使用者猜要回哪一間
     expect(document.activeElement).toBe(inDialog('回到 AAA111'))
 

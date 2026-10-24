@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { isGoogleSourced } from '../lib/placesSource'
 import { snapshotCandidates } from '../lib/probability'
 import type { CandidateRow, DrawRow, MemberRow, Room } from '../lib/types'
@@ -11,7 +12,7 @@ import { Spinner } from './icons'
 // 抽中待確認／定案：先轉盤，轉完換結果卡；待確認時房主可確認或排除這家重轉。
 // 這次抽選在這台裝置看過就不重播（wheelSeen）
 export default function DrawPanel({ room, draw, candidates, spun, onSpun, me, myUserId, isHost, isGuest,
-  pendingAction, lastCandidate, onRedraw, onConfirm }: {
+  pendingAction, lastCandidate, onRedraw, onConfirm, onFinish, finishing }: {
   room: Room
   draw: DrawRow
   candidates: CandidateRow[]
@@ -26,6 +27,9 @@ export default function DrawPanel({ room, draw, candidates, spun, onSpun, me, my
   lastCandidate: boolean
   onRedraw: (e: React.MouseEvent<HTMLButtonElement>) => void
   onConfirm: () => void
+  // 定案後「完成，回到首頁」：走房內同一套離席流程（只剩這間定案房時不開框）
+  onFinish: (e: React.MouseEvent<HTMLAnchorElement>) => void
+  finishing: boolean
 }) {
   const drawCandidates = snapshotCandidates(candidates, draw.probabilities)
   return (
@@ -40,6 +44,13 @@ export default function DrawPanel({ room, draw, candidates, spun, onSpun, me, my
           {room.status === 'decided' && <RatingPrompt roomId={room.id} />}
           {room.status === 'decided' && isGuest && (
             <GuestRegistrationPrompt userId={myUserId} roomId={room.id} open />
+          )}
+          {/* 定案後沒有下一步：給一顆看得見的出口，不必去找左上角的 logo。
+              文字別含「回首頁」：那是 logo 的 aria-label，子字串比對的選取器（Playwright）會抓到兩個 */}
+          {room.status === 'decided' && (
+            <Link to="/" onClick={onFinish} aria-busy={finishing} className="btn btn-quiet w-full">
+              {finishing ? <><Spinner className="h-5 w-5" />處理中…</> : '完成，回到首頁'}
+            </Link>
           )}
           {room.status === 'pending' && isHost && (
             <div className="grid grid-cols-2 gap-3">

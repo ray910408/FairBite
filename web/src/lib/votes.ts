@@ -14,6 +14,13 @@ export function upCounts(votes: VoteRow[]): Record<string, number> {
   return counts
 }
 
+// 成員列的投票進度：每人投了幾票（贊成＋否決）。投票沒有「投完」的動作，房主看這個決定何時啟動轉盤
+export function voteCountsByMember(votes: VoteRow[]): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const v of votes) counts[v.user_id] = (counts[v.user_id] ?? 0) + 1
+  return counts
+}
+
 export function myVetoCount(votes: VoteRow[], uid: string): number {
   return votes.filter(v => v.user_id === uid && v.kind === 'veto').length
 }

@@ -36,7 +36,10 @@ export function useLeaveDialog({ onOpen }: { onOpen?: () => void } = {}) {
     return () => { gen.current++ }
   }, [])
 
-  async function askLeave(e: MouseEvent<HTMLAnchorElement>) {
+  // finishedRoomId：定案畫面的「完成，回到首頁」。房籍只剩這一間已定案的房時，離開沒有後果可講
+  //（leaveNotice 的 decided），不開框，帶 leaveConfirmed 讓首頁直接退。leave 是全退：
+  // 還有別的房籍、或查詢失敗，就照常開框把每一間的後果講清楚
+  async function askLeave(e: MouseEvent<HTMLAnchorElement>, finishedRoomId?: string) {
     e.preventDefault()
     leaveTriggerRef.current = e.currentTarget
     const request = ++leaveGen.current
@@ -52,6 +55,10 @@ export function useLeaveDialog({ onOpen }: { onOpen?: () => void } = {}) {
     setLeaveChecking(false)
     if (rooms && rooms.length === 0) { // 房籍已消失（被踢／房已刪）：沒有後果可講，照原本的導覽走
       nav('/')
+      return
+    }
+    if (finishedRoomId && rooms?.length === 1 && rooms[0].id === finishedRoomId && rooms[0].status === 'decided') {
+      nav('/', { state: { leaveConfirmed: true } })
       return
     }
     onOpen?.()

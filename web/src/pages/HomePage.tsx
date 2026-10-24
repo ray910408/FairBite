@@ -136,7 +136,8 @@ export default function HomePage() {
     if (leaveDecided.current) return
     leaveDecided.current = true
     // RoomPage／HistoryPage 的離席確認會帶 leaveConfirmed 過來：使用者剛看過完整後果，
-    // 再問一次就是同一份 dialog 連跳兩張。但旗標是掛在 history entry 上的，重整會還原、
+    // 再問一次就是同一份 dialog 連跳兩張。定案畫面的「完成」也會帶，但只在房籍只剩那間定案房時
+    // （沒有後果可講，ADR-0007 2026-10-24 修訂，見 useLeaveDialog）。但旗標是掛在 history entry 上的，重整會還原、
     // 上一頁回到同一筆 entry 也會還原——不當場消耗掉，「退房→建新房→上一頁」就會靜默
     // 退掉新房，正好從這裡替本攔截要防的繞過開後門。replace 掉才是真的只用一次。
     if ((location.state as { leaveConfirmed?: boolean } | null)?.leaveConfirmed === true) {

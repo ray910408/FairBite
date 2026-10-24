@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { VETO_QUOTA, applyVoteMirror, hasMyVote, myVetoCount, upCounts } from './votes'
+import { VETO_QUOTA, applyVoteMirror, hasMyVote, myVetoCount, upCounts, voteCountsByMember } from './votes'
 import type { VoteRow } from './types'
 
 const vote = (uid: string, rid: string, kind: VoteRow['kind']): VoteRow =>
@@ -23,6 +23,11 @@ test('upCounts 只聚合 up，依店分組', () =>
   expect(upCounts([vote('a', 'r1', 'up'), vote('b', 'r1', 'up'),
     vote('a', 'r2', 'veto'), vote('c', 'r2', 'up')]))
     .toEqual({ r1: 2, r2: 1 }))
+
+test('voteCountsByMember 贊成與否決都算，依成員分組', () =>
+  expect(voteCountsByMember([vote('a', 'r1', 'up'), vote('a', 'r2', 'veto'),
+    vote('b', 'r1', 'up')]))
+    .toEqual({ a: 2, b: 1 }))
 
 test('myVetoCount 只算自己的 veto', () =>
   expect(myVetoCount([vote('me', 'r1', 'veto'), vote('me', 'r2', 'up'),
