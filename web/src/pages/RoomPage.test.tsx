@@ -726,7 +726,7 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
 
   it('房內三組房間設定的 segmented control 都有至少 44px 的 class', async () => {
     await renderRoom(lobby())
-    for (const label of ['熟悉', '平均', '探索', '馬上出發', '自訂時間', '關閉', '開啟']) {
+    for (const label of ['常去的店', '都可以', '多試新店', '馬上出發', '自訂時間', '關閉', '開啟']) {
       expect(button(label).className).toContain('min-h-11')
     }
   })
@@ -770,7 +770,7 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
 
     fireEvent.click(button('日式')) // 條件表單：debounce 中、還沒送出的修改
     // 改設定後馬上按搜尋（React 重繪、把搜尋鈕關起來之前）
-    const familiar = button('熟悉')
+    const familiar = button('常去的店')
     const search = button('開始搜尋餐廳')
     await act(async () => { familiar.click(); search.click() })
     await settle()
@@ -944,7 +944,7 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
       .mockResolvedValueOnce({ error: null, count: 1 })
     await renderRoom(lobbyReady())
 
-    fireEvent.click(button('熟悉'))
+    fireEvent.click(button('常去的店'))
     await settle()
     fireEvent.click(button('開啟'))
     await settle()
@@ -953,7 +953,7 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
     await settle()
     expect(api.searchRoom).not.toHaveBeenCalled()
 
-    fireEvent.click(button('熟悉'))
+    fireEvent.click(button('常去的店'))
     await settle()
     expect(button('開始搜尋餐廳').disabled).toBe(false)
     fireEvent.click(button('開始搜尋餐廳'))
@@ -1008,14 +1008,14 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
     await settle()
 
     expect(button('搜尋中…').disabled).toBe(true)
-    for (const label of ['熟悉', '平均', '探索', '馬上出發', '自訂時間', '關閉', '開啟', '日式']) {
+    for (const label of ['常去的店', '都可以', '多試新店', '馬上出發', '自訂時間', '關閉', '開啟', '日式']) {
       expect(button(label).disabled, label).toBe(true)
     }
 
     await act(async () => result.resolve({ error: null, warning: null }))
     await settle()
     expect(button('開始搜尋餐廳').disabled).toBe(false)
-    expect(button('熟悉').disabled).toBe(false)
+    expect(button('常去的店').disabled).toBe(false)
   })
 
   it('成員視角仍有「我準備好了」按鈕', async () => {
@@ -1076,14 +1076,14 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
   it('lobby 成員視角：房主的設定收成一行摘要，沒有開關', async () => {
     await renderRoom(lobby({ myUserId: GUEST }))
     expect(queryButton('關閉')).toBeNull()
-    expect(queryButton('平均')).toBeNull()
+    expect(queryButton('都可以')).toBeNull()
     expect(document.body.textContent).toContain('用餐時間：')
-    expect(document.body.textContent).toContain('・探索檔位：平均・菜系過濾：關閉')
+    expect(document.body.textContent).toContain('・選店方向：都可以・菜系過濾：關閉')
   })
 
   it('lobby 房主視角：邀請→用餐時間→探索檔位→地點→我的條件（距離在前）→菜系過濾', async () => {
     await renderRoom(lobby())
-    const order = ['邀請成員', '用餐時間', '探索檔位', '調整用餐地點', '我的條件', '菜系過濾']
+    const order = ['邀請成員', '用餐時間', '選店方向', '調整用餐地點', '我的條件', '菜系過濾']
     const headings = [...document.querySelectorAll('h2')].map(h => h.textContent ?? '')
     expect(headings.filter(h => order.includes(h))).toEqual(order)
     const text = document.body.textContent ?? ''
@@ -1113,11 +1113,11 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
   it('host 點探索檔位鎖定房間 id；count 0 時顯示探索檔位錯誤', async () => {
     mocks.roomsWrite.mockResolvedValue({ error: null, count: 0 })
     await renderRoom(lobby())
-    fireEvent.click(button('熟悉'))
+    fireEvent.click(button('常去的店'))
     await settle()
     expect(mocks.update).toHaveBeenCalledWith('rooms', { exploration: 'familiar' }, { count: 'exact' })
     expect(mocks.eq).toHaveBeenCalledWith('rooms', 'id', 'room-1')
-    expect(alertText()).toBe('探索檔位更新失敗')
+    expect(alertText()).toBe('選店方向更新失敗')
   })
 })
 

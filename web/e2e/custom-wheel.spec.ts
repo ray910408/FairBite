@@ -33,7 +33,7 @@ async function openHome(page: Page) {
   await page.getByLabel('密碼', { exact: true }).fill('test-password')
   await page.locator('form').getByRole('button', { name: '登入', exact: true }).click()
   await expect(page.getByRole('button', { name: '加入', exact: true })).toBeEnabled()
-  await page.locator('summary').filter({ hasText: '自製轉盤' }).click()
+  await page.locator('summary').filter({ hasText: '簡易轉盤' }).click()
 }
 
 async function addOption(page: Page, label: string) {
@@ -43,7 +43,7 @@ async function addOption(page: Page, label: string) {
 
 test('首頁自製選項：空白、重複、刪除、刷新清空；抽選不送 API', async ({ page }) => {
   await openHome(page)
-  const wheel = page.getByRole('region', { name: '自製轉盤', exact: true })
+  const wheel = page.getByRole('region', { name: '簡易轉盤', exact: true })
   const requests: string[] = []
   page.on('request', request => {
     if (/\/(api|rest\/v1)\//.test(new URL(request.url()).pathname)) requests.push(request.url())
@@ -70,7 +70,7 @@ test('首頁自製選項：空白、重複、刪除、刷新清空；抽選不�
   await addOption(page, '便當')
   expect(requests).toEqual([])
   await page.reload()
-  await page.locator('summary').filter({ hasText: '自製轉盤' }).click()
+  await page.locator('summary').filter({ hasText: '簡易轉盤' }).click()
   await expect(wheel.getByRole('listitem')).toHaveCount(0)
   await expect(wheel.getByRole('status')).toHaveText('再加入 2 個選項就能開始')
 })
@@ -79,7 +79,7 @@ test('連續抽選含相同結果均旋轉，盤面指針對準結果，轉動�
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await openHome(page)
   for (const label of ['火鍋', '拉麵', '便當']) await addOption(page, label)
-  const wheel = page.getByRole('region', { name: '自製轉盤', exact: true })
+  const wheel = page.getByRole('region', { name: '簡易轉盤', exact: true })
   const disc = page.getByTestId('custom-wheel-disc')
   await page.evaluate(() => {
     const draws = [0, 0, 0.999999, 0.5]
@@ -110,7 +110,7 @@ test('375px 手機、鍵盤新增、20 項上限與減少動態偏好', async ({
   await page.setViewportSize({ width: 375, height: 812 })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await openHome(page)
-  const wheel = page.getByRole('region', { name: '自製轉盤', exact: true })
+  const wheel = page.getByRole('region', { name: '簡易轉盤', exact: true })
   const input = page.getByLabel('選項名稱', { exact: true })
   await input.fill('長'.repeat(40))
   await input.press('Enter')

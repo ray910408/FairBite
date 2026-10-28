@@ -56,7 +56,7 @@ export const ROOM_STATUS_LABEL: Record<Room['status'], string> = {
 }
 
 export const EXPLORATION_OPTIONS: [Room['exploration'], string, string][] = [
-  ['familiar', '熟悉', '常去的店優先：新店加成關閉，最近去過的降權減半'],
-  ['balanced', '平均', '預設的平衡配置'],
-  ['explore', '探索', '沒去過的店加成加倍、常中選的店降權，鼓勵換口味'],
+  ['familiar', '常去的店', '優先推薦大家常去、吃過的店'],
+  ['balanced', '都可以', '常去的店和新店都會推薦（預設）'],
+  ['explore', '多試新店', '優先推薦大家沒吃過的新店，常去的店少推一點'],
 ]

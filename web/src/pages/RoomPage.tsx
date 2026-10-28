@@ -492,7 +492,7 @@ export default function RoomPage() {
         {(room.status === 'candidates' || room.status === 'shortlisting' || room.status === 'voting') && (
           <p className="text-xs text-fg-muted">
             用餐時間：{formatMealTime(room.meal_time)}
-            ・探索檔位：{EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[1]}
+            ・選店方向：{EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[1]}
           </p>
         )}
         {/* 房主 lobby 依設定的先後排：邀請→用餐時間→探索檔位→地點→我的條件（距離在前）→菜系過濾→搜尋。

@@ -108,7 +108,7 @@ async function createAndJoinRoom(a: Page, b: Page, verifyTouch = false) {
   if (verifyTouch) {
     await expect375Layout(a)
     await expectButtonsAtLeast44px(a, [
-      '熟悉', '平均', '探索', '馬上出發', '自訂時間', '關閉', '開啟',
+      '常去的店', '都可以', '多試新店', '馬上出發', '自訂時間', '關閉', '開啟',
       '步行', '開車', '大眾運輸',
     ])
   }
@@ -370,10 +370,10 @@ test('雙使用者完整閉環（投票版）', async ({ browser }) => {
     await createAndJoinRoom(a, b, true)
 
     // D10 #3：房主切到探索；成員同步在摘要卡看到狀態與說明，且沒有可改的開關。
-    await a.getByRole('button', { name: '探索', exact: true }).click()
-    await expect(b.getByText(/・探索檔位：探索・/)).toBeVisible()
-    await expect(b.getByText('沒去過的店加成加倍、常中選的店降權，鼓勵換口味', { exact: true })).toBeVisible()
-    for (const label of ['熟悉', '平均', '探索']) {
+    await a.getByRole('button', { name: '多試新店', exact: true }).click()
+    await expect(b.getByText(/・選店方向：多試新店・/)).toBeVisible()
+    await expect(b.getByText('優先推薦大家沒吃過的新店，常去的店少推一點', { exact: true })).toBeVisible()
+    for (const label of ['常去的店', '都可以', '多試新店']) {
       await expect(b.getByRole('button', { name: label, exact: true })).toHaveCount(0)
     }
 

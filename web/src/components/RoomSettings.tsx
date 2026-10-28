@@ -22,12 +22,12 @@ export function RoomSettingsSummary({ room }: { room: Room }) {
       {/* 每項整段不折行：320px 時寧可換到下一行，也不要把「菜系過濾」拆成兩半 */}
       <p className="text-sm">
         <span className="whitespace-nowrap">用餐時間：{formatMealTime(room.meal_time)}</span>
-        ・<span className="whitespace-nowrap">探索檔位：{EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[1]}</span>
+        ・<span className="whitespace-nowrap">選店方向：{EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[1]}</span>
         ・<span className="whitespace-nowrap">菜系過濾：{room.cuisine_filter ? '開啟' : '關閉'}</span>
       </p>
       <p className="text-xs text-fg-muted">{EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[2]}</p>
       {/* D14：同房主卡片的冷啟動誠實說明 */}
-      <p className="text-xs text-fg-muted">檔位依成員的同席紀錄調整機率；大家開始用這裡抽餐廳後才會逐漸生效</p>
+      <p className="text-xs text-fg-muted">選店方向要等大家在這裡一起吃過幾次，才會看出差別</p>
       {/* 開啟時你的料理偏好直接決定哪些店留下，要讓成員知道後果 */}
       {room.cuisine_filter && (
         <p className="text-xs text-fg-muted">菜系過濾：只保留符合成員菜系偏好的店；大家都沒選菜系時不會作用</p>
@@ -109,20 +109,20 @@ export function MealTimeSetting({ room, searching, settings,
 export function ExplorationSetting({ room, searching, settings }: SettingProps) {
   return (
     <section className="card animate-rise">
-      <h2 className="mb-1 text-sm font-semibold text-fg-muted">探索檔位</h2>
+      <h2 className="mb-1 text-sm font-semibold text-fg-muted">選店方向</h2>
       <p className="mb-3 text-xs text-fg-muted">
         {EXPLORATION_OPTIONS.find(([k]) => k === room.exploration)?.[2]}
       </p>
       {/* D14：冷啟動誠實說明 —— 檔位靠同席紀錄運作，沒紀錄前三檔等效 */}
       <p className="mb-3 text-xs text-fg-muted">
-        檔位依成員的同席紀錄調整機率；大家開始用這裡抽餐廳後才會逐漸生效
+        要等大家在這裡一起吃過幾次，才會看出差別
       </p>
       <div className={`grid grid-cols-3 ${SEGMENTED}`}>
         {EXPLORATION_OPTIONS.map(([key, label]) => (
           <button key={key} type="button" aria-pressed={room.exploration === key}
             disabled={searching}
             className={segment(room.exploration === key)}
-            onClick={() => settings.saveRoomSetting({ exploration: key }, '探索檔位更新失敗')}>
+            onClick={() => settings.saveRoomSetting({ exploration: key }, '選店方向更新失敗')}>
             {label}
           </button>
         ))}

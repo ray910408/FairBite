@@ -67,12 +67,12 @@ export default function CustomWheel() {
     <details className="card animate-rise">
       <summary className="flex min-h-11 list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
         <span>
-          <span className="block font-serif text-base font-bold">自製轉盤</span>
+          <span className="block font-serif text-base font-bold">簡易轉盤</span>
           <span className="block text-sm text-fg-muted">自己填選項，轉一下決定</span>
         </span>
         <Chevron className="disclosure-chevron h-5 w-5 shrink-0" />
       </summary>
-      <section aria-label="自製轉盤" className="mt-4 space-y-4">
+      <section aria-label="簡易轉盤" className="mt-4 space-y-4">
         <p id="custom-wheel-help" className="text-sm text-fg-muted">
           加入 2–20 個選項，每個機率相同。選項僅供本次使用，重新整理即清空。
         </p>
