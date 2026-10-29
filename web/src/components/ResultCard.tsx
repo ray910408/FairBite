@@ -48,7 +48,7 @@ export default function ResultCard({ draw, candidates, me, confirmed = true }: {
         </>}
       </p>
       <a className={`btn ${confirmed ? 'btn-primary' : 'btn-secondary'} mt-1 w-full text-center text-sm tracking-[0.05em]`}
-        href={buildMapsUrl(r.lat, r.lng, r.place_id, r.source, me?.transport ?? 'walking')}
+        href={buildMapsUrl(r, me?.transport ?? 'walking')}
         target="_blank" rel="noreferrer">
         <MapPin className="h-4.5 w-4.5" />
         從目前位置用 Google Maps 導航（{TRANSPORT_LABELS[me?.transport ?? 'walking']}）

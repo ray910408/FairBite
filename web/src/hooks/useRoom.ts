@@ -37,7 +37,7 @@ export function useRoom(roomId: string) {
         .select('id, code, host_id, status, exploration, meal_time, cuisine_filter, draw_version, search_version').eq('id', roomId).single(),
       supabase.from('room_members').select('*, profiles(display_name)').eq('room_id', roomId),
       supabase.from('room_candidates')
-        .select('*, restaurants(name, lat, lng, place_id, source, rating, price_level, cuisine_tags)').eq('room_id', roomId)
+        .select('*, restaurants(name, address, lat, lng, place_id, source, rating, price_level, cuisine_tags)').eq('room_id', roomId)
         .order('restaurant_id'),
       supabase.from('draws').select('*').eq('room_id', roomId)
         .order('version', { ascending: false }).limit(1).maybeSingle(),

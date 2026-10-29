@@ -38,7 +38,8 @@ export type RestaurantRef = {
   place_id: string
   // 出身欄位（restaurants.source，migration 0013）：'google' | 'mock'
   source: string
-  // 候選列的店家資訊（labels.ts restaurantFacts）；只有房內候選查詢會帶
+  // 候選列的店家資訊（labels.ts restaurantFacts、maps.ts buildMapsUrl）；只有房內候選查詢會帶
+  address?: string
   rating?: number | null
   price_level?: number | null
   cuisine_tags?: string[]
