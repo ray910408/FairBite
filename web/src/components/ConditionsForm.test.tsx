@@ -440,6 +440,35 @@ describe('ConditionsForm Google 評分偏好', () => {
   })
 })
 
+describe('ConditionsForm 套用口味建議', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  function renderWithAdd(props: Partial<Props> = {}) {
+    let add: ((cuisines: string[]) => boolean) | null = null
+    render(form({ ...props, onAddCuisinesAvailable: fn => { add = fn } }))
+    return (cuisines: string[]) => {
+      let ok: boolean | undefined
+      act(() => { ok = add!(cuisines) })
+      return ok
+    }
+  }
+
+  it('併進料理偏好並去重（已勾的菜系不重複送，DB 會拒收重複值）', async () => {
+    const add = renderWithAdd({ me: { ...me, cuisines: ['japanese'] } })
+    expect(add(['japanese', 'korean'])).toBe(true)
+    expect(pressed(button('韓式'))).toBe('true')
+    await debounce()
+    expect(lastCuisines()).toEqual(['japanese', 'korean'])
+  })
+
+  it('已準備（條件凍結）時不動，回 false 讓建議卡照實提示', async () => {
+    const add = renderWithAdd({ me: { ...me, ready: true } })
+    expect(add(['korean'])).toBe(false)
+    expect(pressed(button('韓式'))).toBe('false')
+    await debounce()
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
+})
+
 describe('ConditionsForm 凍結（準備／搜尋中）', () => {
   beforeEach(() => { vi.useFakeTimers() })
 

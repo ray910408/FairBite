@@ -82,7 +82,7 @@ export default function RoomPage() {
   // 初選表決／取消初選共用（兩者不會同時出現：表決只在 candidates、取消只在 shortlisting）
   const [shortlistBusy, setShortlistBusy] = useState(false)
   const conditionsFlush = useRef<() => Promise<boolean>>(async () => true)
-  const addConditionCuisines = useRef<(cuisines: string[]) => void>(() => {})
+  const addConditionCuisines = useRef<(cuisines: string[]) => boolean>(() => false)
   const guestsReadyRef = useRef(true)
   const searchInFlight = useRef(false)
   const searchSlowTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -515,7 +515,7 @@ export default function RoomPage() {
         ) : <RoomSettingsSummary room={room} />)}
         {room.status === 'lobby' && me && <ConditionsForm me={me} isHost={isHost} searchVersion={room.search_version} disabled={searching}
           onFlushAvailable={flush => { conditionsFlush.current = flush ?? (async () => false) }}
-          onAddCuisinesAvailable={add => { addConditionCuisines.current = add ?? (() => {}) }} />}
+          onAddCuisinesAvailable={add => { addConditionCuisines.current = add ?? (() => false) }} />}
         {room.status === 'lobby' && isHost && <CuisineFilterSetting room={room} searching={searching} settings={settings} />}
         {/* lobby 有兩三個畫面長：搜尋鈕（與誰還沒準備）黏在底部，房主不必捲到最後才看得到 */}
         {room.status === 'lobby' && isHost && (

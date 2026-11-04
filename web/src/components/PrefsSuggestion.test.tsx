@@ -47,7 +47,7 @@ const failed: Result = { data: null, error: new Error('query failed') }
 const suggestion = () => screen.queryByText(/根據你的用餐紀錄/)?.textContent ?? null
 const button = (name: string) => screen.getByRole<HTMLButtonElement>('button', { name })
 
-async function renderCard(onApply = vi.fn()) {
+async function renderCard(onApply = vi.fn((_cuisines: string[]) => true)) {
   const view = render(<PrefsSuggestion onApply={onApply} />)
   await settle()
   return { ...view, onApply }
@@ -91,6 +91,29 @@ describe('PrefsSuggestion', () => {
     expect(mocks.write).toHaveBeenCalledWith({ default_prefs: { cuisines: ['ramen', 'japanese'], budget: 1 } })
     expect(onApply).toHaveBeenCalledWith(['japanese'])
     expect(suggestion()).toBeNull()
+  })
+
+  it('這次條件已凍結（onApply 回 false）：預設偏好照存，照實說這次沒改到', async () => {
+    await renderCard(vi.fn(() => false))
+    fireEvent.click(button('套用'))
+    await settle()
+    expect(mocks.write).toHaveBeenCalledOnce()
+    expect(suggestion()).toBeNull()
+    expect(screen.getByRole('status').textContent).toBe('已加入預設偏好；這次的條件已凍結，沒有跟著改')
+  })
+
+  it('寫入中按鈕鎖住：連點只送一次', async () => {
+    const write = deferred<Result>()
+    mocks.write.mockReturnValueOnce(write.promise)
+    const { onApply } = await renderCard()
+    fireEvent.click(button('套用'))
+    await settle()
+    expect(button('套用中…').disabled).toBe(true)
+    fireEvent.click(button('套用中…'))
+    await act(async () => write.resolve({ error: null }))
+    await settle()
+    expect(mocks.write).toHaveBeenCalledOnce()
+    expect(onApply).toHaveBeenCalledOnce()
   })
 
   it('預設偏好寫入失敗：不改這次的條件，建議留著可重試', async () => {
