@@ -102,7 +102,7 @@ vi.mock('../components/LocationPicker', async () => {
 vi.mock('../components/PrefsSuggestion', async () => {
   const { createElement } = await import('react')
   return {
-    default: ({ onApply }: { onApply?: (cuisines: string[]) => void }) =>
+    default: ({ onApply }: { onApply?: (cuisines: string[]) => boolean }) =>
       createElement('button', { type: 'button', onClick: () => onApply?.(['japanese']) }, '套用口味建議'),
   }
 })
@@ -275,6 +275,15 @@ describe('RoomPage 口味建議卡', () => {
     view.unmount()
 
     await renderRoom(inStage('candidates'))
+    expect(queryButton('套用口味建議')).toBeNull()
+  })
+
+  it('房主按下搜尋（條件凍結）就收起，不讓套用只改到預設偏好', async () => {
+    vi.mocked(api.searchRoom).mockReturnValue(new Promise(() => {}))
+    await renderRoom(lobbyReady())
+    expect(queryButton('套用口味建議')).not.toBeNull()
+    fireEvent.click(button('開始搜尋餐廳'))
+    await settle()
     expect(queryButton('套用口味建議')).toBeNull()
   })
 })

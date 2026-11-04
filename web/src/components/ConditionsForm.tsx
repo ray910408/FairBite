@@ -14,7 +14,7 @@ const CUSTOM_MAX = 10
 export default function ConditionsForm({ me, isHost, searchVersion, disabled = false, onFlushAvailable, onAddCuisinesAvailable }:
   { me: MemberRow; isHost: boolean; searchVersion: number; disabled?: boolean;
     onFlushAvailable?: (flush: (() => Promise<boolean>) | null) => void
-    onAddCuisinesAvailable?: (add: ((cuisines: string[]) => void) | null) => void }) {
+    onAddCuisinesAvailable?: (add: ((cuisines: string[]) => boolean) | null) => void }) {
   const [form, setForm] = useState(me)
   const [saveError, setSaveError] = useState('')
   const [customDraft, setCustomDraft] = useState('')
@@ -104,10 +104,14 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
     return () => onFlushAvailable?.(null)
   })
 
-  // 房間頁頂端口味建議卡的「套用」：併進料理偏好，走同一條 debounce 寫入；凍結時不動
+  // 房間頁頂端口味建議卡的「套用」：併進料理偏好，走同一條 debounce 寫入。凍結時（含按下準備、
+  // 伺服器還沒回 ready 的那段）不動並回 false，讓卡片照實說這次條件沒變。去重：建議的菜系可能已經勾了，
+  // 重複值會被 room_members_cuisines_bounds 拒收、誤報成條件已凍結
   useEffect(() => {
     onAddCuisinesAvailable?.(cuisines => {
-      if (!frozen) save({ cuisines: [...new Set([...form.cuisines, ...cuisines])] })
+      if (frozen) return false
+      save({ cuisines: [...new Set([...form.cuisines, ...cuisines])] })
+      return true
     })
     return () => onAddCuisinesAvailable?.(null)
   })
