@@ -30,6 +30,12 @@ select throws_like($$update room_members set dietary='["unknown"]' where user_id
  '%room_members_dietary_bounds%', 'unknown dietary rejected');
 select lives_ok($$update room_members set cuisines='["japanese","taiwanese"]',dietary='["vegetarian"]' where user_id=auth.uid()$$,
  'normal preferences remain writable');
+select lives_ok($$update room_members set rating_pref=4.5 where user_id=auth.uid()$$,
+ 'rating preference writable by the member');
+select throws_like($$update room_members set rating_pref=5.1 where user_id=auth.uid()$$,
+ '%room_members_rating_pref_bounds%', 'rating preference above 5 rejected');
+select throws_like($$update room_members set rating_pref=-0.1 where user_id=auth.uid()$$,
+ '%room_members_rating_pref_bounds%', 'negative rating preference rejected');
 select lives_ok($$update room_members set cuisines='["japanese","custom:泰式"]' where user_id=auth.uid()$$,
  'one custom cuisine accepted alongside presets');
 select lives_ok($$update room_members set cuisines=jsonb_build_array('custom:'||repeat('泰',10)) where user_id=auth.uid()$$,

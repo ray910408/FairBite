@@ -25,7 +25,7 @@ vi.mock('../lib/supabase', () => ({ supabase: { from: mocks.from, rpc: mocks.rpc
 
 const me: MemberRow = {
   room_id: 'room-1', user_id: 'user-b', budget_max: 800, cuisines: [], dietary: [],
-  max_distance_m: 1000, transport: 'walking', ready: false,
+  max_distance_m: 1000, transport: 'walking', rating_pref: 0, ready: false,
 }
 
 const CONDITION_ERROR = '儲存失敗：聚餐可能已開始選餐，條件已凍結'
@@ -249,7 +249,7 @@ describe('ConditionsForm 條件寫入防線', () => {
     expect(alertText()).toBeNull()
   })
 
-  it('條件批次寫入只含五個條件欄位，不夾帶 ready', async () => {
+  it('條件批次寫入只含六個條件欄位，不夾帶 ready', async () => {
     render(form())
     drag(900)
     await debounce()
@@ -258,7 +258,7 @@ describe('ConditionsForm 條件寫入防線', () => {
     const [payload, options] = mocks.update.mock.calls.at(-1)!
     expect(payload).toEqual({
       budget_max: 900, cuisines: [], dietary: [], max_distance_m: 1000,
-      transport: 'walking',
+      transport: 'walking', rating_pref: 0,
     })
     expect(payload).not.toHaveProperty('ready')
     expect(options).toEqual({ count: 'exact' })
@@ -419,12 +419,33 @@ describe('ConditionsForm 條件寫入防線', () => {
   })
 })
 
+describe('ConditionsForm Google 評分偏好', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  const rating = () => screen.getByRole<HTMLInputElement>('slider', { name: /Google 評分偏好/ })
+
+  it('0 顯示不在意；拖到 4.3 顯示星等並照 debounce 寫出一位小數', async () => {
+    render(form())
+    expect(rating().value).toBe('0')
+    expect(rating().closest('label')?.textContent).toContain('不在意')
+
+    fireEvent.change(rating(), { target: { value: '4.3' } })
+    expect(rating().closest('label')?.textContent).toContain('★ 4.3')
+    await debounce()
+    expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({ rating_pref: 4.3 }), { count: 'exact' })
+  })
+
+  it('滑桿範圍 0–5、每格 0.1', () => {
+    render(form({ me: { ...me, rating_pref: 3.5 } }))
+    expect([rating().min, rating().max, rating().step, rating().value]).toEqual(['0', '5', '0.1', '3.5'])
+  })
+})
+
 describe('ConditionsForm 凍結（準備／搜尋中）', () => {
   beforeEach(() => { vi.useFakeTimers() })
 
   it('成員 ready 時所有條件輸入凍結、ready 鈕仍可點', () => {
     render(form({ me: { ...me, ready: true } }))
-    expect(screen.getAllByRole('slider')).toHaveLength(2)
+    expect(screen.getAllByRole('slider')).toHaveLength(3)
     expect(controls().filter(el => !el.disabled)).toEqual([button('已準備（點擊取消）')])
   })
 

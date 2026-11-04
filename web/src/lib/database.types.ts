@@ -424,6 +424,7 @@ export type Database = {
           dietary: Json
           joined_at: string
           max_distance_m: number
+          rating_pref: number
           ready: boolean
           room_id: string
           transport: string
@@ -435,6 +436,7 @@ export type Database = {
           dietary?: Json
           joined_at?: string
           max_distance_m?: number
+          rating_pref?: number
           ready?: boolean
           room_id: string
           transport?: string
@@ -446,6 +448,7 @@ export type Database = {
           dietary?: Json
           joined_at?: string
           max_distance_m?: number
+          rating_pref?: number
           ready?: boolean
           room_id?: string
           transport?: string

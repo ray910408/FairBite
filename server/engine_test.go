@@ -1107,3 +1107,60 @@ func TestMemberLikesQueryMatches(t *testing.T) {
 		})
 	}
 }
+
+// 評分偏好：基準是「有選的成員」的平均——沒選（0）的人不拉低基準。fixture 放在兩種算法翻面的切點：
+// 4.0 與 0 若一起平均是 2.0，3.5 分的店會變成加權；只算有選的人是 4.0，3.5 分的店要降權
+func TestRatingFactor(t *testing.T) {
+	prefs := func(ps ...float64) []Member {
+		ms := make([]Member, len(ps))
+		for i, p := range ps {
+			ms[i] = member(func(m *Member) { m.UserID = fmt.Sprintf("u%d", i); m.RatingPref = p })
+		}
+		return ms
+	}
+	cases := []struct {
+		name       string
+		rating     float64
+		members    []Member
+		wantFactor string
+		wantMult   float64
+		wantReason string
+	}{
+		{"高於期望加權", 4.5, prefs(4.0), "rating", 1.2, "Google 評分 4.5，高於成員期望 4.0"},
+		{"低於期望降權", 3.5, prefs(4.0), "rating", 0.8, "Google 評分 3.5，低於成員期望 4.0"},
+		{"等於期望中性但留紀錄", 4.0, prefs(3.5, 4.5), "rating", 1.0, "Google 評分 4.0，符合成員期望"},
+		{"沒選的成員不拉低基準", 3.5, prefs(4.0, 0), "rating", 0.8, "Google 評分 3.5，低於成員期望 4.0"},
+		{"加權有上限", 5.0, prefs(3.0), "rating", RatingMultMax, "Google 評分 5.0，高於成員期望 3.0"},
+		{"降權有下限", 1.0, prefs(5.0), "rating", RatingMultMin, "Google 評分 1.0，低於成員期望 5.0"},
+		{"沒人選評分不作用", 4.5, prefs(0, 0), "", 1.0, ""},
+		{"Google 沒給評分不臆測", 0, prefs(4.0), "", 1.0, ""},
+	}
+	for _, c := range cases {
+		e := ratingFactor(rest(func(r *Restaurant) { r.Rating = c.rating }), EngineInput{Members: c.members})
+		if e.Factor != c.wantFactor || math.Abs(e.Mult-c.wantMult) > 1e-9 || e.Reason != c.wantReason {
+			t.Errorf("%s: got %+v, want {%s %v %s}", c.name, e, c.wantFactor, c.wantMult, c.wantReason)
+		}
+	}
+}
+
+// 接進 Evaluate：同條件的兩家店，評分高於期望的那家機率較高，trace 也帶著評分理由
+func TestRatingFactorChangesOutcome(t *testing.T) {
+	high := rest(func(r *Restaurant) { r.Rating = 4.6 })
+	low := rest(func(r *Restaurant) { r.PlaceID = "p2"; r.Rating = 3.6 })
+	in := EngineInput{Restaurants: []Restaurant{high, low}, Now: lunchMonday, CenterLat: 25.0478, CenterLng: 121.5170,
+		Members: []Member{member(func(m *Member) { m.RatingPref = 4.1 })}}
+	res := Evaluate(in)
+	if len(res.Kept) != 2 || !(res.Kept[0].Probability > res.Kept[1].Probability) {
+		t.Fatalf("kept = %+v", res.Kept)
+	}
+	last := res.Kept[1].Trace[len(res.Kept[1].Trace)-1]
+	if last.Factor != "rating" || last.Reason != "Google 評分 3.6，低於成員期望 4.1" {
+		t.Errorf("低分店 trace = %+v", last)
+	}
+
+	in.Members[0].RatingPref = 0 // 沒人選：兩家回到同機率
+	res = Evaluate(in)
+	if math.Abs(res.Kept[0].Probability-res.Kept[1].Probability) > 1e-12 {
+		t.Errorf("沒人選評分時機率應相同：%v vs %v", res.Kept[0].Probability, res.Kept[1].Probability)
+	}
+}

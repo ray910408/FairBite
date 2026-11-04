@@ -11,9 +11,10 @@ const TRANSPORTS = Object.entries(TRANSPORT_LABELS) as [MemberRow['transport'], 
 const CUSTOM_PREFIX = 'custom:'
 const CUSTOM_MAX = 10
 
-export default function ConditionsForm({ me, isHost, searchVersion, disabled = false, onFlushAvailable }:
+export default function ConditionsForm({ me, isHost, searchVersion, disabled = false, onFlushAvailable, onAddCuisinesAvailable }:
   { me: MemberRow; isHost: boolean; searchVersion: number; disabled?: boolean;
-    onFlushAvailable?: (flush: (() => Promise<boolean>) | null) => void }) {
+    onFlushAvailable?: (flush: (() => Promise<boolean>) | null) => void
+    onAddCuisinesAvailable?: (add: ((cuisines: string[]) => void) | null) => void }) {
   const [form, setForm] = useState(me)
   const [saveError, setSaveError] = useState('')
   const [customDraft, setCustomDraft] = useState('')
@@ -61,6 +62,7 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
           dietary,
           max_distance_m: pending.value.max_distance_m,
           transport: pending.value.transport,
+          rating_pref: pending.value.rating_pref,
         }, { count: 'exact' }).eq('room_id', me.room_id).eq('user_id', me.user_id)
         failed = !!error || count === 0
       } catch {
@@ -100,6 +102,14 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
   useEffect(() => {
     onFlushAvailable?.(flushPending)
     return () => onFlushAvailable?.(null)
+  })
+
+  // 房間頁頂端口味建議卡的「套用」：併進料理偏好，走同一條 debounce 寫入；凍結時不動
+  useEffect(() => {
+    onAddCuisinesAvailable?.(cuisines => {
+      if (!frozen) save({ cuisines: [...new Set([...form.cuisines, ...cuisines])] })
+    })
+    return () => onAddCuisinesAvailable?.(null)
   })
 
   // debounce 400ms：slider 拖曳每格都會觸發 onChange，直接連發 update 會逆序落庫
@@ -224,6 +234,23 @@ export default function ConditionsForm({ me, isHost, searchVersion, disabled = f
           value={form.budget_max}
           onChange={e => save({ budget_max: +e.target.value })} />
         <span className="block text-xs text-fg-muted">Google 提供粗略價位層級，不保證每人實際 TWD 價格。</span>
+      </label>
+
+      {/* 偏好不是門檻：伺服器取有選的人的平均當基準（engine.go ratingFactor），只加減權、不排除 */}
+      <label className="block space-y-1">
+        <span className="flex items-baseline justify-between">
+          <span className="label">Google 評分偏好</span>
+          <span className="font-mono text-sm font-semibold text-brand">
+            {form.rating_pref > 0 ? `★ ${form.rating_pref.toFixed(1)}` : '不在意'}
+          </span>
+        </span>
+        <input type="range" min={0} max={5} step={0.1} className="h-6 w-full"
+          disabled={frozen}
+          value={form.rating_pref}
+          onChange={e => save({ rating_pref: +e.target.value })} />
+        <span className="block text-xs text-fg-muted">
+          取有選的人的平均：Google 評分高於平均的店加權、低於的降權，不會排除。拉到 0 是不在意。
+        </span>
       </label>
 
       <div role="group" aria-labelledby="cuisine-label">

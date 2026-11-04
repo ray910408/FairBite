@@ -7,6 +7,7 @@ import { fetchLeaveRooms } from '../lib/roomMembership'
 import { supabase } from '../lib/supabase'
 import { Alert, Logo, Spinner } from '../components/icons'
 import { LeaveConfirm, LeaveRoomsBody } from '../components/LeaveConfirm'
+import { ThemeMenu } from '../components/ThemeMenu'
 import type { LeaveTarget } from '../lib/roomMembership'
 
 type InviteRow = { room_id: string; status: string; is_member: boolean }
@@ -141,6 +142,7 @@ export default function JoinPage() {
     <>
     <main className="mx-auto flex min-h-screen w-full max-w-sm flex-col justify-center gap-5 p-4"
       inert={!!leaveTarget}>
+      <div className="absolute top-4 right-4"><ThemeMenu /></div>
       <div className="flex flex-col items-center gap-3 text-center">
         <Logo className="h-14 w-14" />
         <h1 className="text-2xl font-bold">加入聚餐 {code}</h1>
