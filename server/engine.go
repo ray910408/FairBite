@@ -18,6 +18,7 @@ type Member struct {
 	Dietary      []string
 	MaxDistanceM int
 	Transport    string
+	RatingPref   float64 // 期望的 Google 評分 0.0–5.0；0 = 不在意（見 ratingFactor）
 	Ready        bool
 }
 
@@ -454,6 +455,32 @@ func voteFactor(r Restaurant, in EngineInput) TraceEntry {
 		fmt.Sprintf("%d 張贊成票", ups)}
 }
 
+// ratingFactor：成員各自選期望的 Google 評分（0 = 不在意），取有選者的平均（捨入到一位小數，
+// 與 reason 顯示的值一致）當基準；店的評分高於基準加權、低於降權，每差一顆星 RatingMultPerStar，
+// 夾在 RatingMultMin～RatingMultMax。沒人選、或 Google 沒給評分的店都中性且不出 chip（未知不臆測）。
+func ratingFactor(r Restaurant, in EngineInput) TraceEntry {
+	var sum float64
+	n := 0
+	for _, m := range in.Members {
+		if m.RatingPref > 0 {
+			sum += m.RatingPref
+			n++
+		}
+	}
+	if n == 0 || r.Rating <= 0 {
+		return TraceEntry{Mult: 1.0}
+	}
+	want := math.Round(sum/float64(n)*10) / 10
+	mult := math.Min(RatingMultMax, math.Max(RatingMultMin, 1+RatingMultPerStar*(r.Rating-want)))
+	switch {
+	case r.Rating > want:
+		return TraceEntry{"rating", mult, fmt.Sprintf("Google 評分 %.1f，高於成員期望 %.1f", r.Rating, want)}
+	case r.Rating < want:
+		return TraceEntry{"rating", mult, fmt.Sprintf("Google 評分 %.1f，低於成員期望 %.1f", r.Rating, want)}
+	}
+	return TraceEntry{"rating", 1.0, fmt.Sprintf("Google 評分 %.1f，符合成員期望", r.Rating)}
+}
+
 func gearScale(scales map[string]float64, exploration string) float64 {
 	if s, ok := scales[exploration]; ok {
 		return s
@@ -525,7 +552,7 @@ func recencyFactor(r Restaurant, in EngineInput) TraceEntry {
 	return TraceEntry{"recency", mult, "依群體近期用餐概況調整"}
 }
 
-var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor, exposureFactor, rainFactor, timeSlotFactor}
+var factors = []factorFn{prefFactor, distFactor, closingFactor, voteFactor, recencyFactor, exposureFactor, rainFactor, timeSlotFactor, ratingFactor}
 
 func Evaluate(in EngineInput) EngineResult {
 	var res EngineResult

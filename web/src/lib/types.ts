@@ -27,6 +27,8 @@ export type MemberRow = {
   dietary: string[]
   max_distance_m: number
   transport: 'walking' | 'driving' | 'transit'
+  // 期望的 Google 評分 0.0–5.0（一位小數），0＝不在意；伺服器取有選者的平均加減權
+  rating_pref: number
   ready: boolean
   profiles?: { display_name: string }
 }

@@ -44,7 +44,7 @@ export default function RatingPrompt({ roomId }: { roomId: string }) {
 
 // HomePage：只提示最近 1 筆、7 天內、未評分的同席紀錄（eng review D4 附帶約束）。
 // 略過依使用者保存 historyId 集合，同一筆不再糾纏；下一筆新紀錄自然重新出現。
-export function RecentRatingPrompt({ onRated }: { onRated?: () => void } = {}) {
+export function RecentRatingPrompt() {
   const [row, setRow] = useState<{ id: string; name: string } | null>(null)
   const [rated, setRated] = useState(false)
   const [userId, setUserId] = useState('')
@@ -73,7 +73,7 @@ export function RecentRatingPrompt({ onRated }: { onRated?: () => void } = {}) {
   return (
     <section className="card animate-rise space-y-3 text-center">
       <p className="text-sm font-semibold">上次吃的《{row.name}》滿意嗎？</p>
-      <StarRow historyId={row.id} onRated={() => { setRated(true); onRated?.() }} />
+      <StarRow historyId={row.id} onRated={() => setRated(true)} />
       <button type="button" className="text-sm text-fg-muted underline"
         onClick={() => {
           addDismissed(`rating-dismissed:${userId}`, [row.id])

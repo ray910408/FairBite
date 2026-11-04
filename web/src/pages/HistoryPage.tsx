@@ -7,6 +7,7 @@ import { Logo, Spinner, Star } from '../components/icons'
 import { LeaveConfirm, LeaveRoomsBody } from '../components/LeaveConfirm'
 import StarRow from '../components/StarRow'
 import TrendChart from '../components/TrendChart'
+import { ThemeMenu } from '../components/ThemeMenu'
 
 // 足跡頁（spec 2026-08-14）：同席紀錄的個人視圖。單一查詢直讀 Supabase
 //（RLS 只回自己的列），統計全在前端現算；補評成功只更新本地列，不 refetch。
@@ -78,8 +79,11 @@ export default function HistoryPage() {
             <span className="font-serif text-lg font-black tracking-[0.12em] whitespace-nowrap sm:text-xl">今天吃什麼</span>
           </div>
           {/* 一律攔下當場查（ADR-0007）；查到真的沒房才放行導覽 */}
-          <Link to="/" className="btn btn-quiet ml-auto min-h-11 px-3 text-sm"
-            aria-busy={leaveChecking} onClick={askLeave}>回首頁</Link>
+          <div className="ml-auto flex items-center gap-1">
+            <ThemeMenu />
+            <Link to="/" className="btn btn-quiet min-h-11 px-3 text-sm"
+              aria-busy={leaveChecking} onClick={askLeave}>回首頁</Link>
+          </div>
         </div>
         <div className="mx-auto w-full max-w-md px-4">
           <div className="double-rule mt-4" />

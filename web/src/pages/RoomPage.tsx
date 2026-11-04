@@ -25,6 +25,7 @@ import { LeaveConfirm, LeaveRoomsBody } from '../components/LeaveConfirm'
 import CandidateList from '../components/CandidateList'
 import DrawPanel from '../components/DrawPanel'
 import { MemberList } from '../components/MemberList'
+import PrefsSuggestion from '../components/PrefsSuggestion'
 import RelocationPanel from '../components/RelocationPanel'
 import { RoomHeader } from '../components/RoomHeader'
 import { CuisineFilterSetting, ExplorationSetting, MealTimeSetting, RoomSettingsSummary } from '../components/RoomSettings'
@@ -81,6 +82,7 @@ export default function RoomPage() {
   // 初選表決／取消初選共用（兩者不會同時出現：表決只在 candidates、取消只在 shortlisting）
   const [shortlistBusy, setShortlistBusy] = useState(false)
   const conditionsFlush = useRef<() => Promise<boolean>>(async () => true)
+  const addConditionCuisines = useRef<(cuisines: string[]) => void>(() => {})
   const guestsReadyRef = useRef(true)
   const searchInFlight = useRef(false)
   const searchSlowTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -460,6 +462,11 @@ export default function RoomPage() {
           </p>
         )}
 
+        {/* 口味建議放最上方：進房設條件時先看到，套用即併進下方的料理偏好。條件凍結（搜尋中、已準備）時不出，免得套用只改到預設偏好 */}
+        {room.status === 'lobby' && me && !searching && (isHost || !me.ready) && (
+          <PrefsSuggestion onApply={cuisines => addConditionCuisines.current(cuisines)} />
+        )}
+
         <MemberList room={room} members={members} picksByMember={picksByMember} votesByMember={votesByMember} />
         {guestHint && <p role="status" className="banner bg-brand-soft text-brand-strong">{guestHint}</p>}
 
@@ -507,7 +514,8 @@ export default function RoomPage() {
           </>
         ) : <RoomSettingsSummary room={room} />)}
         {room.status === 'lobby' && me && <ConditionsForm me={me} isHost={isHost} searchVersion={room.search_version} disabled={searching}
-          onFlushAvailable={flush => { conditionsFlush.current = flush ?? (async () => false) }} />}
+          onFlushAvailable={flush => { conditionsFlush.current = flush ?? (async () => false) }}
+          onAddCuisinesAvailable={add => { addConditionCuisines.current = add ?? (() => {}) }} />}
         {room.status === 'lobby' && isHost && <CuisineFilterSetting room={room} searching={searching} settings={settings} />}
         {/* lobby 有兩三個畫面長：搜尋鈕（與誰還沒準備）黏在底部，房主不必捲到最後才看得到 */}
         {room.status === 'lobby' && isHost && (

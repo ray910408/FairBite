@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { ROOM_STATUS_LABEL } from '../lib/labels'
 import type { Room } from '../lib/types'
 import { Check, Copy, Logo } from './icons'
+import { ThemeMenu } from './ThemeMenu'
 
 const STEPS = [
   { key: 'lobby', label: '設定條件', numeral: '壹' },
@@ -50,9 +51,9 @@ export function RoomHeader({ room, copied, onCopy, leaveChecking, onLeave }: {
 }) {
   return (
     <header className="sticky top-0 z-20 bg-canvas/85 backdrop-blur">
-      {/* 320px 放不下最長的印章（等待選新地點）時讓印章換行，不撐出水平捲動。
-          左右內距和 main 同為 p-4，logo、步驟列、雙線才對齊下方卡片；手機的間距收成 gap-x-1（同首頁標頭的按鈕組），
-          320px 預設字級的三字印章才不會被擠到第二行 */}
+      {/* 放不下印章時讓印章換行（靠右），不撐出水平捲動。
+          左右內距和 main 同為 p-4，logo、步驟列、雙線才對齊下方卡片；手機的間距收成 gap-x-1（同首頁標頭的按鈕組）。
+          加了外觀鈕後，預設字級要 360px 以上三字印章才排得進第一列；320px 印章換到第二列，換取房內隨時能改外觀 */}
       <div className="mx-auto flex w-full max-w-lg flex-wrap items-center gap-x-1 gap-y-1 p-4 pb-2 sm:gap-x-3">
         {/* 回首頁＝離席（ADR-0007），代價不可逆——攔下導覽先查再確認 */}
         <Link to="/" aria-label="回首頁"
@@ -69,6 +70,8 @@ export function RoomHeader({ room, copied, onCopy, leaveChecking, onLeave }: {
         </button>
         <span className="sr-only" aria-live="polite">{copied ? '邀請連結已複製' : ''}</span>
         <Link to="/history" className="btn btn-quiet min-h-11 px-1.5 text-xs sm:px-2 sm:text-sm">足跡</Link>
+        {/* 外觀（主題、字級）房內隨時可改，不必回首頁＝離席才改得到 */}
+        <ThemeMenu />
         <span className="seal ml-auto text-xs min-[375px]:text-sm">
           {ROOM_STATUS_LABEL[room.status]}
         </span>

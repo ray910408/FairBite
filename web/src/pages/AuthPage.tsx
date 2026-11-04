@@ -6,6 +6,7 @@ import { authErrorMessage } from '../lib/authErrors'
 import { emailCallback, supabase } from '../lib/supabase'
 import { Alert, Logo, Spinner } from '../components/icons'
 import { LeaveConfirm } from '../components/LeaveConfirm'
+import { ThemeMenu } from '../components/ThemeMenu'
 
 // Same format policy as server/signup_email.go; DNS MX is enforced by the Supabase hook.
 const registrationEmailPattern = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.[a-z]{2,63}$/i
@@ -182,6 +183,7 @@ export default function AuthPage() {
     <>
     <main className="mx-auto flex min-h-screen w-full max-w-sm flex-col justify-center gap-6 p-4"
       inert={confirmExistingLogin}>
+      <div className="absolute top-4 right-4"><ThemeMenu /></div>
       <div className="animate-rise flex flex-col items-center gap-3 text-center">
         <Logo className="h-14 w-14" />
         <h1 className="text-3xl font-bold tracking-tight">今天吃什麼</h1>

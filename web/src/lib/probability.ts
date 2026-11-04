@@ -16,6 +16,7 @@ export const FACTOR_LABELS: Record<string, string> = {
   exposure: '曝光/新店',
   weather: '天氣',
   timeslot: '時段',
+  rating: '評分',
 }
 
 export function formatPercent(p: number): string {

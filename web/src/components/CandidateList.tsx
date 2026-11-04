@@ -77,7 +77,7 @@ export default function CandidateList({ rows, voting, picking }: {
             // animation-name 不變，否決／收回時這一列才不會先透明再重新浮現
             if (voting && isVetoed(c)) return (
               <li key={c.restaurant_id} data-testid="vetoed-row"
-                className="flex animate-row-in flex-col gap-1.5 border-t border-border px-1 py-3.5 text-fg-muted"
+                className="flex animate-row-in flex-col gap-1.5 border-t border-rule/40 px-1 py-3.5 text-fg-muted"
                 style={{ animationDelay: `${stagger(ci)}ms` }}>
                 <div className="flex items-baseline gap-2 font-serif">
                   <span aria-hidden="true" className="text-[0.8125rem] font-bold">{String(ci + 1).padStart(2, '0')}</span>
@@ -101,7 +101,7 @@ export default function CandidateList({ rows, voting, picking }: {
             const factors = c.weight_breakdown.filter(decisive)
             return (
               <li key={c.restaurant_id} data-testid="candidate-row"
-                className="flex animate-row-in flex-col gap-2 border-t border-border px-1 py-3.5"
+                className="flex animate-row-in flex-col gap-2 border-t border-rule/40 px-1 py-3.5"
                 style={{ animationDelay: `${stagger(ci)}ms` }}>
                 <div className="flex items-baseline gap-2 font-serif">
                   <span aria-hidden="true" className="text-[0.8125rem] font-bold text-brand">{String(ci + 1).padStart(2, '0')}</span>
@@ -188,7 +188,7 @@ export default function CandidateList({ rows, voting, picking }: {
           })}
         </ul>
         {excluded.length > 0 && (
-          <details className="border-t border-border px-1 pb-2">
+          <details className="border-t border-rule/40 px-1 pb-2">
             <summary className="flex min-h-11 list-none items-center gap-2 font-serif text-sm font-bold text-fg-muted [&::-webkit-details-marker]:hidden">
               <Chevron className="disclosure-chevron h-4 w-4" />
               被排除的 {excluded.length} 家

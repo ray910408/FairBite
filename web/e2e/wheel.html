@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Wheel harness</title>
+  </head>
+  <body>
+    <!-- wheel.spec.ts 專用：vite dev 直接掛真轉盤，不需 Go／Supabase。
+         「抽選」模擬抽選結果晚一拍才到（API 回應、Realtime 推送）：點擊後等一個 macrotask 才掛轉盤 -->
+    <div id="root"></div>
+    <script type="module">
+      import { StrictMode, createElement as h, useState } from 'react'
+      import { createRoot } from 'react-dom/client'
+      import '/src/index.css'
+      import Wheel from '/src/components/Wheel.tsx'
+
+      const row = (id, probability) => ({
+        room_id: 'room-1', restaurant_id: id, status: 'kept', probability, weight_breakdown: [],
+        exclusion_reason: null, exclusion_kinds: [],
+        restaurants: { name: `店${id}`, lat: 25, lng: 121, place_id: id, source: 'mock' },
+      })
+      const rows = [row('r1', 0.5), row('r2', 0.3), row('r3', 0.2)]
+
+      function Harness() {
+        const [draw, setDraw] = useState(0)
+        return h('div', { className: 'p-4' },
+          h('button', { type: 'button', onClick: () => setTimeout(() => setDraw(d => d + 1), 0) }, '抽選'),
+          draw > 0 && h(Wheel, { key: draw, rows, winnerId: 'r2', onDone: () => {} }))
+      }
+      createRoot(document.getElementById('root')).render(h(StrictMode, null, h(Harness)))
+    </script>
+  </body>
+</html>

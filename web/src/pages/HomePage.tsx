@@ -2,15 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { leaveRooms, wakeApi } from '../lib/api'
 import { supabase } from '../lib/supabase'
-import { CUISINE_LABEL, CUISINE_OPTIONS } from '../lib/labels'
 import { getPosition } from '../lib/geolocation'
-import { suggestCuisines } from '../lib/prefsLearning'
 import { loadLastDeparture, saveLastDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import { getUid } from '../lib/uid'
 import { applyDefaultPrefs } from '../lib/defaultPrefs'
 import { inviteCodeFromLink } from '../lib/invite'
-import { addDismissed, readDismissed } from '../lib/dismissed'
 import { Alert, Logo, LogOut, Spinner } from '../components/icons'
 import { LeaveConfirm, LeaveRoomsList } from '../components/LeaveConfirm'
 import { ThemeMenu } from '../components/ThemeMenu'
@@ -30,21 +27,15 @@ export default function HomePage() {
   const [code, setCode] = useState('')
   const [createError, setCreateError] = useState('')
   const [joinError, setJoinError] = useState('')
-  const [prefsError, setPrefsError] = useState('')
   const [departure, setDeparture] = useState<DeparturePoint | null>(null)
   // 沒有上次出發點又抓不到定位：首頁才開選點
   const [locateFailed, setLocateFailed] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [myUserId, setMyUserId] = useState('')
-  const [prefs, setPrefs] = useState<Record<string, unknown>>({})
-  const [suggestion, setSuggestion] = useState<string[]>([])
-  const suggestionRequest = useRef(0)
-  const suggestionsMounted = useRef(false)
+  const mounted = useRef(false)
   // 回首頁＝離席（ADR-0007）：settle 前禁用建房/加入，避免晚到的 leave 誤刪新房
   const [leavePending, setLeavePending] = useState(true)
   // 離席確認的對象（ADR-0007 2026-08-16 修訂）
   const [leaveTarget, setLeaveTarget] = useState<LeaveTarget | null>(null)
-  const [suggestionLoadError, setSuggestionLoadError] = useState('')
   const [authState, setAuthState] = useState<'checking' | 'guest' | 'member' | 'error'>('checking')
   const location = useLocation()
   // 每次 mount 只做一次離席決策：消耗旗標的 replace 會讓 location 變、下面的 effect
@@ -54,48 +45,6 @@ export default function HomePage() {
   const handleDepartureChange = useCallback((p: DeparturePoint) => {
     setDeparture(p)
     setCreateError('')
-  }, [])
-
-  const loadSuggestions = useCallback(async () => {
-    if (!suggestionsMounted.current) return
-    const request = ++suggestionRequest.current
-    setSuggestion([]) // 評分後先撤下舊快照，避免 refetch 完成前仍可採納已失效建議
-    const uid = await getUid()
-    if (!uid || request !== suggestionRequest.current || !suggestionsMounted.current) return
-    // 口味查詢是附加功能；上次出發點先還原，任一查詢失敗也不能阻擋建房。
-    setDeparture(prev => prev ?? loadLastDeparture(uid))
-    const [
-      { data: profile, error: profileError },
-      { data: history, error: historyError },
-      { data: lowRows, error: lowRowsError },
-    ] = await Promise.all([
-      supabase.rpc('get_my_default_prefs').single(),
-      supabase.from('dining_history')
-        .select('rating, restaurants(cuisine_tags)')
-        .order('decided_at', { ascending: false }).limit(50),
-      supabase.from('dining_history')
-        .select('rating, restaurants(cuisine_tags)').lte('rating', 2),
-    ])
-    if (request !== suggestionRequest.current || !suggestionsMounted.current) return
-    if (profileError || historyError || lowRowsError) {
-      setSuggestionLoadError('口味建議暫時載入失敗；不影響發起聚餐與本次聚餐條件')
-      return
-    }
-    if (!profile) return
-    const dp = (profile.default_prefs ?? {}) as Record<string, unknown>
-    const current = Array.isArray(dp.cuisines) ? (dp.cuisines as string[]) : []
-    const tags = suggestCuisines([...(lowRows ?? []), ...(history ?? [])], current,
-      CUISINE_OPTIONS.map(([k]) => k))
-    const dismissed = readDismissed(`prefs-suggest-dismissed:${uid}`)
-    setMyUserId(uid)
-    setPrefs(dp)
-    setSuggestion(tags.filter(t => !dismissed.includes(t)))
-    setSuggestionLoadError('')
-  }, [])
-
-  const cancelSuggestionLoads = useCallback(() => {
-    suggestionsMounted.current = false
-    suggestionRequest.current++
   }, [])
 
   const loadAuthState = useCallback(async () => {
@@ -119,11 +68,10 @@ export default function HomePage() {
   useEffect(() => { wakeApi() }, [])
 
   useEffect(() => {
-    suggestionsMounted.current = true
-    void loadSuggestions()
+    mounted.current = true
     void loadAuthState()
-    return cancelSuggestionLoads
-  }, [cancelSuggestionLoads, loadAuthState, loadSuggestions])
+    return () => { mounted.current = false }
+  }, [loadAuthState])
 
   // 退房是所有路徑的共同終點：leavePending 直到 settle 才解除，期間建房/加入維持禁用
   const doLeave = useCallback(() => {
@@ -179,7 +127,7 @@ export default function HomePage() {
   }
 
   // 建房一律「馬上出發」，用餐時間與地點進房後在 lobby 改。create_room 仍要座標，出發點依序取：
-  // 已還原的上次出發點 → 點擊當下補讀（loadSuggestions 的還原是非同步的，可能還沒落地）→
+  // 地圖選的出發點 → 這台裝置記得的上次出發點 →
   // 目前定位 → 都沒有才在卡片裡開選點。抓定位最久 LOCATE_LIMIT_MS，也算在 busy 裡
   async function createRoom() {
     setBusy(true)
@@ -202,8 +150,7 @@ export default function HomePage() {
         }
       }
       // 等定位時離開了首頁（例如點了足跡）：不建房，免得晚點把人拉進一間新房。
-      // suggestionsMounted 只在卸載時設 false，等同頁面的掛載旗標
-      if (!suggestionsMounted.current) return
+      if (!mounted.current) return
       await persistRoom(creatorUid, pos)
     } finally {
       setBusy(false)
@@ -275,7 +222,7 @@ export default function HomePage() {
         <CustomWheel />
         <section className="card animate-rise space-y-4 p-5">
           <div aria-hidden="true" className="flex items-center gap-2.5 text-xs tracking-[0.3em] text-brand">
-            本日聚餐
+            本次聚餐
             <span className="h-px flex-1 bg-brand/30" />
           </div>
           <h1 className="text-3xl leading-tight font-black tracking-[0.04em]">開一場聚餐決策</h1>
@@ -333,48 +280,7 @@ export default function HomePage() {
           )}
         </section>
 
-        {suggestion.length > 0 && (
-          <section className="card animate-rise space-y-2">
-            <p className="text-sm">
-              根據你的用餐紀錄，你常吃：
-              <span className="font-semibold">
-                {suggestion.map(t => CUISINE_LABEL[t] ?? t).join('、')}
-              </span>
-              。要加入預設偏好嗎？之後發起聚餐會自動帶入。
-            </p>
-            <div className="flex gap-2">
-              <button className="btn btn-primary flex-1" onClick={async () => {
-                setPrefsError('')
-                const cur = Array.isArray(prefs.cuisines) ? (prefs.cuisines as string[]) : []
-                const { error } = await supabase.from('profiles').update({
-                  default_prefs: { ...prefs, cuisines: [...new Set([...cur, ...suggestion])] },
-                }).eq('id', myUserId)
-                if (!error) setSuggestion([])
-                else setPrefsError('偏好儲存失敗，請稍後再試')
-              }}>加入預設偏好</button>
-              <button className="btn btn-quiet" onClick={() => {
-                addDismissed(`prefs-suggest-dismissed:${myUserId}`, suggestion)
-                setSuggestion([])
-              }}>忽略</button>
-            </div>
-          </section>
-        )}
-
-        {suggestionLoadError && (
-          <p role="status" className="banner bg-warn-soft text-warn">
-            <Alert className="h-5 w-5 shrink-0" />
-            <span>{suggestionLoadError}</span>
-          </p>
-        )}
-
-        <RecentRatingPrompt onRated={loadSuggestions} />
-
-        {prefsError && (
-          <p role="alert" className="banner bg-danger-soft text-danger">
-            <Alert className="h-5 w-5 shrink-0" />
-            <span>{prefsError}</span>
-          </p>
-        )}
+        <RecentRatingPrompt />
       </main>
       </div>
 

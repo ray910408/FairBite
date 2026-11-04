@@ -153,6 +153,11 @@ const (
 	PrefMultMin = 0.6
 	PrefMultMax = 1.5
 
+	// 評分偏好（engine.go ratingFactor）：店的 Google 評分與成員期望平均每差一顆星 ±0.4，夾在 0.6–1.4
+	RatingMultPerStar = 0.4
+	RatingMultMin     = 0.6
+	RatingMultMax     = 1.4
+
 	DistMultBest  = 1.2
 	DistMultWorst = 0.7
 	DistBestMin   = 5.0  // ≤5 分鐘 → DistMultBest

@@ -98,6 +98,15 @@ vi.mock('../components/LocationPicker', async () => {
   }
 })
 
+// 口味建議卡自己查 supabase（這份替身沒有 rpc）：換成一顆直接套用日式的按鈕，只驗房間頁怎麼擺、怎麼接
+vi.mock('../components/PrefsSuggestion', async () => {
+  const { createElement } = await import('react')
+  return {
+    default: ({ onApply }: { onApply?: (cuisines: string[]) => void }) =>
+      createElement('button', { type: 'button', onClick: () => onApply?.(['japanese']) }, '套用口味建議'),
+  }
+})
+
 const HOST = 'host'
 const GUEST = 'guest'
 const EXHAUSTED = /候選已經全部排除/
@@ -112,7 +121,7 @@ function makeRoom(over: Partial<Room> = {}): Room {
 
 function member(userId: string, name: string, over: Partial<MemberRow> = {}): MemberRow {
   return {
-    room_id: 'room-1', user_id: userId, budget_max: 800, cuisines: [], dietary: [], max_distance_m: 1000,
+    room_id: 'room-1', user_id: userId, budget_max: 800, cuisines: [], dietary: [], max_distance_m: 1000, rating_pref: 0,
     transport: 'walking', ready: false, profiles: { display_name: name }, ...over,
   }
 }
@@ -243,6 +252,30 @@ describe('RoomPage 用餐時間草稿', () => {
     expect(mocks.update).toHaveBeenCalledWith('rooms', { meal_time: null }, { count: 'exact' })
     expect(mocks.eq).toHaveBeenCalledWith('rooms', 'id', 'room-1')
     expect(alertText()).toBe('用餐時間更新失敗')
+  })
+})
+
+describe('RoomPage 口味建議卡', () => {
+  it('lobby 排在最上方；套用後併進我的料理偏好，照條件的 debounce 寫出', async () => {
+    vi.useFakeTimers()
+    await renderRoom(lobby())
+    expect(screen.getByRole('main').firstElementChild?.textContent).toBe('套用口味建議')
+
+    fireEvent.click(button('套用口味建議'))
+    expect(pressed(button('日式'))).toBe('true')
+    await act(() => vi.advanceTimersByTimeAsync(401))
+    await settle()
+    expect(mocks.update).toHaveBeenCalledWith('room_members', expect.objectContaining({ cuisines: ['japanese'] }),
+      { count: 'exact' })
+  })
+
+  it('條件凍結（已準備）或離開 lobby 就不出現', async () => {
+    const view = await renderRoom(lobby({ myUserId: GUEST, members: [hostMember, guestMember({ ready: true })] }))
+    expect(queryButton('套用口味建議')).toBeNull()
+    view.unmount()
+
+    await renderRoom(inStage('candidates'))
+    expect(queryButton('套用口味建議')).toBeNull()
   })
 })
 

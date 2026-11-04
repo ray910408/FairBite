@@ -35,6 +35,7 @@ export default function Wheel({ rows, winnerId, onDone }: {
   const percents = useMemo(() => formatPercents(kept.map(c => c.probability ?? 0)), [kept])
 
   const [rotation, setRotation] = useState(0)
+  const disc = useRef<SVGSVGElement>(null)
   const slicesRef = useRef(slices)
   slicesRef.current = slices
   const winnerPresent = slices.some(x => x.c.restaurant_id === winnerId)
@@ -49,6 +50,9 @@ export default function Wheel({ rows, winnerId, onDone }: {
       return
     }
     const center = (s.start + s.end) / 2
+    // 先逼瀏覽器算一次樣式，記下 rotate(0) 當 transition 起點。轉盤剛掛上、還沒畫過任何一幀就換角度
+    // （抽選結果晚一拍才到，effect 排在下一幀之前跑）時，CSS transition 沒有起點，會直接跳到終點
+    disc.current?.getBoundingClientRect()
     setRotation(5 * 360 + (360 - center)) // 指針固定在 12 點鐘，轉輪本體旋轉
     const t = setTimeout(() => doneRef.current(), prefersReduced() ? 700 : SPIN_MS + 200)
     return () => clearTimeout(t)
@@ -68,7 +72,7 @@ export default function Wheel({ rows, winnerId, onDone }: {
           </svg>
         </div>
         {/* 印刷菜單的雙圈：墨線、留白、墨線 */}
-        <svg viewBox="0 0 200 200" aria-hidden="true" className="block rounded-full"
+        <svg ref={disc} viewBox="0 0 200 200" aria-hidden="true" className="block rounded-full"
           style={{
             boxShadow: '0 0 0 1px var(--color-rule), 0 0 0 5px var(--color-surface), 0 0 0 6px var(--color-rule)',
             transform: `rotate(${rotation}deg)`,
