@@ -67,6 +67,7 @@ function room(status: Room['status'], drawVersion = 0): Room {
   return {
     id: 'room-1', code: 'ABC123', host_id: 'host-1', status,
     exploration: 'balanced', meal_time: null, cuisine_filter: false, draw_version: drawVersion, search_version: 0,
+    has_location: true,
   }
 }
 

@@ -115,7 +115,7 @@ const SLOW_SEARCH = '搜尋仍在進行；首次使用可能需要約 15 秒。'
 function makeRoom(over: Partial<Room> = {}): Room {
   return {
     id: 'room-1', code: 'ABC123', host_id: HOST, status: 'lobby', exploration: 'balanced',
-    meal_time: null, cuisine_filter: false, draw_version: 4, search_version: 3, ...over,
+    meal_time: null, cuisine_filter: false, draw_version: 4, search_version: 3, has_location: true, ...over,
   }
 }
 
@@ -879,6 +879,7 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
     expect(alertText()).toBe('房間狀態已變更')
     expect(state.refetch).not.toHaveBeenCalled()
     expect(localStorage.getItem('room-departure:room-1')).toBeNull()
+    expect(localStorage.getItem(`last-departure:${HOST}`)).toBeNull() // 被拒的點不能變成下次發起的出發點
     expect(button('確認用餐地點').disabled).toBe(false) // 還沒換成：可以再送一次
 
     fireEvent.click(button('確認用餐地點'))
@@ -886,6 +887,24 @@ describe('RoomPage lobby：房主免準備、房間設定與搜尋', () => {
     expect(api.chooseLocation).toHaveBeenCalledTimes(2)
     expect(state.refetch).toHaveBeenCalledOnce()
     expect(queryButton('確認用餐地點')).toBeNull() // 現任就是這個點：沒有東西可確認
+  })
+
+  // 發起時沒帶出發點（20261105000100）：大家都準備好了也要先選地點才能搜尋
+  it('還沒有出發點：搜尋鈕停用並叫房主先選；選好後記成下次發起的出發點', async () => {
+    const state = lobbyReady({ room: makeRoom({ has_location: false }) })
+    await renderRoom(state)
+    expect(queryButton('開始搜尋餐廳')).toBeNull()
+    expect(button('請先選擇用餐地點').disabled).toBe(true)
+    expect(screen.getByRole('heading', { name: '選擇用餐地點' })).toBeTruthy()
+
+    fireEvent.click(button('在地圖選這裡'))
+    fireEvent.click(button('確認用餐地點'))
+    await settle()
+    expect(api.chooseLocation).toHaveBeenCalledWith('room-1', mocks.picked.lat, mocks.picked.lng, 3)
+    expect(JSON.parse(localStorage.getItem(`last-departure:${HOST}`)!)).toEqual(mocks.picked)
+
+    push({ ...state, room: makeRoom({ search_version: 4 }) })
+    expect(button('開始搜尋餐廳').disabled).toBe(false)
   })
 
   // searchRoom 的替身照真的 api.ts 走：送出請求前（讀完 session）才呼叫 onRequestStart

@@ -481,6 +481,7 @@ export type Database = {
           delete_version: number
           draw_version: number
           exploration: string
+          has_location: boolean
           host_id: string
           id: string
           meal_time: string | null
@@ -496,6 +497,7 @@ export type Database = {
           delete_version?: number
           draw_version?: number
           exploration?: string
+          has_location?: boolean
           host_id: string
           id?: string
           meal_time?: string | null
@@ -511,6 +513,7 @@ export type Database = {
           delete_version?: number
           draw_version?: number
           exploration?: string
+          has_location?: boolean
           host_id?: string
           id?: string
           meal_time?: string | null
@@ -652,7 +655,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      create_room: { Args: { p_lat: number; p_lng: number }; Returns: string }
+      create_room: { Args: { p_lat?: number; p_lng?: number }; Returns: string }
       get_my_default_prefs: {
         Args: never
         Returns: {

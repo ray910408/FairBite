@@ -11,6 +11,7 @@ const props = {
   busy: false,
   onVote: () => {},
   onChoose: () => {},
+  hasLocation: true,
 }
 
 it('shows a persistent voting checkbox and strict-majority tally', () => {
@@ -49,7 +50,7 @@ it('shows the confirm button only when there is something to confirm', () => {
   expect(showLocationConfirm('relocating', null, current)).toBe(true) // 換地點必選，灰著也要在
 })
 
-// 首頁選點建房後進 lobby 不得顯示「尚未選擇出發點」：create_room 必帶座標
+// 已有出發點的 lobby（發起時沿用上次出發點，或之前選過）不得顯示「尚未選擇出發點」
 it('shows the existing lobby center instead of claiming none was chosen', () => {
   const known = renderToStaticMarkup(<RelocationPanel {...props} isHost status="lobby"
     current={{ lat: 25, lng: 121.5, label: '台北車站' }} />)
@@ -64,4 +65,13 @@ it('shows the existing lobby center instead of claiming none was chosen', () => 
   const relocating = renderToStaticMarkup(<RelocationPanel {...props} isHost status="relocating"
     current={{ lat: 25, lng: 121.5, label: '台北車站' }} />)
   expect(relocating).toContain('尚未選擇出發點')
+})
+
+// 發起時沒帶出發點（20261105000100）：lobby 要叫房主選，不能講「已設定」
+it('asks the host to choose when the lobby has no center yet', () => {
+  const html = renderToStaticMarkup(<RelocationPanel {...props} isHost status="lobby" hasLocation={false} />)
+  expect(html).toContain('選擇用餐地點')
+  expect(html).not.toContain('調整用餐地點')
+  expect(html).toContain('尚未選擇出發點')
+  expect(html).not.toContain('已設定')
 })

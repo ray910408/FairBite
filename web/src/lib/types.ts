@@ -17,6 +17,8 @@ export type Room = {
   cuisine_filter: boolean
   draw_version: number
   search_version: number
+  // 有沒有出發點（20261105000100）：發起時可不帶，房主進房後在 lobby 選；座標本身前端讀不到
+  has_location: boolean
 }
 
 export type MemberRow = {

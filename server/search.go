@@ -90,6 +90,11 @@ func handleSearch(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, pl
 		jsonError(w, http.StatusConflict, "聚餐狀態已變更")
 		return
 	}
+	// 發起時可以不帶出發點（20261105000100）；離開 lobby 只有搜尋這條路，守住這裡下游就一定有圓心
+	if !room.HasLocation {
+		jsonError(w, http.StatusConflict, "請先選擇用餐地點")
+		return
+	}
 	// Places 呼叫付費，同房並發搜尋只放行一個。
 	if _, loaded := inFlight.LoadOrStore(room.ID, struct{}{}); loaded {
 		jsonError(w, http.StatusConflict, "聚餐狀態已變更")

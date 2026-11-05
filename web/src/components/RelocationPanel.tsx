@@ -14,6 +14,8 @@ type Props = {
   onChoose: (point: DeparturePoint) => void
   // 本機記得的現任出發點（departure.ts loadRoomDeparture）；只在 lobby 顯示
   current?: DeparturePoint | null
+  // rooms.has_location：發起時沒帶出發點、還沒選過就是 false（只在 lobby 有意義）
+  hasLocation: boolean
 }
 
 // 確認鈕只在有東西可確認時出現：換地點一定要選新點；lobby 要選了和現任不同的點。
@@ -26,7 +28,7 @@ export function showLocationConfirm(status: Props['status'], point: DeparturePoi
 }
 
 export default function RelocationPanel({
-  isHost, status, wantChange, yesCount, memberCount, busy, onVote, onChoose, current = null,
+  isHost, status, wantChange, yesCount, memberCount, busy, onVote, onChoose, current = null, hasLocation,
 }: Props) {
   const [point, setPoint] = useState<DeparturePoint | null>(null)
   // mount 時讀一次：current 每次 render 都是新 parse 的物件，直接往下傳會讓
@@ -60,12 +62,12 @@ export default function RelocationPanel({
   return (
     <section className="card space-y-3" aria-labelledby="relocation-picker-title">
       <h2 id="relocation-picker-title" className="text-base font-semibold">
-        {status === 'relocating' ? '選擇新地點' : '調整用餐地點'}
+        {status === 'relocating' ? '選擇新地點' : hasLocation ? '調整用餐地點' : '選擇用餐地點'}
       </h2>
-      {/* lobby 一定已有出發點（create_room 必帶座標），不能講「尚未選擇」；
-          relocating 則必須選新點，舊點不算數 */}
-      <LocationPicker value={point ?? (status === 'lobby' ? initial : null)} onChange={setPoint}
-        fallbackLabel={status === 'lobby' ? '已設定' : undefined} />
+      {/* lobby 已有出發點時（發起時帶了，或之前選過）不能講「尚未選擇」，換裝置讀不到地名就講「已設定」；
+          發起時沒帶的 lobby 才是真的還沒選。relocating 則必須選新點，舊點不算數 */}
+      <LocationPicker value={point ?? (status === 'lobby' && hasLocation ? initial : null)} onChange={setPoint}
+        fallbackLabel={status === 'lobby' && hasLocation ? '已設定' : undefined} />
       {/* lobby 沒改點就沒有東西可確認：不擺一顆灰掉的主按鈕在房主第一眼的位置 */}
       {showLocationConfirm(status, point, current) && (
         <button type="button" className="btn btn-primary min-h-11 w-full"

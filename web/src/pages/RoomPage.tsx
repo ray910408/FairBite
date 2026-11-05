@@ -9,7 +9,7 @@ import {
   startVoting, voteLocation, voteShortlist,
 } from '../lib/api'
 import { ACTION_BAR } from '../lib/actionBar'
-import { loadRoomDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
+import { loadRoomDeparture, saveLastDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
 import { isVetoDeadEnd } from '../lib/deadEnd'
 import { buildInviteUrl } from '../lib/invite'
 import { EXPLORATION_OPTIONS, ROOM_STATUS_LABEL } from '../lib/labels'
@@ -393,7 +393,11 @@ export default function RoomPage() {
       ])
       if (!conditionsOK || !roomSettingsOK) return false
       const msg = await chooseLocation(room!.id, point.lat, point.lng, room!.search_version)
-      if (!msg) saveRoomDeparture(room!.id, point)
+      if (!msg) {
+        saveRoomDeparture(room!.id, point)
+        // 下次發起聚餐沿用（HomePage）：出發點現在都是進房後才選
+        saveLastDeparture(myUserId, point)
+      }
       return msg
     })
   }
@@ -417,7 +421,7 @@ export default function RoomPage() {
   // 投票／換地點時在階段最上面；lobby 排在房主設定中間（探索檔位之後）
   function relocationPanel(status: 'lobby' | 'voting' | 'relocating') {
     return <RelocationPanel key={room!.id} isHost={isHost} status={status}
-      wantChange={locationVotes.some(v => v.user_id === myUserId)}
+      wantChange={locationVotes.some(v => v.user_id === myUserId)} hasLocation={room!.has_location}
       yesCount={locationVotes.length} memberCount={members.length} busy={relocationBusy}
       onVote={onLocationVote} onChoose={onChooseLocation} current={loadRoomDeparture(room!.id)} />
   }
@@ -521,9 +525,10 @@ export default function RoomPage() {
         {room.status === 'lobby' && isHost && (
           <div data-action-bar className={`${ACTION_BAR} space-y-3`}>
             <button className="btn btn-primary w-full"
-              disabled={searching || roomSettingsBlocked || !guestsReady} aria-busy={searching}
+              disabled={searching || roomSettingsBlocked || !guestsReady || !room.has_location} aria-busy={searching}
               onClick={onSearch}>
               {searching ? <><Spinner className="h-5 w-5" />搜尋中…</>
+                : !room.has_location ? '請先選擇用餐地點'
                 : guestsReady ? '開始搜尋餐廳' : `還有 ${guestsNotReady} 人還沒準備好`}
             </button>
             {searchSlow && (
