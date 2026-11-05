@@ -30,6 +30,7 @@ type RoomRow struct {
 	Status        string
 	CenterLat     float64
 	CenterLng     float64
+	HasLocation   bool // false = 發起時沒帶出發點、房主還沒選（center_* 讀成 0）
 	Exploration   string
 	MealTime      *time.Time // NULL = 馬上出發（spec §4）
 	CuisineFilter bool
@@ -39,11 +40,11 @@ type RoomRow struct {
 
 // roomColumns 與 scanRoom 成對：每個讀出整列 RoomRow 的查詢都用這份欄位清單，
 // RoomRow 加欄位時只改這兩處，不會有哪個查詢漏改而默默讀到零值。
-const roomColumns = `id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), exploration, meal_time, cuisine_filter, draw_version, search_version`
+const roomColumns = `id, host_id, status, coalesce(center_lat, 0), coalesce(center_lng, 0), has_location, exploration, meal_time, cuisine_filter, draw_version, search_version`
 
 func scanRoom(row pgx.Row) (RoomRow, error) {
 	var r RoomRow
-	err := row.Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.Exploration, &r.MealTime, &r.CuisineFilter, &r.DrawVersion, &r.SearchVersion)
+	err := row.Scan(&r.ID, &r.HostID, &r.Status, &r.CenterLat, &r.CenterLng, &r.HasLocation, &r.Exploration, &r.MealTime, &r.CuisineFilter, &r.DrawVersion, &r.SearchVersion)
 	return r, err
 }
 

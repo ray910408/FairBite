@@ -1695,6 +1695,50 @@ func TestSearchNoCacheReturns502(t *testing.T) {
 	}
 }
 
+// 發起時沒帶出發點（20261105000100）：搜尋要在預留額度、打 provider 之前擋下。
+// failingProvider 若被呼叫會走 502，所以 409 才代表守衛生效；額度列沒被建出來代表沒預留額度。
+func TestSearchRequiresDeparturePoint(t *testing.T) {
+	ctx := context.Background()
+	pool := newTestPool(t, ctx)
+
+	hostID := "c1050000-0000-4000-8000-0000000000b1"
+	roomID := "c1050000-0000-4000-8000-0000000000b2"
+	insertTestUser(t, ctx, pool, hostID, "no-departure-b1@test.dev")
+	if _, err := pool.Exec(ctx, `delete from public.account_resource_usage where user_id = $1`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into public.rooms (id, host_id, status) values ($1, $2, 'lobby')
+		on conflict (id) do update set status = 'lobby', center_lat = null, center_lng = null`, roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`insert into public.room_members (room_id, user_id) values ($1, $2) on conflict do nothing`,
+		roomID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(ctx, `delete from public.rooms where id = $1`, roomID) })
+
+	t.Setenv("SUPABASE_JWT_SECRET", "test-secret-test-secret-test-secret!")
+	t.Setenv("SUPABASE_JWKS_URL", "")
+	v, err := NewVerifier()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := buildRoutes(v, pool, failingProvider{}, failingWeather{}, newLimiterStore(1000, 1000))
+	w := postTestRequest(h, signHS256(t, "test-secret-test-secret-test-secret!", hostID), "/api/rooms/"+roomID+"/search", "")
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "請先選擇用餐地點") {
+		t.Fatalf("沒有出發點時 want 409 請先選擇用餐地點 got %d body %s", w.Code, w.Body.String())
+	}
+	var reserved bool
+	if err := pool.QueryRow(ctx, `select exists(select 1 from public.account_resource_usage where user_id = $1)`, hostID).
+		Scan(&reserved); err != nil {
+		t.Fatal(err)
+	}
+	if reserved {
+		t.Fatal("沒有出發點的搜尋不該預留搜尋額度")
+	}
+}
+
 func TestGoogleSearchDoesNotFallbackToMockCache(t *testing.T) {
 	ctx := context.Background()
 	pool := newTestPool(t, ctx)

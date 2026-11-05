@@ -145,6 +145,41 @@ func TestLocationMajorityAndReset(t *testing.T) {
 	}
 }
 
+// 發起時沒帶出發點（20261105000100）：第一次選點不清成員準備；之後再改地點才照舊重置
+func TestFirstLocationChoiceKeepsReadiness(t *testing.T) {
+	pool, roomID, users := seedLocationRoom(t, 2)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `update rooms set status='lobby',center_lat=null,center_lng=null where id=$1`, roomID); err != nil {
+		t.Fatal(err)
+	}
+	state := func() (ready int, version int64, hasLocation bool) {
+		t.Helper()
+		if err := pool.QueryRow(ctx, `select (select count(*) from room_members where room_id=$1 and ready),
+			search_version, has_location from rooms where id=$1`, roomID).Scan(&ready, &version, &hasLocation); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	choose := func(version int64, lat float64) {
+		t.Helper()
+		body := fmt.Sprintf(`{"lat":%v,"lng":121.6,"version":%d}`, lat, version)
+		if w := locationRequest(pool, roomID, users[0], body, true); w.Code != 200 {
+			t.Fatalf("choose %s: want 200 got %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	_, start, _ := state() // 上面的 UPDATE 已經讓 trigger 遞增過版本
+	choose(start, 25.1)
+	// 版本照樣遞增：在途的舊版 set_ready 才會被拒收
+	ready, current, has := state()
+	if ready != 2 || !has || current != start+1 {
+		t.Fatalf("first choice: ready=%d has_location=%v version=%d, want 2 true %d", ready, has, current, start+1)
+	}
+	choose(current, 25.2)
+	if ready, version, _ := state(); ready != 0 || version != current+1 {
+		t.Fatalf("second choice: ready=%d version=%d, want 0 %d", ready, version, current+1)
+	}
+}
+
 func TestLocationCommandsValidateMembershipAndCoordinates(t *testing.T) {
 	pool, roomID, users := seedLocationRoom(t, 1)
 	for _, tc := range []struct {

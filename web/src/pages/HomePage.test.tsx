@@ -5,7 +5,6 @@ import { MemoryRouter, Route, Routes, useLocation, useNavigate, useNavigationTyp
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { leaveRooms, wakeApi } from '../lib/api'
 import type { DeparturePoint } from '../lib/departure'
-import { getPosition } from '../lib/geolocation'
 import { leaveNotice } from '../lib/leaveNotice'
 import { fetchLeaveRooms, type LeaveRoom } from '../lib/roomMembership'
 import { getUid } from '../lib/uid'
@@ -15,8 +14,7 @@ import HomePage from './HomePage'
 // 首頁是建房／加入的入口，也是「回首頁＝離席」（ADR-0007）的 mount 攔截點。
 // 行為測試：真的 React hooks 跑在 jsdom 上，只在模組邊界 mock——lib/supabase（帳號、口味建議查詢、
 // 建房／加入 RPC 與寫入）、lib/api（退房、後端預熱）、lib/roomMembership（房籍查詢本體由 HistoryPage.test.tsx
-// 從頁面端整條打過，這裡只驗首頁的分支）、lib/uid、lib/geolocation（建房沒有上次出發點時抓目前位置），
-// 以及包 Leaflet 的 LocationPicker。
+// 從頁面端整條打過，這裡只驗首頁的分支）、lib/uid。
 // 斷言只看畫面（role／文字／屬性）、路由與送出去的呼叫參數，不看頁面內部有幾個 state。
 
 type Result = { data?: unknown; error?: unknown; count?: number | null }
@@ -82,7 +80,6 @@ const mocks = vi.hoisted(() => {
     prefs, history, lowRows, recent, write, createRoom, joinRoom, from, rpc,
     getUser: vi.fn(async (): Promise<AuthResult> => ({ data: { user: { id: 'user-1', is_anonymous: false } }, error: null })),
     signOut: vi.fn(async () => ({ error: null })),
-    picked: { lat: 25.0478, lng: 121.517, label: '台北車站' } as DeparturePoint,
   }
 })
 
@@ -92,20 +89,9 @@ vi.mock('../lib/supabase', () => ({
 vi.mock('../lib/api')
 vi.mock('../lib/uid')
 vi.mock('../lib/roomMembership')
-vi.mock('../lib/geolocation')
-// 地圖（Leaflet）在 jsdom 跑不起來：換成目前出發點的地名，加一顆「選了這個點」的按鈕
-vi.mock('../components/LocationPicker', async () => {
-  const { createElement } = await import('react')
-  return {
-    default: ({ value, onChange }: { value: DeparturePoint | null; onChange: (p: DeparturePoint) => void }) =>
-      createElement('div', null,
-        createElement('p', null, `出發點：${value?.label ?? '未選'}`),
-        createElement('button', { type: 'button', onClick: () => onChange(mocks.picked) }, '在地圖選這裡')),
-  }
-})
 
 const ME = 'user-1'
-const HERE = mocks.picked
+const HERE: DeparturePoint = { lat: 25.0478, lng: 121.517, label: '台北車站' }
 const inRoom: LeaveRoom = { id: 'room-1', code: 'ABC123', status: 'lobby', memberCount: 2, isHost: false, stale: false }
 const LOGOUT_WAIT = '正在確認聚餐狀態，確認後才能登出'
 
@@ -153,9 +139,8 @@ const joinCard = () => card('已經有邀請碼？')
 const entry = () => screen.getByTestId('entry').dataset
 const onRoomPage = () => screen.queryByText(/^房間頁/)?.textContent ?? null
 const createCalls = () => mocks.rpc.mock.calls.filter(([name]) => name === 'create_room')
-const pickDeparture = () => fireEvent.click(button('在地圖選這裡'))
 
-// 這台裝置記得的上次出發點：建房直接拿它當出發點，不必抓定位
+// 這台裝置記得的上次出發點：建房直接拿它當出發點
 function rememberDeparture(point: DeparturePoint, uid = ME) {
   localStorage.setItem(`last-departure:${uid}`, JSON.stringify(point))
 }
@@ -183,39 +168,15 @@ beforeEach(() => {
   vi.mocked(getUid).mockResolvedValue(ME)
   vi.mocked(fetchLeaveRooms).mockResolvedValue([])
   vi.mocked(leaveRooms).mockResolvedValue(undefined)
-  // jsdom 沒有 navigator.geolocation：預設抓不到定位，要定位成功的測試自己給座標
-  vi.mocked(getPosition).mockRejectedValue(new Error('瀏覽器無法使用定位功能'))
 })
 
 describe('HomePage persistRoom', () => {
-  it('以發起建房時的 uid 儲存出發點，不受 pending 期間換帳號影響', async () => {
-    // create_room 還在飛的時候換了帳號：之後再讀 uid 拿到的是別人
-    let uid = 'creator'
-    vi.mocked(getUid).mockImplementation(async () => uid)
-    vi.mocked(getPosition).mockResolvedValue({ lat: HERE.lat, lng: HERE.lng })
-    mocks.createRoom.mockImplementation(async () => {
-      uid = 'replacement'
-      return { data: 'room-1', error: null }
-    })
-    await renderHome()
-    fireEvent.click(button('發起聚餐'))
-    await settle()
-
-    const located = { lat: HERE.lat, lng: HERE.lng, label: '目前位置' }
-    expect(createCalls()).toEqual([['create_room', { p_lat: 25.0478, p_lng: 121.517 }]])
-    expect(onRoomPage()).toBe('房間頁 /room/room-1')
-    expect(JSON.parse(localStorage.getItem('last-departure:creator')!)).toEqual(located)
-    expect(localStorage.getItem('last-departure:replacement')).toBeNull()
-    expect(JSON.parse(localStorage.getItem('room-departure:room-1')!)).toEqual(located)
-  })
-
   it('發起時未登入便不建立房間', async () => {
     vi.mocked(getUid).mockResolvedValue(null)
     await renderHome()
     fireEvent.click(button('發起聚餐'))
     await settle()
 
-    expect(getPosition).not.toHaveBeenCalled()
     expect(createCalls()).toEqual([])
     expect(localStorage.getItem('room-departure:room-1')).toBeNull()
     expect(onRoomPage()).toBeNull()
@@ -223,90 +184,48 @@ describe('HomePage persistRoom', () => {
   })
 })
 
-// 首頁不選點、不選用餐時間（老師回饋：進房後都能改）：create_room 仍要座標，建房當下自己決定出發點
+// 首頁不選點、不選用餐時間（老師回饋：進房後都能改）：有上次出發點就沿用，沒有就不帶座標，進房後再選
 describe('HomePage 建房的出發點', () => {
-  const LOCATE_FAILED = '抓不到目前位置，請選擇出發點'
-
-  // mount 時還沒有紀錄、按下前才有：等同 loadSuggestions 的非同步還原還沒落地，點擊當下得自己補讀
-  it('有上次出發點時直接建房，不呼叫 getPosition', async () => {
+  // mount 時還沒有紀錄、按下前才有：上次出發點是點擊當下才讀 localStorage
+  it('有上次出發點時帶著它建房', async () => {
     await renderHome()
     rememberDeparture(HERE)
     fireEvent.click(button('發起聚餐'))
     await settle()
 
-    expect(getPosition).not.toHaveBeenCalled()
     expect(createCalls()).toEqual([['create_room', { p_lat: 25.0478, p_lng: 121.517 }]])
     expect(JSON.parse(localStorage.getItem('room-departure:room-1')!)).toEqual(HERE)
     expect(onRoomPage()).toBe('房間頁 /room/room-1')
   })
 
-  it('沒有上次出發點時用 getPosition 的座標建房，抓定位期間就顯示建立中', async () => {
-    const located = deferred<{ lat: number; lng: number }>()
-    vi.mocked(getPosition).mockReturnValue(located.promise)
+  // 不抓定位、不在首頁開選點：權限詢問擱著也不會把「發起中」和「加入」一起卡住
+  it('沒有上次出發點時不帶座標直接建房，進房後再選', async () => {
+    rememberDeparture(HERE, 'someone-else') // 別的帳號在這台裝置的紀錄不算
     await renderHome()
+    expect(screen.queryByText(/出發點/)).toBeNull()
     fireEvent.click(button('發起聚餐'))
     await settle()
-    expect(button(/發起中/).disabled).toBe(true) // 定位最久 10 秒：沒有回饋會被當成沒反應而連按
-    expect(createCalls()).toEqual([])
 
-    await act(async () => located.resolve({ lat: 25.033, lng: 121.565 }))
-    await settle()
-    const here = { lat: 25.033, lng: 121.565, label: '目前位置' }
-    expect(createCalls()).toEqual([['create_room', { p_lat: 25.033, p_lng: 121.565 }]])
-    expect(JSON.parse(localStorage.getItem(`last-departure:${ME}`)!)).toEqual(here)
-    expect(JSON.parse(localStorage.getItem('room-departure:room-1')!)).toEqual(here)
+    expect(createCalls()).toEqual([['create_room', {}]])
+    expect(localStorage.getItem('room-departure:room-1')).toBeNull()
     expect(onRoomPage()).toBe('房間頁 /room/room-1')
   })
 
-  it('getPosition 失敗時顯示選點、不呼叫 create_room；選好再按才建房', async () => {
+  // create_room 還在飛時按鈕要停用：連點會建出兩間房
+  it('建立中停用按鈕，連點只建一間', async () => {
+    const created = deferred<{ data: unknown; error: unknown }>()
+    mocks.createRoom.mockReturnValueOnce(created.promise)
     await renderHome()
-    expect(screen.queryByText(/^出發點：/)).toBeNull() // 平常不顯示選點
     fireEvent.click(button('發起聚餐'))
     await settle()
-
-    expect(getPosition).toHaveBeenCalledTimes(1)
-    expect(createCalls()).toEqual([])
-    expect(within(createCard()).getByText(LOCATE_FAILED).getAttribute('role')).toBe('status')
-    expect(screen.getByText('出發點：未選')).toBeTruthy()
-    expect(button('發起聚餐').disabled).toBe(true) // 選好出發點前不能再按
-
-    pickDeparture()
-    fireEvent.click(button('發起聚餐'))
-    await settle()
-    expect(getPosition).toHaveBeenCalledTimes(1) // 選好的點優先，不再抓定位
-    expect(createCalls()).toEqual([['create_room', { p_lat: 25.0478, p_lng: 121.517 }]])
-    expect(JSON.parse(localStorage.getItem('room-departure:room-1')!)).toEqual(HERE)
-    expect(onRoomPage()).toBe('房間頁 /room/room-1')
-  })
-
-  // 權限詢問擱著時 getCurrentPosition 永遠不回：總時限一到就改開選點，busy 一起解除
-  it('定位一直不回：10 秒後改開選點，建立與加入都解鎖', async () => {
-    vi.mocked(getPosition).mockReturnValue(new Promise(() => {}))
-    await renderHome()
-    vi.useFakeTimers()
-    fireEvent.click(button('發起聚餐'))
-    await act(async () => { await vi.advanceTimersByTimeAsync(9_999) })
     expect(button(/發起中/).disabled).toBe(true)
-    expect(button('加入').disabled).toBe(true)
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
-    expect(within(createCard()).getByText(LOCATE_FAILED)).toBeTruthy()
-    expect(button('加入').disabled).toBe(false)
-    expect(createCalls()).toEqual([])
-  })
-
-  it('等定位時離開首頁：定位晚到也不建房', async () => {
-    const located = deferred<{ lat: number; lng: number }>()
-    vi.mocked(getPosition).mockReturnValue(located.promise)
-    const view = await renderHome()
-    fireEvent.click(button('發起聚餐'))
+    fireEvent.click(button(/發起中/))
     await settle()
-    view.unmount()
+    expect(createCalls()).toHaveLength(1)
 
-    await act(async () => located.resolve({ lat: 25.033, lng: 121.565 }))
+    await act(async () => created.resolve({ data: 'room-1', error: null }))
     await settle()
-    expect(createCalls()).toEqual([])
-    expect(localStorage.getItem(`last-departure:${ME}`)).toBeNull()
+    expect(onRoomPage()).toBe('房間頁 /room/room-1')
   })
 })
 

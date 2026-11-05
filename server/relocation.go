@@ -122,7 +122,8 @@ func handleChooseLocation(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 	defer tx.Rollback(ctx)
 	var host, status string
 	var version int64
-	if err := tx.QueryRow(ctx, `select host_id,status,search_version from rooms where id=$1 for update`, roomID).Scan(&host, &status, &version); err != nil {
+	var hasLocation bool
+	if err := tx.QueryRow(ctx, `select host_id,status,search_version,has_location from rooms where id=$1 for update`, roomID).Scan(&host, &status, &version, &hasLocation); err != nil {
 		locationError(w, roomRowErr(err))
 		return
 	}
@@ -138,9 +139,14 @@ func handleChooseLocation(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 		locationError(w, err)
 		return
 	}
-	if err := clearLocationBatch(ctx, tx, roomID); err != nil {
-		locationError(w, err)
-		return
+	// 發起時沒帶出發點（20261105000100）：第一次選點只是補上地點，同 lobby 改用餐時間，不清成員準備
+	// （距離偏好本來就是相對集合點）；沒搜尋過也沒有候選或票可清。之後再改地點才照舊重置。
+	// search_version 照樣遞增（rooms_search_version trigger）：已落庫的準備不受影響，在途的舊版 set_ready 仍會被拒。
+	if status != "lobby" || hasLocation {
+		if err := clearLocationBatch(ctx, tx, roomID); err != nil {
+			locationError(w, err)
+			return
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		locationError(w, err)

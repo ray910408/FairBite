@@ -78,13 +78,24 @@ async function signup(page: Page, name: string, verifyTouch = false) {
   await expect(page.getByRole('button', { name: '發起聚餐' })).toBeVisible()
 }
 
-// 首頁不選點也不選用餐時間：房主的 context 都給了 geolocation 權限，建房直接用目前位置；
-// 用餐時間進房後在 lobby 的用餐時間卡設（首頁建房一律「馬上出發」）
+// 新帳號沒有上次出發點，發起時不帶座標（20261105000100）：進房用目前位置選好，搜尋鈕才會開。
+// 房主的 context 都給了 geolocation 權限
+async function chooseCurrentLocation(page: Page) {
+  await page.getByRole('button', { name: '選擇出發點', exact: true }).click()
+  await page.getByRole('button', { name: '使用目前位置' }).click()
+  await page.getByRole('button', { name: '確認用餐地點' }).click()
+  // rooms.has_location 經 refetch 回來才算落庫
+  await expect(page.getByRole('heading', { name: '調整用餐地點' })).toBeVisible()
+  await page.getByRole('button', { name: '完成', exact: true }).click() // 收起地圖
+}
+
+// 首頁不選點也不選用餐時間：出發點與用餐時間都進房後在 lobby 設（首頁建房一律「馬上出發」）
 async function createRoom(a: Page) {
   const aRealtimeReady = waitForRoomRealtime(a)
   await a.getByRole('button', { name: '發起聚餐' }).click()
   await expect(a.getByText('成員（1）')).toBeVisible()
   await aRealtimeReady
+  await chooseCurrentLocation(a)
   const code = (await a.locator('header button.font-mono').innerText()).trim()
   expect(code).toMatch(/^[A-Z0-9]{12}$/)
   const meal = mealTimeForE2E()
@@ -251,8 +262,9 @@ test('Task 10 慢搜尋提示、卸載清理與登出閘門', async ({ browser }
 
   try {
     await signup(page, 'task10')
-    await page.getByRole('button', { name: '發起聚餐' }).click() // 有定位權限：直接用目前位置建房
+    await page.getByRole('button', { name: '發起聚餐' }).click()
     await expect(page.getByText('成員（1）')).toBeVisible()
+    await chooseCurrentLocation(page) // 有定位權限：進房用目前位置
 
     let searchArrivedResolve: (() => void) | undefined
     let releaseSearch: (() => void) | undefined

@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { leaveRooms, wakeApi } from '../lib/api'
 import { supabase } from '../lib/supabase'
-import { getPosition } from '../lib/geolocation'
-import { loadLastDeparture, saveLastDeparture, saveRoomDeparture, type DeparturePoint } from '../lib/departure'
+import { loadLastDeparture, saveRoomDeparture } from '../lib/departure'
 import { fetchLeaveRooms, type LeaveTarget } from '../lib/roomMembership'
 import { getUid } from '../lib/uid'
 import { applyDefaultPrefs } from '../lib/defaultPrefs'
@@ -11,11 +10,9 @@ import { inviteCodeFromLink } from '../lib/invite'
 import { Alert, Logo, LogOut, Spinner } from '../components/icons'
 import { LeaveConfirm, LeaveRoomsList } from '../components/LeaveConfirm'
 import { ThemeMenu } from '../components/ThemeMenu'
-import LocationPicker from '../components/LocationPicker'
 import { RecentRatingPrompt } from '../components/RatingPrompt'
 import CustomWheel from '../components/CustomWheel'
 
-const LOCATE_LIMIT_MS = 10_000
 // create_room 的 raise exception 原文還是舊用詞；改 DB 文案要動 migration，前端換成畫面用詞
 const CREATE_ROOM_MESSAGES: Record<string, string> = {
   '建房額度已用完，請稍後再試': '發起聚餐的次數已達上限，請稍後再試',
@@ -27,11 +24,7 @@ export default function HomePage() {
   const [code, setCode] = useState('')
   const [createError, setCreateError] = useState('')
   const [joinError, setJoinError] = useState('')
-  const [departure, setDeparture] = useState<DeparturePoint | null>(null)
-  // 沒有上次出發點又抓不到定位：首頁才開選點
-  const [locateFailed, setLocateFailed] = useState(false)
   const [busy, setBusy] = useState(false)
-  const mounted = useRef(false)
   // 回首頁＝離席（ADR-0007）：settle 前禁用建房/加入，避免晚到的 leave 誤刪新房
   const [leavePending, setLeavePending] = useState(true)
   // 離席確認的對象（ADR-0007 2026-08-16 修訂）
@@ -41,11 +34,6 @@ export default function HomePage() {
   // 每次 mount 只做一次離席決策：消耗旗標的 replace 會讓 location 變、下面的 effect
   // 重跑，沒有這道閘就會在 doLeave() 還在飛的時候又走一次查房籍→開 dialog
   const leaveDecided = useRef(false)
-
-  const handleDepartureChange = useCallback((p: DeparturePoint) => {
-    setDeparture(p)
-    setCreateError('')
-  }, [])
 
   const loadAuthState = useCallback(async () => {
     setAuthState('checking')
@@ -67,11 +55,7 @@ export default function HomePage() {
   // 在這裡先喚醒，冷啟動才不會整段算在搜尋上。不 abort——建房後換到房間頁本來就會卸載首頁
   useEffect(() => { wakeApi() }, [])
 
-  useEffect(() => {
-    mounted.current = true
-    void loadAuthState()
-    return () => { mounted.current = false }
-  }, [loadAuthState])
+  useEffect(() => { void loadAuthState() }, [loadAuthState])
 
   // 退房是所有路徑的共同終點：leavePending 直到 settle 才解除，期間建房/加入維持禁用
   const doLeave = useCallback(() => {
@@ -112,46 +96,23 @@ export default function HomePage() {
     doLeave()
   }
 
-  async function persistRoom(creatorUid: string, pos: DeparturePoint) {
-    const { data, error } = await supabase.rpc('create_room', {
-      p_lat: pos.lat, p_lng: pos.lng,
-    })
-    if (error) {
-      setCreateError(CREATE_ROOM_MESSAGES[error.message] ?? error.message)
-      return
-    }
-    await applyDefaultPrefs(data)
-    saveLastDeparture(creatorUid, pos)
-    saveRoomDeparture(data, pos)
-    nav(`/room/${data}`)
-  }
-
-  // 建房一律「馬上出發」，用餐時間與地點進房後在 lobby 改。create_room 仍要座標，出發點依序取：
-  // 地圖選的出發點 → 這台裝置記得的上次出發點 →
-  // 目前定位 → 都沒有才在卡片裡開選點。抓定位最久 LOCATE_LIMIT_MS，也算在 busy 裡
+  // 建房一律「馬上出發」，用餐時間與地點進房後在 lobby 改。這台裝置記得上次出發點就沿用；
+  // 沒有就不帶座標（create_room 允許整組空），進房後由發起人選，選好前不能搜尋（handleSearch 把關）
   async function createRoom() {
     setBusy(true)
     setCreateError('')
     try {
       const creatorUid = await getUid()
       if (!creatorUid) return
-      let pos = departure ?? loadLastDeparture(creatorUid)
-      if (!pos) {
-        try {
-          // 權限詢問擱著時 getCurrentPosition 不會結束（它的 timeout 不含等授權的時間）：
-          // 不設總時限，「建立中」和共用 busy 的「加入」會一起卡住
-          const coords = await Promise.race([getPosition(navigator.geolocation),
-            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('定位逾時')), LOCATE_LIMIT_MS))])
-          // label 同 LocationPicker 的「使用目前位置」
-          pos = { ...coords, label: '目前位置' }
-        } catch {
-          setLocateFailed(true)
-          return
-        }
+      const pos = loadLastDeparture(creatorUid)
+      const { data, error } = await supabase.rpc('create_room', pos ? { p_lat: pos.lat, p_lng: pos.lng } : {})
+      if (error) {
+        setCreateError(CREATE_ROOM_MESSAGES[error.message] ?? error.message)
+        return
       }
-      // 等定位時離開了首頁（例如點了足跡）：不建房，免得晚點把人拉進一間新房。
-      if (!mounted.current) return
-      await persistRoom(creatorUid, pos)
+      await applyDefaultPrefs(data)
+      if (pos) saveRoomDeparture(data, pos)
+      nav(`/room/${data}`)
     } finally {
       setBusy(false)
     }
@@ -229,14 +190,10 @@ export default function HomePage() {
           <p className="text-sm leading-relaxed text-fg-muted">
             發起聚餐後再設定用餐時間與地點，把邀請連結給大家，各自設好條件就能開始搜尋。
           </p>
-          {authState === 'member' && locateFailed && <>
-            <p role="status" className="text-sm text-fg-muted">抓不到目前位置，請選擇出發點</p>
-            <LocationPicker value={departure} onChange={handleDepartureChange} />
-          </>}
           {authState === 'guest' ? (
             <Link to="/auth?mode=register" className="btn btn-primary w-full">註冊後發起聚餐</Link>
           ) : authState === 'member' ? <button onClick={createRoom}
-            disabled={busy || leavePending || (locateFailed && !departure)} className="btn btn-primary w-full">
+            disabled={busy || leavePending} className="btn btn-primary w-full">
             {busy && <Spinner className="h-5 w-5" />}
             {busy ? '發起中…' : '發起聚餐'}
           </button> : authState === 'error' ? (
