@@ -24,6 +24,8 @@ export function ThemeMenu() {
   const [pref, setPref] = useState<ThemePref>(getThemePref)
   const [fontSize, setFontSize] = useState<FontSizePref>(getFontSizePref)
   const [open, setOpen] = useState(false)
+  // 面板往畫面寬的那側展開：按鈕在右半邊靠右對齊往左開，換行落到左半邊就往右開，兩種都不凸出畫面
+  const [toRight, setToRight] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelId = useId()
@@ -55,11 +57,15 @@ export function ThemeMenu() {
       onBlur={e => { if (e.relatedTarget && !rootRef.current?.contains(e.relatedTarget)) setOpen(false) }}>
       <button ref={triggerRef} type="button" className="btn btn-quiet min-h-11 w-11 px-0"
         aria-label={`外觀：${current.label}`} aria-expanded={open} aria-controls={panelId}
-        onClick={() => setOpen(o => !o)}>
+        onClick={e => {
+          const r = e.currentTarget.getBoundingClientRect()
+          setToRight(r.left + r.width / 2 < innerWidth / 2)
+          setOpen(o => !o)
+        }}>
         <current.Icon className="h-4 w-4" />
       </button>
       {open && (
-        <div id={panelId} className="card absolute top-full right-0 z-30 mt-1 w-36 p-1">
+        <div id={panelId} className={`card absolute top-full ${toRight ? 'left-0' : 'right-0'} z-30 mt-1 w-36 p-1`}>
           {OPTIONS.map(({ pref: p, label, Icon }) => (
             <button key={p} type="button" aria-pressed={p === pref} className={ITEM}
               onClick={() => {
