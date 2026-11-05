@@ -49,7 +49,6 @@ export default function CandidateList({ rows, voting, picking }: {
       .sort((a, b) => votingOrder.current.indexOf(a.restaurant_id) - votingOrder.current.indexOf(b.restaurant_id))
     : kept
   const excluded = sortExcluded(rows).filter(c => !voting || !isVetoed(c))
-  const max = Math.max(...kept.map(c => c.probability ?? 0), 0.0001)
   const decisive = decisiveFactors(kept)
   const showGoogleAttribution = rows.some(c => isGoogleSourced(c.restaurants.source))
 
@@ -77,7 +76,7 @@ export default function CandidateList({ rows, voting, picking }: {
             // animation-name 不變，否決／收回時這一列才不會先透明再重新浮現
             if (voting && isVetoed(c)) return (
               <li key={c.restaurant_id} data-testid="vetoed-row"
-                className="flex animate-row-in flex-col gap-1.5 border-t border-rule/40 px-1 py-3.5 text-fg-muted"
+                className="flex animate-row-in flex-col gap-1.5 border-t-2 border-rule/60 px-1 py-3.5 text-fg-muted"
                 style={{ animationDelay: `${stagger(ci)}ms` }}>
                 <div className="flex items-baseline gap-2 font-serif">
                   <span aria-hidden="true" className="text-[0.8125rem] font-bold">{String(ci + 1).padStart(2, '0')}</span>
@@ -101,7 +100,7 @@ export default function CandidateList({ rows, voting, picking }: {
             const factors = c.weight_breakdown.filter(decisive)
             return (
               <li key={c.restaurant_id} data-testid="candidate-row"
-                className="flex animate-row-in flex-col gap-2 border-t border-rule/40 px-1 py-3.5"
+                className="flex animate-row-in flex-col gap-2 border-t-2 border-rule/60 px-1 py-3.5"
                 style={{ animationDelay: `${stagger(ci)}ms` }}>
                 <div className="flex items-baseline gap-2 font-serif">
                   <span aria-hidden="true" className="text-[0.8125rem] font-bold text-brand">{String(ci + 1).padStart(2, '0')}</span>
@@ -119,10 +118,6 @@ export default function CandidateList({ rows, voting, picking }: {
                     {oddsKnown ? percentOf.get(c.restaurant_id) : '機率未提供'}
                   </span>
                 </div>
-                {oddsKnown && <div aria-hidden="true" className="h-[3px] bg-brand-soft">
-                  <div className="h-full bg-brand transition-[width] duration-300 ease-out"
-                    style={{ width: `${((c.probability ?? 0) / max) * 100}%` }} />
-                </div>}
                 {facts.length > 0 && <p className="text-[0.8125rem]">{facts.join('・')}</p>}
                 {factors.length > 0 && (
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[0.78125rem] leading-relaxed">
@@ -188,7 +183,7 @@ export default function CandidateList({ rows, voting, picking }: {
           })}
         </ul>
         {excluded.length > 0 && (
-          <details className="border-t border-rule/40 px-1 pb-2">
+          <details className="border-t-2 border-rule/60 px-1 pb-2">
             <summary className="flex min-h-11 list-none items-center gap-2 font-serif text-sm font-bold text-fg-muted [&::-webkit-details-marker]:hidden">
               <Chevron className="disclosure-chevron h-4 w-4" />
               被排除的 {excluded.length} 家

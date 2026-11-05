@@ -17,7 +17,7 @@
   /* rule＝雙線框與粗分隔線；leader＝店名與機率之間的點線 */
   --color-rule: #1f1a17;
   --color-leader: #b5ab9a;
-  /* brand 是文字／邊框／機率條用色；brand-fill 是實心按鈕與印章底色。
+  /* brand 是文字／邊框／長條圖用色；brand-fill 是實心按鈕與印章底色。
      淺色兩者同為朱；深色時文字要亮（#e0725a）、底要深（#8f2a1a），一個 token 撐不住兩種用途 */
   --color-brand: #a8321e;
   --color-brand-strong: #7a1f12;
